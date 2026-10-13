@@ -1,0 +1,71 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { path } from "../lib/data";
+---
+
+<Layout title="在线阅读">
+  <main id="main">
+    <div class="breadcrumb">
+      <a href={path()}>书架</a> /{" "}
+      <a id="book-link" href={path()}>
+        书籍详情
+      </a>{" "}
+      / 在线阅读
+    </div>
+    <h1 class="section-title" id="reader-title">
+      打开一本书
+    </h1>
+    <p id="reader-status" class="notice" role="status">
+      正在确认文件权限…
+    </p>
+    <div class="reader-toolbar" id="reader-tools" hidden>
+      <button id="prev" aria-label="上一页">
+        ← 上一页
+      </button>
+      <span id="position" aria-live="polite"></span>
+      <button id="next" aria-label="下一页">
+        下一页 →
+      </button>
+      <label id="pdf-page-label">
+        页码{" "}
+        <input
+          id="pdf-page"
+          type="number"
+          min="1"
+          value="1"
+          aria-label="跳转页码"
+        />
+      </label>
+      <label>
+        字号 / 缩放{" "}
+        <select id="zoom">
+          <option value="0.8">80%</option>
+          <option value="1" selected>
+            100%
+          </option>
+          <option value="1.2">120%</option>
+          <option value="1.5">150%</option>
+          <option value="2">200%</option>
+        </select>
+      </label>
+      <select id="toc" aria-label="目录">
+        <option value="">目录 / 跳转章节</option>
+      </select>
+      <select id="theme" aria-label="阅读主题" hidden>
+        <option value="light">暖白</option>
+        <option value="dark">深色</option>
+      </select>
+      <button id="download-reader">下载原文件 ↓</button>
+    </div>
+    <div id="reader" hidden></div>
+    <noscript>
+      <p class="notice">
+        授权阅读需要启用 JavaScript。公开目录与文档可直接阅读。
+      </p>
+    </noscript>
+  </main>
+</Layout>
+<script>
+  import { initReader } from "../scripts/reader";
+  initReader();
+</script>

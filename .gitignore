@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.astro/
+.local/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+__pycache__/
+.DS_Store
+playwright-report/
+test-results/

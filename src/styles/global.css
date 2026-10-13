@@ -1,0 +1,806 @@
+:root {
+  --paper: #f7f4ed;
+  --ink: #282820;
+  --muted: #79786c;
+  --line: #dedbd1;
+  --accent: #b64830;
+  --white: #fffdf8;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+a:hover {
+  color: var(--accent);
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button,
+.button {
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--white);
+  padding: 10px 16px;
+  border-radius: 4px;
+  color: var(--ink);
+  display: inline-block;
+}
+button:hover,
+.button:hover {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+input,
+select,
+textarea {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 11px 12px;
+  color: var(--ink);
+}
+textarea {
+  width: 100%;
+  min-height: 115px;
+  resize: vertical;
+}
+label {
+  display: block;
+  font-size: 13px;
+}
+label input,
+label select {
+  margin-top: 6px;
+  width: 100%;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.skip {
+  position: absolute;
+  top: -60px;
+  left: 20px;
+  background: white;
+  padding: 10px;
+  z-index: 10;
+}
+.skip:focus {
+  top: 10px;
+}
+.topbar {
+  height: 106px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 5vw;
+  gap: 24px;
+}
+.brand {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  font-size: 17px;
+  letter-spacing: 2px;
+  font-weight: 700;
+}
+.brand small {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 2px;
+  margin-top: 8px;
+  color: var(--muted);
+}
+.brand-mark {
+  font:
+    italic 46px Georgia,
+    serif;
+  color: var(--accent);
+  letter-spacing: -5px;
+}
+.topbar nav {
+  display: flex;
+  gap: 30px;
+  font-size: 13px;
+}
+.topbar nav [aria-current="page"] {
+  color: var(--accent);
+}
+main {
+  max-width: 1500px;
+  margin: auto;
+  padding: 52px 5vw 70px;
+}
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--accent);
+  font-weight: 600;
+}
+.hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  margin-bottom: 44px;
+  gap: 25px;
+}
+.hero h1 {
+  font:
+    500 clamp(32px, 4vw, 52px)/1.25 Georgia,
+    "Songti SC",
+    serif;
+  margin: 12px 0 16px;
+  letter-spacing: -1px;
+}
+.muted,
+.hero p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.hero p {
+  margin: 0;
+}
+.stats {
+  display: flex;
+  gap: 32px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.stats strong {
+  font:
+    32px Georgia,
+    serif;
+  display: block;
+}
+.stats span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.library-layout {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  gap: 40px;
+}
+.sidebar h2 {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--muted);
+  margin: 0 0 18px;
+}
+.categories {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.categories a {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 4px;
+}
+.categories a.active {
+  background: #eae5da;
+  color: var(--accent);
+}
+.categories span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.sidebar-note {
+  border-top: 1px solid var(--line);
+  margin-top: 30px;
+  padding-top: 20px;
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--muted);
+}
+.filters {
+  display: flex;
+  gap: 10px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+  align-items: end;
+}
+.search {
+  flex: 1;
+}
+.search input {
+  padding-left: 15px;
+}
+.filters label {
+  color: var(--muted);
+  font-size: 10px;
+}
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 0 25px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.book-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 30px 24px;
+}
+.book-card {
+  min-width: 0;
+}
+.cover {
+  aspect-ratio: 0.73;
+  background: var(--cover, #62544a);
+  color: #fff9eb;
+  position: relative;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 3px 4px 0 #e4dfd2;
+  overflow: hidden;
+  border-left: 5px solid #0002;
+}
+.cover:after {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border: 1px solid #fff3;
+  pointer-events: none;
+}
+.cover .cover-category {
+  font-size: 8px;
+  letter-spacing: 1px;
+  opacity: 0.7;
+}
+.cover h2 {
+  font:
+    500 clamp(18px, 2vw, 27px)/1.45 Georgia,
+    "Songti SC",
+    serif;
+  overflow-wrap: anywhere;
+  margin: 16px 0;
+  position: relative;
+  z-index: 1;
+}
+.cover-author {
+  font-size: 10px;
+  opacity: 0.8;
+}
+.cover-num {
+  font:
+    italic 40px Georgia,
+    serif;
+  opacity: 0.2;
+  position: absolute;
+  right: 23px;
+  bottom: 30px;
+}
+.book-title {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 14px 0 5px;
+  overflow-wrap: anywhere;
+}
+.book-meta {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+}
+.tag {
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  border: 1px solid var(--line);
+  padding: 3px 5px;
+  color: var(--muted);
+  border-radius: 2px;
+}
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 45px;
+}
+.pagination button {
+  font-size: 12px;
+  padding: 8px 12px;
+}
+.pagination [aria-current="page"] {
+  background: var(--ink);
+  color: white;
+}
+.empty {
+  padding: 55px 20px;
+  text-align: center;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  grid-column: 1/-1;
+}
+.mobile-category {
+  display: none;
+}
+.breadcrumb {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 35px;
+}
+.breadcrumb a {
+  border-bottom: 1px solid var(--line);
+}
+.detail-hero {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 48px;
+  padding-bottom: 40px;
+  border-bottom: 1px solid var(--line);
+}
+.detail-hero h1 {
+  font:
+    500 clamp(28px, 3vw, 42px)/1.35 Georgia,
+    "Songti SC",
+    serif;
+  margin: 12px 0 20px;
+}
+.detail-hero .cover h2 {
+  font-size: 27px;
+}
+.description {
+  font-size: 14px;
+  line-height: 1.9;
+  max-width: 700px;
+}
+.detail-columns {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 40px;
+  margin-top: 35px;
+}
+.section-title {
+  font-size: 17px;
+  margin: 0 0 20px;
+  font-weight: 500;
+}
+.panel {
+  border: 1px solid var(--line);
+  background: #ffffff40;
+  padding: 24px;
+  border-radius: 5px;
+}
+.file-row {
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+}
+.file-row strong {
+  font-size: 13px;
+}
+.file-row p {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin: 7px 0;
+}
+.file-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: end;
+}
+.file-actions .button {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.notice {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+  padding: 14px 16px;
+  background: #ece8df;
+  border-radius: 4px;
+}
+.error {
+  color: #9e3223;
+}
+.form-row {
+  display: flex;
+  gap: 12px;
+  margin: 14px 0;
+}
+.form-row > * {
+  flex: 1;
+}
+.status-text {
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+.result {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.result p {
+  white-space: pre-wrap;
+  line-height: 1.9;
+  font-size: 13px;
+}
+.result small {
+  color: var(--muted);
+}
+.account {
+  max-width: 700px;
+}
+.account h1 {
+  font:
+    38px Georgia,
+    "Songti SC",
+    serif;
+}
+.doc-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 800px);
+  gap: 60px;
+}
+.doc-nav a {
+  display: block;
+  font-size: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+.doc-nav a[aria-current="page"] {
+  color: var(--accent);
+}
+.prose {
+  font-size: 14px;
+  line-height: 1.95;
+  overflow-wrap: anywhere;
+}
+.prose h1 {
+  font:
+    36px/1.35 Georgia,
+    "Songti SC",
+    serif;
+}
+.prose h2 {
+  font-size: 22px;
+  margin-top: 38px;
+}
+.prose h3 {
+  font-size: 17px;
+}
+.prose a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  color: var(--accent);
+}
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  display: block;
+  overflow: auto;
+}
+.prose th,
+.prose td {
+  border: 1px solid var(--line);
+  padding: 10px;
+  text-align: left;
+}
+.prose code {
+  background: #eae5db;
+  padding: 2px 5px;
+}
+.prose pre {
+  overflow: auto;
+  padding: 18px;
+  background: #eae5db;
+}
+.doc-links {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 25px;
+  flex-wrap: wrap;
+}
+.doc-links a {
+  font-size: 11px;
+}
+.doc-card {
+  padding: 24px 0;
+  border-top: 1px solid var(--line);
+}
+.doc-card h2 {
+  font-size: 20px;
+}
+.doc-card p {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+footer {
+  border-top: 1px solid var(--line);
+  padding: 28px 5vw;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+}
+.reader-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+.reader-toolbar input {
+  width: 75px;
+}
+.reader-toolbar select {
+  max-width: 280px;
+}
+#reader {
+  height: 72vh;
+  overflow: auto;
+  background: #e6e2d8;
+  text-align: center;
+  position: relative;
+}
+#reader canvas {
+  max-width: 100%;
+  height: auto;
+}
+#reader.epub {
+  background: var(--white);
+}
+[hidden] {
+  display: none !important;
+}
+@media (min-width: 1500px) {
+  .book-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1000px) {
+  .book-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .library-layout {
+    grid-template-columns: 155px 1fr;
+    gap: 25px;
+  }
+  .detail-columns {
+    grid-template-columns: 1fr;
+  }
+  .doc-layout {
+    gap: 30px;
+    grid-template-columns: 170px 1fr;
+  }
+}
+@media (max-width: 700px) {
+  .topbar {
+    height: 85px;
+    padding: 0 6vw;
+  }
+  .brand {
+    font-size: 13px;
+    gap: 10px;
+  }
+  .brand small {
+    font-size: 8px;
+    letter-spacing: 0.5px;
+  }
+  .brand-mark {
+    font-size: 36px;
+  }
+  .topbar nav {
+    gap: 15px;
+    font-size: 11px;
+  }
+  .topbar nav a:last-child {
+    display: none;
+  }
+  main {
+    padding: 32px 6vw 50px;
+  }
+  .hero {
+    align-items: start;
+    margin-bottom: 28px;
+  }
+  .hero h1 {
+    font-size: 33px;
+  }
+  .stats {
+    gap: 15px;
+  }
+  .stats strong {
+    font-size: 23px;
+  }
+  .stats div:last-child {
+    display: none;
+  }
+  .hero p {
+    font-size: 11px;
+  }
+  .library-layout {
+    display: block;
+  }
+  .sidebar {
+    display: none;
+  }
+  .mobile-category {
+    display: block;
+    width: 100%;
+    margin-bottom: 12px;
+  }
+  .filters {
+    flex-wrap: wrap;
+  }
+  .search {
+    flex-basis: 100%;
+  }
+  .filters label:not(.search) {
+    flex: 1;
+  }
+  .book-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 25px 18px;
+  }
+  .cover {
+    padding: 19px;
+  }
+  .cover h2 {
+    font-size: 23px;
+  }
+  .detail-hero {
+    grid-template-columns: 110px 1fr;
+    gap: 24px;
+  }
+  .detail-hero .cover {
+    padding: 10px;
+  }
+  .detail-hero .cover h2 {
+    font-size: 15px;
+  }
+  .detail-hero .cover-category,
+  .detail-hero .cover-author {
+    font-size: 7px;
+  }
+  .detail-hero h1 {
+    font-size: 25px;
+    margin-top: 8px;
+  }
+  .description {
+    font-size: 12px;
+  }
+  .doc-layout {
+    display: block;
+  }
+  .doc-nav {
+    margin-bottom: 30px;
+    display: flex;
+    overflow: auto;
+    gap: 20px;
+  }
+  .doc-nav a {
+    white-space: nowrap;
+  }
+  .prose h1 {
+    font-size: 30px;
+  }
+  .panel {
+    padding: 18px;
+  }
+  .form-row {
+    flex-wrap: wrap;
+  }
+  .form-row > * {
+    flex-basis: 45%;
+  }
+  footer {
+    gap: 20px;
+    line-height: 1.7;
+  }
+  .reader-toolbar {
+    gap: 6px;
+  }
+  .reader-toolbar button {
+    font-size: 11px;
+    padding: 8px;
+  }
+}
+
+.doc-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin: 20px 0 30px;
+  font-size: 11px;
+  line-height: 1.8;
+}
+.doc-toc > span {
+  width: 100%;
+}
+.doc-toc a {
+  color: var(--muted);
+}
+.prose h2,
+.prose h3 {
+  scroll-margin-top: 24px;
+}
+
+.metadata-editor {
+  max-width: 800px;
+  margin: 28px 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 18px 22px;
+}
+.metadata-editor summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.metadata-editor form {
+  margin-top: 20px;
+}
+.metadata-editor textarea {
+  margin-top: 8px;
+}
+
+.cover h2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  overflow: hidden;
+  flex-shrink: 1;
+  min-height: 0;
+  max-height: 7.25em;
+}
+.cover-category,
+.cover-author {
+  flex-shrink: 0;
+}
+.book-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  min-height: 3.2em;
+}
+.cover h2[title] {
+  cursor: inherit;
+}

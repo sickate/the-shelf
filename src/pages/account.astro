@@ -1,0 +1,104 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { path } from "../lib/data";
+---
+
+<Layout title="所有者" section="account">
+  <main id="main" class="account">
+    <span class="eyebrow">OWNER'S ROOM</span>
+    <h1>欢迎回到书房。</h1>
+    <p class="muted">登录后阅读私人文件，按需提问，保存与发布整理结果。</p>
+    <section class="panel">
+      <p id="session-status" class="status-text" role="status">
+        正在检查登录状态…
+      </p>
+      <form id="login">
+        <label>
+          所有者密码
+          <input
+            type="password"
+            id="password"
+            required
+            autocomplete="current-password"
+          />
+        </label>
+        <p>
+          <button class="primary" type="submit">
+            登录书房 →
+          </button>
+        </p>
+      </form>
+      <button id="logout" hidden>
+        退出登录
+      </button>
+      <p id="account-message" class="status-text" role="status"></p>
+    </section>
+    <section class="panel" style="margin-top:24px">
+      <h2 class="section-title">连接与能力</h2>
+      <p id="config-status" class="status-text">
+        正在检查业务后端…
+      </p>
+      <p class="muted">
+        书籍与 AI
+        请求由独立后端授权。页面不保存密码或服务密钥；打开书架不会调用模型。
+      </p>
+      <a class="button" href={path("docs/")}>
+        阅读产品与实现文档 ↗
+      </a>
+    </section>
+  </main>
+</Layout>
+<script>
+  import { api, session, errorText, apiBase } from "../lib/api";
+  const message = document.getElementById("account-message")!,
+    login = document.getElementById("login")!,
+    logout = document.getElementById("logout")!;
+  function update(auth: boolean) {
+    document.getElementById("session-status")!.textContent = auth
+      ? "已登录 · 可以访问已授权的私人内容"
+      : "尚未登录";
+    login.hidden = auth;
+    logout.hidden = !auth;
+  }
+  session()
+    .then((s) => update(s.authenticated))
+    .catch((e) => {
+      document.getElementById("session-status")!.textContent = errorText(e);
+    });
+  api("/api/config")
+    .then((c) => {
+      document.getElementById("config-status")!.textContent =
+        `后端：${apiBase}\nAI：${c.aiConfigured ? "已配置" : "未配置"} · R2：${c.r2Configured ? "已配置" : "未配置"} · 本机文件：${c.localFilesEnabled ? "已启用" : "未启用"}`;
+    })
+    .catch(
+      (e) =>
+        (document.getElementById("config-status")!.textContent = errorText(e)),
+    );
+  login.onsubmit = async (e) => {
+    e.preventDefault();
+    const button = login.querySelector("button")!;
+    button.disabled = true;
+    try {
+      const s = await api("/api/login", {
+        password: (document.getElementById("password") as HTMLInputElement)
+          .value,
+      });
+      (document.getElementById("password") as HTMLInputElement).value = "";
+      update(s.authenticated);
+      message.textContent = "登录成功。现在可以返回书籍详情。";
+    } catch (e) {
+      message.textContent = errorText(e);
+    } finally {
+      button.disabled = false;
+    }
+  };
+  logout.onclick = async () => {
+    try {
+      await api("/api/logout", {});
+      update(false);
+      message.textContent = "已退出。";
+    } catch (e) {
+      message.textContent = errorText(e);
+    }
+  };
+</script>

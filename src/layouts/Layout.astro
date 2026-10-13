@@ -1,0 +1,58 @@
+---
+import "../styles/global.css";
+import { path } from "../lib/data";
+const { title = "私人藏书，公共目录", section = "library" } = Astro.props;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="The Shelf · 收藏中的每一本书，都值得被找到。"
+    />
+    <title>{title} — The Shelf</title>
+  </head>
+  <body>
+    <a class="skip" href="#main">
+      跳至正文
+    </a>
+    <header class="topbar">
+      <a class="brand" href={path()} aria-label="The Shelf 首页">
+        <span class="brand-mark">S.</span>
+        <span>
+          THE SHELF<small>一座私人书房的公开目录</small>
+        </span>
+      </a>
+      <nav aria-label="主导航">
+        <a
+          aria-current={section === "library" ? "page" : undefined}
+          href={path()}
+        >
+          书架
+        </a>
+        <a
+          aria-current={section === "docs" ? "page" : undefined}
+          href={path("docs/")}
+        >
+          产品与实现
+        </a>
+        <a
+          aria-current={section === "account" ? "page" : undefined}
+          href={path("account/")}
+        >
+          所有者 <span aria-hidden="true">↗</span>
+        </a>
+      </nav>
+    </header>
+    <slot />
+    <footer>
+      <span>
+        THE SHELF <span class="muted">/</span> 让每一本书都能被找到。
+      </span>
+      <a href={path("docs/")}>关于这座书架 ↗</a>
+    </footer>
+  </body>
+</html>

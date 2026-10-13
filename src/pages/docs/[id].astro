@@ -1,0 +1,85 @@
+---
+import { marked } from "marked";
+import Layout from "../../layouts/Layout.astro";
+import { documents, path } from "../../lib/data";
+export function getStaticPaths() {
+  return documents.map((doc) => ({ params: { id: doc.id }, props: { doc } }));
+}
+const { doc } = Astro.props;
+const md = doc.markdown.replace(
+  /\]\(([^)]+\.md)(#[^)]*)?\)/g,
+  (_match, link, hash) => {
+    const name = link.split("/").pop()?.replace(/\.md$/, "");
+    const id = name === "README" ? "overview" : name;
+    return documents.some((d) => d.id === id)
+      ? `](${path(`docs/${id}/`)}${hash || ""})`
+      : `](${link}${hash || ""})`;
+  },
+);
+const contents: { id: string; title: string; level: number }[] = [];
+const seen = new Map<string, number>();
+const html = (await marked.parse(md)).replace(
+  /<h([1-3])>(.*?)<\/h\1>/g,
+  (_match, level, body) => {
+    const title = body.replace(/<[^>]*>/g, "");
+    const slug =
+      title
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, "-")
+        .replace(/^-|-$/g, "") || "section";
+    const n = (seen.get(slug) || 0) + 1;
+    seen.set(slug, n);
+    const id = slug + (n > 1 ? `-${n}` : "");
+    contents.push({ id, title, level: Number(level) });
+    return `<h${level} id="${id}">${body}</h${level}>`;
+  },
+);
+---
+
+<Layout title={doc.title} section="docs">
+  <main id="main">
+    <div class="breadcrumb">
+      <a href={path("docs/")}>公开文档</a> / {doc.title}
+    </div>
+    <div class="doc-layout">
+      <aside class="doc-nav" aria-label="文档导航">
+        {documents.map((d) => (
+          <a
+            href={path(`docs/${d.id}/`)}
+            aria-current={doc.id === d.id ? "page" : undefined}
+          >
+            {d.title}
+          </a>
+        ))}
+      </aside>
+      <article>
+        <div class="doc-links">
+          <a class="button" href={path(doc.rawPath)}>
+            Markdown 原文 ↓
+          </a>
+          <a class="button" href={path("docs/all.md")}>
+            合并原文 ↓
+          </a>
+          <a class="button" href={path("docs/index.json")}>
+            JSON 索引 ↓
+          </a>
+        </div>
+        <nav class="doc-toc" aria-label="本文目录">
+          <span class="eyebrow">本文目录</span>
+          {contents
+            .filter((c) => c.level === 2)
+            .map((c) => (
+              <a href={`#${c.id}`}>{c.title}</a>
+            ))}
+        </nav>
+        <p class="muted">
+          更新于 {doc.updatedAt} · 版本 {doc.version.slice(0, 12)}
+        </p>
+        <div class="prose" set:html={html} />
+        <p class="notice">
+          本文公开，无需登录。实现状态与部署配置请以开发计划和部署文档为准。
+        </p>
+      </article>
+    </div>
+  </main>
+</Layout>

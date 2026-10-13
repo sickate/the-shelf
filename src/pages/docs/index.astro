@@ -1,0 +1,48 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { documents, path } from "../../lib/data";
+---
+
+<Layout title="产品与实现文档" section="docs">
+  <main id="main">
+    <section class="hero">
+      <div>
+        <span class="eyebrow">OPEN NOTES / 公开文档</span>
+        <h1>书房背后的思考。</h1>
+        <p>产品、接口、实现与设计决策。无需登录，也无需调用模型。</p>
+      </div>
+    </section>
+    <div class="doc-layout">
+      <aside class="doc-nav" aria-label="文档导航">
+        {documents.map((d) => (
+          <a href={path(`docs/${d.id}/`)}>{d.title}</a>
+        ))}
+      </aside>
+      <section>
+        <div class="doc-links">
+          <a class="button" href={path("docs/index.json")}>
+            机器索引 JSON ↓
+          </a>
+          <a class="button" href={path("docs/all.md")}>
+            全部原文 Markdown ↓
+          </a>
+        </div>
+        {documents.map((d) => (
+          <article class="doc-card">
+            <span class="eyebrow">{d.id.toUpperCase()}</span>
+            <h2>
+              <a href={path(`docs/${d.id}/`)}>{d.title} ↗</a>
+            </h2>
+            <p>{d.description}</p>
+            <div class="muted">
+              更新于 {d.updatedAt} · 版本 {d.version.slice(0, 12)}
+            </div>
+            <p>
+              <a href={path(d.rawPath)}>读取原文 →</a>
+            </p>
+          </article>
+        ))}
+      </section>
+    </div>
+  </main>
+</Layout>

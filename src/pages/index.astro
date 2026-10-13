@@ -1,0 +1,169 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { catalog, path, size, color } from "../lib/data";
+---
+
+<Layout>
+  <main id="main">
+    <section class="hero">
+      <div>
+        <span class="eyebrow">A PERSONAL COLLECTION · 个人藏书</span>
+        <h1>
+          书在这里，
+          <br />
+          世界在书里。
+        </h1>
+        <p>
+          从文学到科学，从一页到另一页。
+          <br />
+          收藏中的每一本书，都值得被找到。
+        </p>
+      </div>
+      <div class="stats">
+        <div>
+          <strong>{catalog.books.length.toLocaleString()}</strong>
+          <span>本藏书</span>
+        </div>
+        <div>
+          <strong>{catalog.categories.length}</strong>
+          <span>个分类</span>
+        </div>
+        <div>
+          <strong>{size(catalog.stats.totalBytes || 0)}</strong>
+          <span>收藏体积</span>
+        </div>
+      </div>
+    </section>
+    <div class="library-layout">
+      <aside class="sidebar">
+        <h2>浏览分类 / COLLECTIONS</h2>
+        <nav class="categories" aria-label="书籍分类">
+          <a class="active" href={path()} data-category="">
+            全部藏书 <span>{catalog.books.length}</span>
+          </a>
+          {catalog.categories.map((c) => (
+            <a
+              href={`?category=${encodeURIComponent(c.id)}`}
+              data-category={c.id}
+            >
+              {c.name}
+              <span>{c.count}</span>
+            </a>
+          ))}
+        </nav>
+        <p class="sidebar-note">
+          书架公开，文件默认私有。
+          <br />
+          目录中的书籍未必已上传。
+          <br />
+          超过 20 MB 的文件仅登记。
+        </p>
+      </aside>
+      <section aria-label="藏书目录">
+        <select class="mobile-category" id="category" aria-label="分类">
+          <option value="">全部藏书</option>
+          {catalog.categories.map((c) => (
+            <option value={c.id}>
+              {c.name} ({c.count})
+            </option>
+          ))}
+        </select>
+        <form class="filters" id="filters">
+          <label class="search">
+            搜索藏书
+            <input
+              id="search"
+              type="search"
+              placeholder="搜索书名、作者、标签或简介…"
+              autocomplete="off"
+            />
+          </label>
+          <label>
+            文件格式
+            <select id="format">
+              <option value="">全部格式</option>
+              {Array.from(
+                new Set(
+                  catalog.books.flatMap((b) => b.files.map((f) => f.format)),
+                ),
+              )
+                .sort()
+                .map((f) => (
+                  <option>{f}</option>
+                ))}
+            </select>
+          </label>
+          <label>
+            文件状态
+            <select id="status">
+              <option value="">全部状态</option>
+              <option value="candidate">待上传</option>
+              <option value="local_only">仅本地</option>
+              <option value="unavailable">异常文件</option>
+            </select>
+          </label>
+        </form>
+        <div class="result-row">
+          <span id="count" aria-live="polite">
+            {catalog.books.length} 本藏书
+          </span>
+          <span>
+            按书名排列 <span aria-hidden="true">↓</span>
+          </span>
+        </div>
+        <div class="book-grid" id="books">
+          {catalog.books.map((b, i) => (
+            <article class="book-card" data-id={b.id}>
+              <a href={path(`books/${b.id}/`)}>
+                <div class="cover" style={`--cover:${color(b.id)}`}>
+                  <span class="cover-category">{b.category} / THE SHELF</span>
+                  <h2 title={b.title}>{b.title}</h2>
+                  <span class="cover-num" aria-hidden="true">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span class="cover-author">{b.author || "作者未标注"}</span>
+                </div>
+                <h2 class="book-title" title={b.title}>
+                  {b.title}
+                </h2>
+              </a>
+              <div class="book-meta">
+                {b.author || "作者未标注"} · {b.category}
+              </div>
+              <div class="tags">
+                {Array.from(new Set(b.files.map((f) => f.format))).map((f) => (
+                  <span class="tag">{f}</span>
+                ))}
+                <span class="tag">
+                  {b.files.every((f) => f.status === "local_only")
+                    ? "仅本地"
+                    : "私有收藏"}
+                </span>
+              </div>
+            </article>
+          ))}
+          <div id="empty" class="empty" hidden={catalog.books.length > 0}>
+            <strong>这里还没有匹配的书。</strong>
+            <p>尝试另一个书名，或清除筛选条件。</p>
+            <button id="clear">清除筛选</button>
+          </div>
+        </div>
+        <nav class="pagination" id="pagination" aria-label="书架分页"></nav>
+        <noscript>
+          <p class="notice">
+            全部藏书已列出。启用 JavaScript 可使用搜索、筛选和分页。
+          </p>
+        </noscript>
+      </section>
+    </div>
+  </main>
+</Layout>
+<script>
+  import { initCatalog } from "../scripts/catalog";
+  initCatalog();
+</script>
+<script
+  type="application/json"
+  id="catalog-data"
+  set:html={JSON.stringify(catalog.books).replace(/</g, "\\u003c")}
+/>

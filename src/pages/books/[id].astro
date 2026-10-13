@@ -1,0 +1,229 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { catalog, path, size, status, color } from "../../lib/data";
+export function getStaticPaths() {
+  return catalog.books.map((book) => ({
+    params: { id: book.id },
+    props: { book },
+  }));
+}
+const { book } = Astro.props;
+---
+
+<Layout title={book.title}>
+  <main id="main" data-book={book.id}>
+    <div class="breadcrumb">
+      <a href={path()}>书架</a> /{" "}
+      <a
+        id="book-category-link"
+        href={path(`?category=${encodeURIComponent(book.categoryId)}`)}
+      >
+        {book.category}
+      </a>{" "}
+      / 书籍详情
+    </div>
+    <section class="detail-hero">
+      <div class="cover" style={`--cover:${color(book.id)}`} aria-hidden="true">
+        <span id="cover-category" class="cover-category">
+          {book.category}
+        </span>
+        <h2 id="cover-title" title={book.title}>
+          {book.title}
+        </h2>
+        <span class="cover-author">THE SHELF</span>
+      </div>
+      <div>
+        <span class="eyebrow">THE COLLECTION / 藏书记录</span>
+        <h1 id="book-title">{book.title}</h1>
+        <p id="book-byline" class="muted">
+          {book.author || "作者未标注"} · {book.category}
+        </p>
+        <div id="book-tags" class="tags">
+          {book.tags.map((t: string) => (
+            <span class="tag">{t}</span>
+          ))}
+        </div>
+        <p id="book-description" class="description">
+          {book.description ||
+            "这本书已经收入收藏。暂无人工简介；目录记录不代表电子书已经上传。"}
+        </p>
+        <p class="muted">排版封面由书名生成 · 文件默认私有</p>
+      </div>
+    </section>
+    <details id="metadata-editor" class="metadata-editor" hidden>
+      <summary>整理书籍信息</summary>
+      <p class="muted">
+        补充可核实的作者与简介，整理分类和标签。请依据书籍版权页或可信资料填写；例如作者「鲁迅」、标签「小说,
+        中国文学」。
+      </p>
+      <form id="metadata-form">
+        <label>
+          书名
+          <input
+            id="metadata-title"
+            value={book.title}
+            required
+            maxlength="500"
+          />
+        </label>
+        <div class="form-row">
+          <label>
+            作者
+            <input
+              id="metadata-author"
+              value={book.author || ""}
+              placeholder="留空表示未知"
+              maxlength="200"
+            />
+          </label>
+          <label>
+            分类
+            <select id="metadata-category">
+              {catalog.categories.map((c) => (
+                <option
+                  value={c.name}
+                  data-id={c.id}
+                  selected={c.id === book.categoryId}
+                >
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label>
+          标签
+          <input
+            id="metadata-tags"
+            value={book.tags.join(", ")}
+            placeholder="用逗号分隔，例如：小说, 中国文学"
+            maxlength="1000"
+          />
+        </label>
+        <label style="margin-top:14px">
+          简介
+          <textarea
+            id="metadata-description"
+            maxlength="10000"
+          >{book.description}</textarea>
+        </label>
+        <p>
+          <button type="submit" class="primary">
+            保存信息
+          </button>
+        </p>
+      </form>
+      <p id="metadata-message" class="status-text" role="status"></p>
+    </details>
+    <div class="detail-columns">
+      <section>
+        <h2 class="section-title">
+          收藏文件 <span class="muted">/ {book.files.length} 个版本</span>
+        </h2>
+        <p class="notice">
+          每个文件分别记录状态。待上传只表示大小符合门槛；实际阅读需要后端授权及可用文件。
+        </p>
+        {book.files.map((f: any) => (
+          <div class="file-row">
+            <div>
+              <strong>{f.format}</strong>{" "}
+              <span class="muted">· {size(f.sizeBytes)}</span>
+              <p>
+                {status(f)}
+                <br />
+                {f.reason === "size"
+                  ? "超过 20 MB 门槛，暂不上传或在线读取。"
+                  : f.reason === "empty"
+                    ? "文件为空，无法读取。"
+                    : f.readable
+                      ? "支持浏览器阅读格式；需确认文件实际可用。"
+                      : "浏览器不直接支持此格式；可下载原文件，使用 Calibre 转为 EPUB。"}
+              </p>
+            </div>
+            <div class="file-actions">
+              {f.status === "candidate" && (
+                <>
+                  <a
+                    class="button"
+                    href={path(`read/?book=${book.id}&file=${f.id}`)}
+                  >
+                    {f.readable ? "授权阅读 →" : "下载原文件 →"}
+                  </a>
+                  <button data-download={f.id}>授权下载 ↓</button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+        <p id="file-message" role="status" class="status-text"></p>
+        <section style="margin-top:35px">
+          <h2 class="section-title">已发布的整理</h2>
+          <p class="muted">仅显示所有者主动公开的结果。</p>
+          <div id="published">
+            <p class="status-text">正在检查公开结果…</p>
+          </div>
+        </section>
+      </section>
+      <section class="panel">
+        <h2 class="section-title">和这本书聊聊</h2>
+        <p class="muted">
+          提问与总结按需生成，自动保存在个人记录。仅有目录时无法总结正文；作者资料需要可核实来源。
+        </p>
+        <p id="ai-session" class="notice">
+          正在检查所有者会话…
+        </p>
+        <form id="ai-form">
+          <div class="form-row">
+            <label>
+              任务
+              <select id="operation">
+                <option value="question">书内提问</option>
+                <option value="chapter_summary">章节总结</option>
+                <option value="full_summary">全书总结</option>
+                <option value="author">作者资料</option>
+              </select>
+            </label>
+            <label>
+              模型
+              <select id="model">
+                <option value="gpt-luna">GPT Luna</option>
+                <option value="gpt-sol">GPT Sol</option>
+              </select>
+            </label>
+          </div>
+          <label id="chapter-label" hidden>
+            章节
+            <input id="chapter" placeholder="章节名称或编号" />
+          </label>
+          <label style="margin-top:16px">
+            问题或整理重点
+            <textarea
+              id="question"
+              placeholder="这本书中，哪些观点值得进一步思考？"
+              maxlength="6000"
+            ></textarea>
+          </label>
+          <p>
+            <button id="submit-job" type="submit" class="primary" disabled>
+              开始整理 →
+            </button>{" "}
+            <a class="button" href={path("account/")}>
+              登录 / 设置
+            </a>
+          </p>
+        </form>
+        <p id="ai-message" role="status" class="status-text"></p>
+        <h3 class="section-title" style="margin-top:30px">
+          个人记录
+        </h3>
+        <div id="history">
+          <p class="muted">登录后查看私人结果。</p>
+        </div>
+      </section>
+    </div>
+  </main>
+</Layout>
+<script>
+  import { initBook } from "../../scripts/book";
+  initBook();
+</script>

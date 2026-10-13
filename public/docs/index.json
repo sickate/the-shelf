@@ -1,0 +1,139 @@
+{
+  "generatedAt": "2026-10-13T16:07:45.096Z",
+  "version": "dbf0f844c228d112a741cefc5d597d985dc73d4cf33c20e28706c30053a54d32",
+  "basePath": "/the-shelf/",
+  "documents": [
+    {
+      "id": "overview",
+      "title": "The Shelf 产品与实现文档",
+      "description": "The Shelf 的书架和设计文档公开，电子书默认私有。所有文件都进入收藏目录；超过 20 MB 的文件暂不上传，详情页仍显示格式、大小和可用状态。AI 仅在主动提问或请求总结时调用。",
+      "updatedAt": "2026-10-14",
+      "version": "cf9542054a652b8cf008f436e212836b5de596e43572e938c34c2edc60868d19",
+      "htmlPath": "/the-shelf/docs/",
+      "rawPath": "/the-shelf/docs/raw/overview.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/overview.md"
+    },
+    {
+      "id": "product",
+      "title": "The Shelf 产品需求",
+      "description": "The Shelf 让收藏中的每一本书都能被找到，即使电子书暂时没有上传。公开访问者可以查看分类目录、书籍基本信息和已发布内容；所有者登录后可以阅读私有书籍、提问和管理收藏。",
+      "updatedAt": "2026-10-13",
+      "version": "99e033535b7614ac8ad42da5b6d31800dcd54b75711652b1f43375e4dfb01cae",
+      "htmlPath": "/the-shelf/docs/product/",
+      "rawPath": "/the-shelf/docs/raw/product.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/product/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/product.md"
+    },
+    {
+      "id": "architecture",
+      "title": "The Shelf 系统架构",
+      "description": "公开目录和文档使用静态网页；私人文件访问与按需 AI 使用由独立业务后端处理。大文件留在本地时，云端只保留公开目录所需的信息。",
+      "updatedAt": "2026-10-13",
+      "version": "9b5da97db2c563ce83923936d409839697d3c2914e1ba551e3d69cf1f35d6b35",
+      "htmlPath": "/the-shelf/docs/architecture/",
+      "rawPath": "/the-shelf/docs/raw/architecture.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/architecture/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/architecture.md"
+    },
+    {
+      "id": "import-policy",
+      "title": "The Shelf 导入与存储策略",
+      "description": "所有电子书文件都进入收藏清单，但不保证都进入云端。上传资格由文件稳定性、单文件大小、总存储预算和人工选择共同决定。",
+      "updatedAt": "2026-10-13",
+      "version": "b3fc1bc6615c8c54e2ed31081e5baaccee70d8b5e1192081263347eb4e606e0f",
+      "htmlPath": "/the-shelf/docs/import-policy/",
+      "rawPath": "/the-shelf/docs/raw/import-policy.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/import-policy/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/import-policy.md"
+    },
+    {
+      "id": "inventory",
+      "title": "The Shelf 收藏盘点",
+      "description": "两次只读盘点表明，20 MB 门槛能让当前核心电子书格式的大小候选总量落在项目暂定的 8 GB 存储预算内。候选仍需检查完整性、重复版本和云端实际占用后才能上传。",
+      "updatedAt": "2026-10-14",
+      "version": "fac979cd232bc83b3b5a6cdde69481f32c3eb6a7667c5bfeb70d80b684c37950",
+      "htmlPath": "/the-shelf/docs/inventory/",
+      "rawPath": "/the-shelf/docs/raw/inventory.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/inventory/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/inventory.md"
+    },
+    {
+      "id": "ai",
+      "title": "The Shelf AI 问答与总结",
+      "description": "AI 按所有者请求执行。导入只准备文件和检索数据，打开页面只读取已有结果。书内问答、全书总结和作者资料使用不同的材料来源。",
+      "updatedAt": "2026-10-13",
+      "version": "2d00b82a3735111eb6de780997dd7ee26975ac463fc1c79fe1cc7eada7651547",
+      "htmlPath": "/the-shelf/docs/ai/",
+      "rawPath": "/the-shelf/docs/raw/ai.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/ai/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/ai.md"
+    },
+    {
+      "id": "public-docs",
+      "title": "The Shelf 公开文档区域",
+      "description": "产品、架构、实现顺序和设计决策使用公开文档区域提供给人和其他 AI。读取文档不需要进入私人管理后台，也不要求登录、浏览器脚本或 AI Key。",
+      "updatedAt": "2026-10-13",
+      "version": "b13e75b824bfe12496daa28db3afb65c763147d98a0007dcdc0e64000762f5de",
+      "htmlPath": "/the-shelf/docs/public-docs/",
+      "rawPath": "/the-shelf/docs/raw/public-docs.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/public-docs/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/public-docs.md"
+    },
+    {
+      "id": "implementation-plan",
+      "title": "The Shelf 实现顺序与验收",
+      "description": "实现从可确认的收藏清单和公开目录开始，再增加私人文件访问与按需 AI。每个阶段都可以独立交付，不要求先把全部收藏上传或总结。",
+      "updatedAt": "2026-10-13",
+      "version": "6b9503b9f552a7d57722dd93f15d766a73ddd2ac0d85bb87cbd2aecf6d1c8f00",
+      "htmlPath": "/the-shelf/docs/implementation-plan/",
+      "rawPath": "/the-shelf/docs/raw/implementation-plan.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/implementation-plan/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/implementation-plan.md"
+    },
+    {
+      "id": "decisions",
+      "title": "The Shelf 设计决策",
+      "description": "决策记录明确区分用户已确认的要求与实现时可以调整的选择。未来参与项目的 AI 应先遵守已确认约束，再评估具体技术方案。",
+      "updatedAt": "2026-10-13",
+      "version": "7cfbe3b696a434f3f3b13e1af481c711c4b60ecc6054da74c92a32da581bbd7d",
+      "htmlPath": "/the-shelf/docs/decisions/",
+      "rawPath": "/the-shelf/docs/raw/decisions.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/decisions/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/decisions.md"
+    },
+    {
+      "id": "development-plan",
+      "title": "The Shelf 开发计划",
+      "description": "第一版交付可在本机运行、可构建为 GitHub Pages 静态网站的真实收藏书架，同时提供个人登录、私人文件读取与按需 AI 任务的业务后端。云端凭证缺失时明确显示未配置，不伪造上传状态或 AI 回答。",
+      "updatedAt": "2026-10-14",
+      "version": "d4df188266d6c44add2929efa02a6b6e18066994c2369c00432a0cc316339a8b",
+      "htmlPath": "/the-shelf/docs/development-plan/",
+      "rawPath": "/the-shelf/docs/raw/development-plan.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/development-plan/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/development-plan.md"
+    },
+    {
+      "id": "contracts",
+      "title": "The Shelf 数据与接口契约",
+      "description": "静态网站只消费经过筛选的公开目录和文档数据，后端单独读取私人文件映射。此契约统一导入、网页与后台实现，字段变更要同步消费方和验证。",
+      "updatedAt": "2026-10-14",
+      "version": "f50f646ef34e33097897fbf2e9c5e321d2ef33a5cffd0c737dc9b1a69f1223f9",
+      "htmlPath": "/the-shelf/docs/contracts/",
+      "rawPath": "/the-shelf/docs/raw/contracts.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/contracts/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/contracts.md"
+    },
+    {
+      "id": "runbook",
+      "title": "The Shelf 运行与部署",
+      "description": "网页可以单独发布到 GitHub Pages。私人阅读和 AI 使用独立后端；云端存储与模型未配置时，公开书架和文档仍然可用。",
+      "updatedAt": "2026-10-14",
+      "version": "9eb4c856036903d01d9f8d803ec26e8f54b29dbcbf3ed107248041bdfe7207f5",
+      "htmlPath": "/the-shelf/docs/runbook/",
+      "rawPath": "/the-shelf/docs/raw/runbook.md",
+      "htmlUrl": "https://sickate.github.io/the-shelf/docs/runbook/",
+      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/runbook.md"
+    }
+  ]
+}
