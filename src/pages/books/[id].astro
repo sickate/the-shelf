@@ -63,7 +63,7 @@ const { book } = Astro.props;
             id="metadata-title"
             value={book.title}
             required
-            maxlength="500"
+            maxlength="300"
           />
         </label>
         <div class="form-row">
@@ -104,7 +104,7 @@ const { book } = Astro.props;
           简介
           <textarea
             id="metadata-description"
-            maxlength="10000"
+            maxlength="4000"
           >{book.description}</textarea>
         </label>
         <p>
@@ -192,15 +192,22 @@ const { book } = Astro.props;
             </label>
           </div>
           <label id="chapter-label" hidden>
-            章节
-            <input id="chapter" placeholder="章节名称或编号" />
+            章节编号或 PDF 页码
+            <input
+              id="chapter"
+              type="number"
+              min="1"
+              step="1"
+              placeholder="例如：3"
+            />
+            <small class="muted">EPUB 按章节，PDF 按页码。</small>
           </label>
-          <label style="margin-top:16px">
-            问题或整理重点
+          <label id="question-label" style="margin-top:16px">
+            书内问题
             <textarea
               id="question"
               placeholder="这本书中，哪些观点值得进一步思考？"
-              maxlength="6000"
+              maxlength="4000"
             ></textarea>
           </label>
           <p>

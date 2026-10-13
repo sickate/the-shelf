@@ -1,5 +1,6 @@
 import { base } from "../lib/client";
 import { api, session, errorText, accessUrl, explainCode } from "../lib/api";
+import { buildJobInput } from "../lib/job-input.mjs";
 export async function initBook() {
   const book =
       document.querySelector<HTMLElement>("[data-book]")!.dataset.book!,
@@ -98,7 +99,14 @@ export async function initBook() {
       )[job.operation] || "整理结果";
     section.append(heading);
     const meta = document.createElement("small");
-    meta.textContent = ` · ${job.status} · ${new Date(job.createdAt).toLocaleDateString("zh-CN")}`;
+    const statuses: Record<string, string> = {
+      queued: "排队中",
+      running: "整理中",
+      completed: "已完成",
+      failed: "未完成",
+      uncertain: "结果待确认",
+    };
+    meta.textContent = ` · ${statuses[job.status] || "待确认"} · ${new Date(job.createdAt).toLocaleDateString("zh-CN")}`;
     section.append(meta);
     const content = document.createElement("p");
     content.textContent =
@@ -113,11 +121,35 @@ export async function initBook() {
       "任务处理中，结果会自动保存。";
     section.append(content);
     if (Array.isArray(job.sources)) {
+      const seen = new Set<string>();
       for (const source of job.sources) {
+        const label =
+          typeof source === "string" ? source : source.label || "参考资料";
+        const key = `${label}:${source.url || source.fileId || ""}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
         const p = document.createElement("p");
         p.className = "muted";
-        p.textContent =
-          typeof source === "string" ? source : JSON.stringify(source);
+        p.textContent = `来源：${label}`;
+        let href = "";
+        if (source.url) {
+          try {
+            const url = new URL(source.url);
+            if (["http:", "https:"].includes(url.protocol)) href = url.href;
+          } catch {}
+        } else if (source.fileId) {
+          const page = label.match(/PDF 第 (\d+) 页/)?.[1];
+          href = `${base}read/?book=${encodeURIComponent(book)}&file=${encodeURIComponent(source.fileId)}${page ? `&page=${page}` : ""}`;
+        }
+        if (href) {
+          const link = document.createElement("a");
+          link.href = href;
+          link.textContent = "查看来源 ↗";
+          link.style.marginLeft = "8px";
+          link.rel = "noopener noreferrer";
+          if (source.url) link.target = "_blank";
+          p.append(link);
+        }
         section.append(p);
       }
     }
@@ -237,6 +269,7 @@ export async function initBook() {
   op.onchange = () => {
     document.getElementById("chapter-label")!.hidden =
       op.value !== "chapter_summary";
+    document.getElementById("question-label")!.hidden = op.value !== "question";
   };
   document.getElementById("ai-form")!.onsubmit = async (e) => {
     e.preventDefault();
@@ -257,12 +290,15 @@ export async function initBook() {
     }
     submit.disabled = true;
     try {
-      const data = await api(`/api/books/${book}/jobs`, {
-        operation: op.value,
-        question,
-        chapter,
-        model: (document.getElementById("model") as HTMLSelectElement).value,
-      });
+      const data = await api(
+        `/api/books/${book}/jobs`,
+        buildJobInput({
+          operation: op.value,
+          question,
+          chapter,
+          model: (document.getElementById("model") as HTMLSelectElement).value,
+        }),
+      );
       const j = data.job || data;
       jobs.set(j.id, j);
       render();

@@ -94,7 +94,10 @@ export async function initReader() {
         data: new Uint8Array(bytes),
         isEvalSupported: false,
       }).promise;
-      let page = Math.min(pdf.numPages, Math.max(1, Number(progress) || 1)),
+      let page = Math.min(
+          pdf.numPages,
+          Math.max(1, Number(params.get("page")) || Number(progress) || 1),
+        ),
         renderTask: any = null;
       const pageInput = document.getElementById("pdf-page") as HTMLInputElement;
       pageInput.max = String(pdf.numPages);
