@@ -1,0 +1,31 @@
+# Project-scoped approval routing; preserves the sandbox and actual review.
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+sandbox_mode = "workspace-write"
+
+[auto_review]
+extra_policy = """
+The user pre-authorizes automatic review and execution for actions whose entire
+external effect is confined to GitHub repository sickate/the-shelf or The Shelf
+resources in the Cloudflare account identified by SHELF_R2_ACCOUNT_ID in this
+project's ignored .env file. Current resource:
+private R2 bucket the-shelf-books and credentials scoped exclusively to it.
+This covers the project's workflows, Pages, variables, environments, code,
+resource configuration and project-scoped credentials. Do not demand another
+human confirmation merely because an authorized action is a write or issues a
+project-scoped credential. Check the actual target and scope before approval.
+The authorization does not extend to unrelated resources, account-wide generic
+credentials or new paid subscriptions. Preserve the 8 GB storage budget and
+explicit per-file upload behavior. Project secrets may be written only to
+ignored .env/.local configuration, including the authorized development copy at
+paw@paw:~/code/the-shelf, and must never appear in logs, Git or public artifacts.
+The user also pre-authorizes automatic review and execution of Bash/shell
+commands whose complete effects are confined to the current The Shelf checkout
+or paw@paw:~/code/the-shelf. This includes file/config edits, project dependencies,
+tests, builds, Git operations and development processes belonging to this project,
+and disposable verification files created exclusively for it. Review the full
+command, not just its cwd: this does not authorize unrelated projects, global
+machine/account changes or copying unrelated credentials.
+For other actions use the main policy and their own user authorization; this
+project authorization is not evidence of permission outside the listed scope.
+"""

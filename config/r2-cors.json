@@ -1,0 +1,17 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": [
+          "https://sickate.github.io",
+          "http://127.0.0.1:4321",
+          "http://localhost:4321"
+        ],
+        "methods": ["GET", "HEAD"],
+        "headers": ["Range", "If-Range", "If-None-Match", "If-Modified-Since"]
+      },
+      "exposeHeaders": ["ETag", "Accept-Ranges", "Content-Range", "Content-Length"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}

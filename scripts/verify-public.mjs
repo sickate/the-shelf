@@ -32,6 +32,7 @@ const privateRoot = fs.existsSync(manifestPath)
   : null;
 const secretValues = [
   "SHELF_OAI_KEY",
+  "SHELF_R2_ACCESS_KEY_ID",
   "SHELF_R2_SECRET_ACCESS_KEY",
   "SHELF_OWNER_PASSWORD",
 ]
@@ -61,8 +62,9 @@ function walk(directory) {
       if (privateRoot && text.includes(privateRoot))
         issues.push("public output contains the source root");
       if (
-        text.includes("/Users/paw/") ||
-        text.includes("/Volumes/MoneyMaterial/")
+        /(?:\/Users\/[^/\s"'<>]+\/|\/Volumes\/[^/\s"'<>]+\/|\/home\/[^/\s"'<>]+\/)/.test(
+          text,
+        )
       )
         issues.push("public output contains a private absolute path");
       if (secretValues.some((v) => text.includes(v)))

@@ -14,7 +14,7 @@
     "docs:export": "node scripts/export-docs.mjs",
     "import:books": "python3 scripts/import-books.py",
     "test": "node --test tests/*.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py'",
-    "verify:public": "node scripts/verify-public.mjs",
+    "verify:public": "node --env-file-if-exists=.env scripts/verify-public.mjs",
     "upload:plan": "node --env-file-if-exists=.env server/upload.mjs"
   },
   "dependencies": {
