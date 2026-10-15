@@ -451,3 +451,11 @@ HTTP/1与HTTP/2不能据此归因性能效果，CPU/CF-03仍未通过。后续�
 分析器gate仍为 `unknown/incomplete_evidence`，reasons为 `group_aggregate_count_mismatch`、`ambiguous_attribution`、`missing_request_traffic`；完整aggregate已保留，不能仅凭较低P95/max判通过，不与旧20请求或profile窗口混合。
 最终ledger为business48/100、explicitManagement84/90、D1management38/40、helper部署1；auth=0、active=0、entry off的关闭证据来自candidate-h2-result，最后一次只读不改状态。warm未跑、满批维护未触发，本轮云分支结束，不再扩预算或采样，生产API及主站静态不变、无R2对象写入。
 阶段提交 `5a6242d`、`15cd401` 均已push且各自Cloudflare/Pages CI成功；最终156项Node、8项Python、disabled build、真实secret隐私扫描及verify:static通过。下一阶段先固化测试受控sampler，业务两轮完整采集后再等analytics，验证真实CAS与满批维护覆盖，再另行计划云轮；CPU/CF-03未通过，R2新鲜证据不足、无原文件上传仍保留。
+
+### 10.11 今日收工与下次接续（2026-10-15）
+
+代码提交 `5a6242d` CPU证据分析、`15cd401` 去除重复配置解码及进度文档 `ab39b8b` 均已推送；三个提交的Cloudflare与Pages CI成功，最新CI `38740719898`/`38740720092`成功。
+156项Node、8项Python、build、真实secret隐私检查及`verify:static`通过；静态文档经受控helper部署，32 GET内容/MIME一致、3个missing及API 404通过，runtime disabled。发布receipt保存在`.local/cf03/cpu-round-q2yZiT/stage-release.json`及`.local/cf03/live-static-resume-zLEFpQ/receipt.json`；网络中断与规范slash验证记录保留，最终协议混合，不能声称全部H2。
+check已关闭auth、撤销全部会话并关闭entry；production API未启用，无书籍上传。CF-03未完成：新候选21 HTTP/80断言及真实CAS通过，aggregate P95=4.387ms/max=4.835ms，但分组证据不完整、gate unknown；warm和满批维护未验收，R2用量证据freshness仍不足。
+最终ledger为business48/100、explicit management84/90、D1 management38/40、helper1，不重置。下次先计划、固化并测试受控sampler（环境传递、真实CAS、两轮HTTP完整收集后再等analytics、满批维护覆盖），之后另行有界云验收；不可直接追加采样或扩大本轮预算。
+今日工作到此停止，不启动下一阶段。
