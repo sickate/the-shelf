@@ -2,13 +2,13 @@
 
 公开目录和文档使用静态网页；私人文件访问与按需 AI 使用由独立业务后端处理。大文件留在本地时，云端只保留公开目录所需的信息。
 
-更新日期：2026 年 10 月 15 日。阶段：首版实现；CF-02 静态配置待验收，尚未切换现有发布。
+更新日期：2026 年 10 月 15 日。阶段：首版实现；CF-02 Workers Static Assets 静态站已上线，Pages 保留回退。
 
 ## 组件职责
 
 | 组件 | 职责 | 初期选择 |
 | --- | --- | --- |
-| 网页 | 书架、详情、阅读器、问答界面和公开文档 | GitHub Pages，静态构建；Workers Static Assets 配置已准备，待验收 |
+| 网页 | 书架、详情、阅读器、问答界面和公开文档 | Cloudflare Workers Static Assets；GitHub Pages 保留回退 |
 | 本机导入 | 扫描、元数据提取、去重、格式转换和文本准备 | 本机执行，不调用 LLM |
 | 文件存储 | 云端原文件和必要的阅读版本 | R2 Standard，受免费预算约束 |
 | 书库后端 | 所有者登录、文件授权、任务创建和结果查询 | Node.js 独立轻量服务；生产部署位置待定 |
@@ -20,11 +20,11 @@
 
 ## Cloudflare 迁移目标
 
-2026 年 10 月 15 日确认将 Cloudflare 统一托管纳入后续计划。静态迁移代码和目标 URL 已进入本轮验收；下表中的 API、D1、R2 业务绑定和 Workflows 仍是待验证目标，不能视为已经部署。
+2026 年 10 月 15 日确认将 Cloudflare 统一托管纳入后续计划。CF-02 纯静态站已上线至 `https://the-shelf.iamzhutuo.workers.dev/`，线上 Worker 无 API bindings 且 preview URLs 关闭。下表中的 API、D1、R2 业务绑定和 Workflows 仍是待验证目标，不能视为已经部署。
 
 | 组件 | 目标 | 迁移变化 |
 | --- | --- | --- |
-| 静态网站 | Workers Static Assets，目标 URL `https://the-shelf.iamzhutuo.workers.dev/` | 继续使用 Astro 构建；静态产物验收后再决定替代 Pages 发布 |
+| 静态网站 | Workers Static Assets，`https://the-shelf.iamzhutuo.workers.dev/` | Astro 静态站已部署并验收；Pages 作为回退 |
 | 业务 API | Workers，同站点 /api/ | 适配请求处理、登录、文件授权与元数据接口 |
 | 业务数据 | D1 | 适配本地 SQLite、内存会话和 JSON 覆盖记录；只导出允许公开的字段用于构建 |
 | 原文件与准备好的正文 | 现有私有 R2 | 保留逐文件授权和预算；正文与派生文件计入相同存储预算 |
@@ -71,9 +71,9 @@
 
 ## 发布与可用性
 
-目录、文档和人工修订经过静态构建发布到 Pages。AI 回答写入数据库后，私人详情界面立即可读；主动发布的内容可通过公开接口读取，并在后续构建同步为静态内容。
+目录、公开文档和人工修订经静态构建发布到 Workers Static Assets。AI 回答写入数据库后，私人详情界面立即可读；主动发布的内容可通过公开接口读取，并在后续构建同步为静态内容。
 
-迁移完成后，静态产物发布目标改为 Workers Static Assets，D1 中的人工修订通过公开字段快照进入下一次构建。切换前验证站点基路径、同源 API、R2 CORS 与回退方案；当前 GitHub Pages 发布仍有效。
+后续迁移将验证同源 API、R2 CORS 与私人数据回退；静态站已使用根路径发布，GitHub Pages 回退部署仍保留。CI 可构建并保存 artifact；自动部署须等单 Worker 专用 token 配置完成后再启用。D1 中的人工修订未来将通过公开字段快照进入下一次构建。
 
 AI 服务不可用时，目录、文档、已保存总结和已授权文件仍能独立访问。
 

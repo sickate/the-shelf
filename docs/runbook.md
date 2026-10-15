@@ -1,14 +1,16 @@
 # The Shelf 运行与部署
 
-当前网页发布到 GitHub Pages，私人阅读和 AI 使用独立开发后端；云端存储与模型未配置时，公开书架和文档仍然可用。后续计划迁到 Cloudflare，尚未实施。paw 继续作为开发和导入机器。
+当前公开网页发布到 Cloudflare Workers Static Assets，私人阅读和 AI 仍由独立开发后端提供；云端存储与模型未配置时，公开书架和文档仍然可用。GitHub Pages 保留回退部署。paw 继续作为开发和导入机器。
 
-更新日期：2026 年 10 月 15 日。阶段：首版运行说明，追加待实施的迁移计划。
+更新日期：2026 年 10 月 15 日。阶段：首版运行说明；CF-02 静态站已上线，CF-03 及后续业务迁移待实施。
 
 ## Cloudflare 迁移状态
 
-目标为 Workers Static Assets、同源 Workers API、D1 与 Workflows，继续使用现有私有 R2。先完成免费运行验证，再分阶段迁移；具体任务、依赖与切换门槛见[开发计划](development-plan.md)。
+CF-02 静态站已部署在 `https://the-shelf.iamzhutuo.workers.dev/`，根路径提供公开书架和文档。线上 Worker 已确认没有 API bindings，preview URLs 关闭。Workers API、D1、登录、私人阅读和 Workflows 尚未上线；继续使用现有私有 R2。后续任务、依赖与门槛见[开发计划](development-plan.md)。
 
-仓库已有 Workers Static Assets 纯静态配置和独立根路径构建。目标 URL 为 `https://the-shelf.iamzhutuo.workers.dev/`；在本轮本机 review 和云端静态验收完成前，GitHub Pages 仍是当前网站。新工作流默认只构建、检查并保存 artifact；自动部署需专门配置单 Worker 范围的 `SHELF_CF_DEPLOY_TOKEN`、`SHELF_CF_ACCOUNT_ID` Secrets，并设置仓库变量 `SHELF_CF_AUTO_DEPLOY=true`。该专用凭证尚不可用，因此不能称 GitHub 自动部署已启用。R2 对象凭证不能当作 Workers 或 D1 部署凭证。Pages 工作流保留作为回退。
+Workers Static Assets 站点已通过线上验收：HTTP/2 对 1,303 个静态资源的检查全部返回 200，覆盖 1,280 个 HTML 页面与全部 1,264 个书籍详情；29 项 GET 检查覆盖首页、书籍、阅读页、文档索引、全部 12 篇文档的 HTML/raw、合并 Markdown，内容与 MIME 均符合预期；不存在路径返回真实 404。Cloudflare CI 运行 38677306877 构建和 artifact 成功、部署步骤按默认配置跳过；GitHub Pages 运行 38677307035 成功。主站已切换到 `https://the-shelf.iamzhutuo.workers.dev/`，Pages 工作流和站点保留为回退。
+
+Cloudflare 工作流默认只构建、检查并保存 artifact。由于单 Worker 专用 `SHELF_CF_DEPLOY_TOKEN` 尚未配置，CI 自动部署仍关闭；本机受控发布可用。R2 对象凭证不能当作 Workers 或 D1 部署凭证。Node 批量 fetch 验证曾遇到间歇 TLS 连接重置，因此不把 `verify:static --url` 记为通过；上述线上验收使用 HTTP/2 检查完成。
 
 本地生成和检查静态站点：
 
@@ -16,9 +18,12 @@
 npm run build:cloudflare
 npm run verify:public
 npm run verify:static
+npm run deploy:cloudflare
 ```
 
 `build:cloudflare` 强制站点 URL 使用纯 HTTPS origin 和根路径，不受 Pages 仓库前缀影响，也不连接生产 API；可用 `SHELF_CF_SITE_URL` 覆盖目标 origin。部署后可使用 `npm run verify:static -- --url https://example.workers.dev` 只读检查生成的 HTML、资源、代表页面和真实 404。
+
+`deploy:cloudflare` 仅部署通过公开产物与静态站预检的现有 `dist`，固定目标 Worker 名称 `the-shelf`，并要求部署账号与项目账号配置匹配。部署配置、临时日志保存在权限受限的 `.local/cf-static/` 下，日志会脱敏；不要手动复制构建物到其他 Worker。GitHub Actions 只有配置 `SHELF_CF_DEPLOY_TOKEN` 和 `SHELF_CF_ACCOUNT_ID` 两个 Secrets，并将仓库变量 `SHELF_CF_AUTO_DEPLOY` 设为 `true` 时才执行自动部署；启用开关但缺少任一 Secret 会明确失败。
 
 ## 环境与本机启动
 
@@ -78,7 +83,7 @@ npm run upload:plan -- file_example
 
 对象存储设置必须允许实际网页来源读取文件及 Range。网页读取签名 R2 地址不附带 cookie，本机内容接口附带所有者会话；签名链接到期后重新申请。
 
-## GitHub Pages
+## GitHub Pages 回退
 
 仓库为 sickate/the-shelf，站点路径为 /the-shelf/。main 分支提交触发工作流，依次安装依赖、运行测试、构建、检查公开产物并部署 Pages。
 

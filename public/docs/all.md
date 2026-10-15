@@ -4,7 +4,7 @@
 
 The Shelf 的书架和设计文档公开，电子书默认私有。所有文件都进入收藏目录；超过 20 MB 的文件暂不上传，详情页仍显示格式、大小和可用状态。AI 仅在主动提问或请求总结时调用。
 
-更新日期：2026 年 10 月 15 日。阶段：首版已验证；CF-02 静态构建与验收工具待本轮 review 和线上验收。产品需求描述目标，实际能力和待配置项以运行与部署说明为准；下一步任务以开发计划为准。
+更新日期：2026 年 10 月 15 日。阶段：首版已验证，CF-02 静态迁移已上线并验收。产品需求描述目标，实际能力和待配置项以运行与部署说明为准；下一步任务以开发计划为准。
 
 ## 文档目录
 
@@ -20,11 +20,11 @@ The Shelf 的书架和设计文档公开，电子书默认私有。所有文件�
 | [设计决策](decisions.md) | 已确认的约束、暂定的选择和后续决策 |
 | [开发计划](development-plan.md) | Cloudflare 迁移任务、开发优先级、依赖与交付标准 |
 | [数据与接口契约](contracts.md) | 导入、网页与后端共享字段与行为 |
-| [运行与部署](runbook.md) | 本机运行、私人配置、GitHub Pages 与当前限制 |
+| [运行与部署](runbook.md) | 本机运行、私人配置、Cloudflare 发布、Pages 回退与当前限制 |
 
 ## 当前实现范围
 
-真实目录、公开文档、本机私人阅读和按需 AI 队列已实现，AI 仍使用模拟上游验证。当前发布使用 GitHub Pages，R2 已验证但尚未上传电子书。CF-02 配置 Workers Static Assets 根路径构建和静态链接验收；新站尚待本轮 review 与线上验收。登录与阅读、正文准备和真实 AI 仍待后续迁移。
+真实目录、公开文档、本机私人阅读和按需 AI 队列已实现，AI 仍使用模拟上游验证。公开静态站已发布并验收于 Cloudflare Workers Static Assets；GitHub Pages 保留回退。R2 已验证但尚未上传电子书。登录、私人阅读、业务 API、正文准备和真实 AI 仍待后续迁移。
 
 导入默认不调用 LLM，不购买服务器、数据库、模型额度或其他订阅。paw 继续用于开发与导入。
 
@@ -107,13 +107,13 @@ PDF 保留页面排版，支持目录、页码和缩放。EPUB 提供目录、�
 
 公开目录和文档使用静态网页；私人文件访问与按需 AI 使用由独立业务后端处理。大文件留在本地时，云端只保留公开目录所需的信息。
 
-更新日期：2026 年 10 月 15 日。阶段：首版实现；CF-02 静态配置待验收，尚未切换现有发布。
+更新日期：2026 年 10 月 15 日。阶段：首版实现；CF-02 Workers Static Assets 静态站已上线，Pages 保留回退。
 
 ## 组件职责
 
 | 组件 | 职责 | 初期选择 |
 | --- | --- | --- |
-| 网页 | 书架、详情、阅读器、问答界面和公开文档 | GitHub Pages，静态构建；Workers Static Assets 配置已准备，待验收 |
+| 网页 | 书架、详情、阅读器、问答界面和公开文档 | Cloudflare Workers Static Assets；GitHub Pages 保留回退 |
 | 本机导入 | 扫描、元数据提取、去重、格式转换和文本准备 | 本机执行，不调用 LLM |
 | 文件存储 | 云端原文件和必要的阅读版本 | R2 Standard，受免费预算约束 |
 | 书库后端 | 所有者登录、文件授权、任务创建和结果查询 | Node.js 独立轻量服务；生产部署位置待定 |
@@ -125,11 +125,11 @@ PDF 保留页面排版，支持目录、页码和缩放。EPUB 提供目录、�
 
 ## Cloudflare 迁移目标
 
-2026 年 10 月 15 日确认将 Cloudflare 统一托管纳入后续计划。静态迁移代码和目标 URL 已进入本轮验收；下表中的 API、D1、R2 业务绑定和 Workflows 仍是待验证目标，不能视为已经部署。
+2026 年 10 月 15 日确认将 Cloudflare 统一托管纳入后续计划。CF-02 纯静态站已上线至 `https://the-shelf.iamzhutuo.workers.dev/`，线上 Worker 无 API bindings 且 preview URLs 关闭。下表中的 API、D1、R2 业务绑定和 Workflows 仍是待验证目标，不能视为已经部署。
 
 | 组件 | 目标 | 迁移变化 |
 | --- | --- | --- |
-| 静态网站 | Workers Static Assets，目标 URL `https://the-shelf.iamzhutuo.workers.dev/` | 继续使用 Astro 构建；静态产物验收后再决定替代 Pages 发布 |
+| 静态网站 | Workers Static Assets，`https://the-shelf.iamzhutuo.workers.dev/` | Astro 静态站已部署并验收；Pages 作为回退 |
 | 业务 API | Workers，同站点 /api/ | 适配请求处理、登录、文件授权与元数据接口 |
 | 业务数据 | D1 | 适配本地 SQLite、内存会话和 JSON 覆盖记录；只导出允许公开的字段用于构建 |
 | 原文件与准备好的正文 | 现有私有 R2 | 保留逐文件授权和预算；正文与派生文件计入相同存储预算 |
@@ -176,9 +176,9 @@ PDF 保留页面排版，支持目录、页码和缩放。EPUB 提供目录、�
 
 ## 发布与可用性
 
-目录、文档和人工修订经过静态构建发布到 Pages。AI 回答写入数据库后，私人详情界面立即可读；主动发布的内容可通过公开接口读取，并在后续构建同步为静态内容。
+目录、公开文档和人工修订经静态构建发布到 Workers Static Assets。AI 回答写入数据库后，私人详情界面立即可读；主动发布的内容可通过公开接口读取，并在后续构建同步为静态内容。
 
-迁移完成后，静态产物发布目标改为 Workers Static Assets，D1 中的人工修订通过公开字段快照进入下一次构建。切换前验证站点基路径、同源 API、R2 CORS 与回退方案；当前 GitHub Pages 发布仍有效。
+后续迁移将验证同源 API、R2 CORS 与私人数据回退；静态站已使用根路径发布，GitHub Pages 回退部署仍保留。CI 可构建并保存 artifact；自动部署须等单 Worker 专用 token 配置完成后再启用。D1 中的人工修订未来将通过公开字段快照进入下一次构建。
 
 AI 服务不可用时，目录、文档、已保存总结和已授权文件仍能独立访问。
 
@@ -364,13 +364,13 @@ Key 提供调用归属，不等于书籍权限、用户登录或独立配额。�
 
 产品、架构、实现顺序和设计决策使用公开文档区域提供给人和其他 AI。读取文档不需要进入私人管理后台，也不要求登录、浏览器脚本或 AI Key。
 
-更新日期：2026 年 10 月 15 日。阶段：公开文档已实现，后续随网站迁移到 Cloudflare。
+更新日期：2026 年 10 月 15 日。阶段：公开文档已部署于 Cloudflare Workers Static Assets；GitHub Pages 保留回退。
 
 ## 网页入口
 
 网站导航增加产品与实现文档 section，入口为站点内的 /docs/。私人管理页面也链接到同一个公共入口，不另建需要账号的文档副本。
 
-GitHub 项目站点可能有仓库路径前缀，所有文档与原文链接都以实际站点基路径生成，不能假设部署在域名根目录。
+当前 Cloudflare 主站运行在域名根路径；GitHub Pages 回退站使用 `/the-shelf/` 前缀。构建与验收须分别覆盖两种基路径。
 
 每篇文档生成可直接读取的 HTML 正文与稳定链接。页面包含标题、更新时间、设计或实现状态、目录和相关文档；不依赖 JavaScript 加载正文。
 
@@ -395,7 +395,7 @@ GitHub 项目站点可能有仓库路径前缀，所有文档与原文链接都�
 
 设计约束与实际实现进度分别标记；接口、文件策略或权限发生变化时，同步更新相关文档与实现状态。未部署的能力不标为可用。
 
-Workers Static Assets 根路径构建继续使用相同内容源、文档 ID 和固定发布清单，并针对目标 origin 重新生成链接；CF-02 验收器检查索引版本、全部文档链接和静态产物。目标站点线上验收通过前，GitHub Pages 仍是当前公开站。迁移不会把私人运维记录或电子书正文加入发布范围。
+Workers Static Assets 根路径构建继续使用相同内容源、文档 ID 和固定发布清单，并针对主站 origin 重新生成链接。线上检查确认首页及全部文档 HTML/raw、索引和合并原文可读，版本内容与 MIME 正确。GitHub Pages 保留为回退站。迁移不会把私人运维记录或电子书正文加入发布范围。
 
 ## 后续 MCP
 
@@ -413,16 +413,16 @@ MCP 初期只处理公开文档。私人文件、个人对话、修改文档和�
 
 # The Shelf 实现顺序与验收
 
-首版目录、文档、私人阅读与 AI 后端已实现并通过本地验证。后续先验证 Cloudflare 免费运行条件，再迁移网站与业务后端，完成真实阅读和 AI 接入。任务编号和优先级以[开发计划](development-plan.md)为准。
+首版目录、文档、私人阅读与 AI 后端已实现并通过本地验证。CF-02 静态网站已迁至 Cloudflare Workers Static Assets 并完成线上验收；后续迁移业务后端、登录与私人阅读，再完成真实 AI 接入。任务编号和优先级以[开发计划](development-plan.md)为准。
 
-更新日期：2026 年 10 月 15 日。阶段：首版已验证；CF-02 实现待主 Agent review 和新站验收。
+更新日期：2026 年 10 月 15 日。阶段：首版已验证；CF-02 静态迁移已上线，Pages 保留回退。
 
 ## 已有阶段的实际状态
 
 | 阶段 | 当前状态 |
 | --- | --- |
 | 收藏盘点 | 复制完成后已扫描，生成 1,264 条书籍记录 |
-| 公开书架和文档 | 已实现并部署到 GitHub Pages；Workers Static Assets 根路径构建与验收工具待 review / 线上验收 |
+| 公开书架和文档 | 已部署并验收到 Workers Static Assets；GitHub Pages 保留回退 |
 | 私人文件访问 | 本机后端已实现，R2 诊断对象验证通过；真实电子书云端闭环待验收 |
 | 按需 AI | 队列和界面已实现、模拟上游测试通过；真实任务 Key 与接入待完成 |
 
@@ -456,7 +456,7 @@ MCP 初期只处理公开文档。私人文件、个人对话、修改文档和�
 
 先完成 Cloudflare 迁移：CF-01 免费后端验证 → CF-02 静态网站 → CF-03 登录与私人阅读 → CF-04 本机正文准备 → CF-05 持久任务与真实 AI → CF-06 可靠性与后续体验。
 
-验收要求：新站点静态链接与文档机器入口有效；同源 API 保留登录、CSRF、文件权限与发布边界；D1 与私有 R2 中的数据可核对和恢复；任务在页面关闭后继续且不盲目重试上游；实际运行符合免费额度。GitHub Pages 在新站验收前继续服务，迁移不覆盖现有私人数据。
+CF-02 已验收：新站点全部 1,303 个静态资源与 1,264 个书籍详情可读，文档机器入口有效，真实 404 正常；GitHub Pages 保留回退。后续验收要求：同源 API 保留登录、CSRF、文件权限与发布边界；D1 与私有 R2 中的数据可核对和恢复；任务在页面关闭后继续且不盲目重试上游；实际运行符合免费额度。迁移不覆盖现有私人数据。
 
 主流程稳定后，再根据实际使用增加跨设备阅读进度、网页上传管理、更好的正文检索与只读文档 MCP。书籍问答流式输出需要明确扩展现有 AI 服务契约，不挪用作文批改任务。
 
@@ -489,9 +489,9 @@ MCP 初期只处理公开文档。私人文件、个人对话、修改文档和�
 
 ## 暂定实现选择
 
-当前静态前端继续由 GitHub Pages 服务。CF-02 增加 Workers Static Assets 根路径构建，目标 URL 为 `https://the-shelf.iamzhutuo.workers.dev/`；通过本轮 review 与线上验收后再决定切换。文件使用 R2 Standard，业务后端为独立 Node.js 服务，数据与任务使用 SQLite。生产后端部署位置尚未选定，paw 用于开发。超过门槛、超预算或复制未完成的文件都能被目录收录。
+当前静态前端使用 Cloudflare Workers Static Assets，主站为 `https://the-shelf.iamzhutuo.workers.dev/`，线上静态资源已验收；GitHub Pages 保留回退。文件使用 R2 Standard，业务后端为独立 Node.js 服务，数据与任务使用 SQLite。生产业务后端部署位置尚未选定，paw 用于开发。超过门槛、超预算或复制未完成的文件都能被目录收录。
 
-以上为现有实现。后续目标方案采用 Workers Static Assets、Workers、D1、Workflows 和现有私有 R2；生产部署以免费适配验证结果为准，目前尚未迁移。不把已有 Node.js 后端直接改成 paw 上的生产常驻服务。
+以上为现有实现。后续业务方案目标采用 Workers API、D1、Workflows 和现有私有 R2；登录、私人阅读、数据和任务仍未迁移。不把已有 Node.js 后端直接改成 paw 上的生产常驻服务。
 
 大小单位暂按十进制 MB；本项目存储预算初设 8 GB，实际额度还要扣除同一账号其他占用。所有者独立登录，匿名访问者不开放 AI 生成。
 
@@ -499,7 +499,7 @@ MCP 初期只处理公开文档。私人文件、个人对话、修改文档和�
 
 ## 下一阶段需要核实的状态
 
-收藏复制已确认完成，已生成真实目录；R2 凭证与诊断对象读写已验证。下一阶段先核实 Cloudflare 免费计划、账号共享额度、项目部署权限、Workers CPU、D1 容量及长任务执行，再完成真实文件阅读与 AI 接入。实际站点地址和切换时机在迁移阶段确定。
+静态站已部署并验收，Worker 不含 API bindings 且 preview URLs 关闭；CI 自动部署因尚缺专用单 Worker token 而保持关闭。下一阶段继续核实 Cloudflare 免费计划、账号共享额度、Workers CPU、D1 容量及长任务执行，再完成真实文件阅读与 AI 接入。
 
 现有所有者密码登录继续保留业务语义；首批验证使用逐文件选择的合格 EPUB 与 PDF。AI 专用 Key 与现有服务接口验证独立处理。不为迁移购买新域名或付费计划，不修改收藏源文件。各任务依赖和验收见[开发计划](development-plan.md)。
 
@@ -509,9 +509,9 @@ MCP 初期只处理公开文档。私人文件、个人对话、修改文档和�
 
 # The Shelf 开发计划
 
-第一版已交付真实收藏书架、公开文档，以及可在本机运行的私人阅读与按需 AI 后端。下一阶段计划将线上网站与业务服务逐步统一到 Cloudflare 免费服务；GitHub 继续保存代码，GitHub Pages 在迁移验收前继续提供现有网站。
+第一版已交付真实收藏书架、公开文档，以及可在本机运行的私人阅读与按需 AI 后端。CF-02 已将静态网站迁到 Cloudflare Workers Static Assets；GitHub 保存代码，GitHub Pages 保留为回退站点。业务 API、登录和私人阅读仍未迁移。
 
-更新日期：2026 年 10 月 15 日。阶段：首版已验证，CF-01 评估完成、鉴权需适配；当前进入 CF-02 静态迁移。
+更新日期：2026 年 10 月 15 日。阶段：首版已验证；CF-01 评估完成、鉴权需适配；CF-02 静态迁移完成；CF-03 尚未开始。
 
 实施按仓库根目录 `AGENTS.md` 的计划、分工、review、修正、验证与发布流程执行。主 Agent 负责规划、集成和最终验收；具体任务由主 Agent 评估难度后分配模型。下表模型与 effort 是建议起点，鉴权、安全、数据和 AI 的具体实现必须分配给 Sol；简单文档等任务可由 Luna 处理并经主 Agent review。实现完成、主 Agent review 通过、全部适用测试/构建/隐私检查通过后，达到本文迁移门槛的变更在既有授权内按提交、推送、现有 CI 部署、线上验证的顺序发布。
 
@@ -535,12 +535,12 @@ MCP 初期只处理公开文档。私人文件、个人对话、修改文档和�
 
 ## 当前开发优先级
 
-任务按下表顺序推进；同一优先级内仍有前置依赖。CF-01 的评估已完成，结论是继续 Cloudflare 基础设施迁移，同时为 CF-03 登录单独设计并验证安全低 CPU 方案。当前执行 CF-02；不启动整库上传或真实模型任务。
+任务按下表顺序推进；同一优先级内仍有前置依赖。CF-01 评估结论是继续 Cloudflare 基础设施迁移，同时在 CF-03 实现前设计并验证安全低 CPU 登录方案。CF-02 已完成；下一步先处理 CF-03 的安全鉴权前置设计，本轮不启动 CF-03 实现、整库上传或真实模型任务。
 
 | 编号 | 优先级与状态 | 任务 | 前置依赖 | 建议模型 / effort | 交付与验收 |
 | --- | --- | --- | --- | --- | --- |
 | CF-01 | P0，评估完成 | Cloudflare 免费后端最小验证 | 无 | gpt-6.1-sol / high | 记录 Workers 登录计算、D1 持久化、私有 R2 绑定与模拟 Workflow 长任务结果，给出继续或调整结论；结论不代表生产登录已通过 |
-| CF-02 | P1，进行中 | 静态网站迁到 Workers Static Assets | CF-01 的静态部署与权限检查通过 | gpt-6-luna / medium（静态、CI 与 URL 验证）；gpt-6.1-sol / high（受控部署辅助工具） | 复用 Astro 产物和现有测试；核对新站点 URL、基路径、全部书籍和文档链接；新站验收后再切换发布，保留可回退的 GitHub Pages 部署方式 |
+| CF-02 | P1，完成 | 静态网站迁到 Workers Static Assets | CF-01 的静态部署与权限检查通过 | gpt-6-luna / medium（静态、CI 与 URL 验证）；gpt-6.1-sol / high（受控部署辅助工具） | Astro 静态站已发布至项目 Workers Static Assets；1303 项资源 HTTP/2 全部 200，页面、文档、内容、MIME 与 404 检查通过；GitHub Pages 保留回退 |
 | CF-03 | P1，待开始 | Workers + D1 登录与私人阅读 | CF-01、CF-02 | gpt-6.1-sol / high | 迁移会话、元数据覆盖、文件登记与授权；建立只含公开字段的构建快照同步；先逐文件上传一份合格 EPUB 和一份 PDF，验证登录、拒绝匿名访问、Range、下载及签名刷新 |
 | CF-04 | P2，待开始 | 本机正文准备与云端检索数据 | CF-03 | gpt-6.1-sol / high | 在 paw 准备带页码或章节定位的正文，按文件同步到私有 R2；D1 保存必要索引与版本；缺少正文明确停用书内 AI，正文和索引不得进入静态产物 |
 | CF-05 | P2，待开始 | Workflows 持久任务与真实 AI 接入 | CF-01 的长任务验证、CF-04、独立配置的有效任务 Key | gpt-6.1-sol / high | 迁移任务状态、去重、预算和中间结果；保留全局串行与调用上限；验证问答、章节和全书总结、有来源的作者资料及主动发布，浏览器关闭后任务继续 |
@@ -556,13 +556,13 @@ CF-01 不依赖真实 AI Key；可先使用模拟上游验证调度，但长请�
 
 CF-01 由 gpt-6.1-sol / high 实现最小独立验证程序，主 Agent 负责实际账号、免费计划与项目资源范围核对、集成 review 和云端验收。验证使用项目专用 Worker、D1、Workflow 与私有诊断数据；诊断入口必须鉴权，不读取电子书、不调用真实模型、不修改现有私人数据库。不把账号标识、真实密码、凭证或诊断入口令牌写进公开配置。记录登录计算、D1 跨请求持久化、R2 私有读写与清理、Workflow 在原 HTTP 请求结束后继续执行的实测结果，并区分模拟上游与真实模型能力。
 
-CF-01 评估结论支持继续 CF-02。静态部署配置、CI 与 URL 验证由 gpt-6-luna / medium 实现；gpt-6.1-sol / high 负责受控部署辅助工具及凭证安全边界。保留 Astro 静态构建，把完整 dist 部署到本项目 Workers Static Assets，提供平台域名，验证根路径、全部书籍详情、文档索引和阅读器资源后再切换正式构建目标。当前本机认证可用于项目静态部署；GitHub 自动部署需要严格限定于单一 Worker 的专用 token，不能把账号级通用 token 复制到 GitHub。线上 AI 与私人 API 仍明确未配置，不能把诊断 Worker 当成生产业务后端。
+CF-01 评估结论支持继续 CF-02。静态部署配置、CI 与 URL 验证由 gpt-6-luna / medium 实现；gpt-6.1-sol / high 负责受控部署辅助工具及凭证安全边界。完整 Astro dist 已通过 paw 上受控 helper 发布至 Workers Static Assets，正式站点为 <https://the-shelf.iamzhutuo.workers.dev/>。GitHub Actions 的 Cloudflare 构建产物成功，部署步骤因没有专用 token 按预期跳过；GitHub 自动部署仅在配置严格限定于单一 Worker 的专用 token 后启用，不能把账号级通用 token 复制到 GitHub。GitHub Pages 继续保留为回退方式。线上 AI 与私人 API 仍明确未配置，不能把诊断 Worker 当成生产业务后端。
 
-**10 月 15 日进展：**CF-01 评估结论为“评估完成，鉴权需适配”：免费 D1、R2 与 Workflow 的基础验证已通过；当前 Node 登录方案不能直接照搬，CF-03 前须设计并验证保留凭证强度与限流的安全低 CPU 方案。长任务与 uncertain 模拟均已结束，主 Agent 已完成评估。CF-01 源码已推送，GitHub Actions 工作流 38675230094 成功，CF-01 当时 41 项 Node、8 项 Python、构建和隐私检查通过。CF-02 静态实现已通过 review；本轮完整验收的 56 项 Node、8 项 Python、构建和隐私检查通过。接下来提交、推送并确认 CI，再在本地部署并进行线上 URL 验收；当前进度不依赖真实 AI Key。未上传电子书或调用真实 AI。详细运维记录保存在仓库非公开文档中；probe 操作说明见[公开仓库 README](https://github.com/sickate/the-shelf/blob/main/cloudflare/probe/README.md)。
+**10 月 15 日进展：**CF-01 评估结论为“评估完成，鉴权需适配”：免费 D1、R2 与 Workflow 的基础验证已通过；当前 Node 登录方案不能直接照搬，CF-03 前须设计并验证保留凭证强度与限流的安全低 CPU 方案。CF-01 源码已推送，GitHub Actions 工作流 38675230094 成功；CF-01 当时 41 项 Node、8 项 Python、构建和隐私检查通过。CF-02 静态实现 review 通过，56 项 Node、8 项 Python、构建和隐私检查通过，并已通过受控 helper 发布、完成线上验收。源码提交 `308751c` 与 workflow 修正 `127be0b` 已推送；Cloudflare 工作流 38677306877 构建产物成功并按预期跳过部署步骤，Pages 工作流 38677307035 成功。HTTP/2 检查覆盖 1303 项资源，全部返回 200；12 份文档的 HTML 与 raw 页面、首页、书页、阅读入口、文档索引和合并文档均与本地构建逐字比对通过，缺失路径返回 404。Node 批量远程 fetch 曾间歇 TLS 失败，线上通过依据是独立 curl HTTP/2 检查。GitHub 仓库为公开仓库；`resources-and-access.md` 不纳入网站文档白名单，具体私有验收证据只存于被忽略的 `.local/`。未上传电子书或调用真实 AI。操作说明见[公开仓库 README](https://github.com/sickate/the-shelf/blob/main/cloudflare/probe/README.md)。
 
-CF-03 的登录适配存在未解决的 CPU 与安全前置条件：当前探针没有证明高强度密码验证适合 Cloudflare Free。进入实现前，必须由 Sol 设计并在目标 Free 运行环境验证安全的低 CPU 登录方案，同时保留现有密码强度、登录限流与会话安全；不得通过降低 KDF 参数、把安全计算移到不可信客户端或将诊断探针等同生产鉴权来过门槛。CF-01 评估完成不代表生产登录已验收；CF-02 正在推进，CF-03 仍待开始，任务优先级不变。
+CF-03 的登录适配存在未解决的 CPU 与安全前置条件：当前探针没有证明高强度密码验证适合 Cloudflare Free。开始实现前，必须由 Sol 设计安全低 CPU 登录方案，并在目标 Cloudflare Free 运行环境验证，同时保留现有密码强度、登录限流与会话安全；不得通过降低 KDF 参数、把安全计算移到不可信客户端或将诊断探针等同生产鉴权来过门槛。CF-01 评估完成不代表生产登录已验收；CF-02 静态迁移完成，CF-03 实现尚未开始，任务优先级不变。
 
-两阶段均由主 Agent 提 review 意见并交回子 Agent 修正，运行现有测试、构建、公开产物隐私检查和必要的新增集成检查后提交、push 并验证部署。凭证留在被忽略的私人配置或项目 GitHub Secrets；CI 只上传公开产物。保留 GitHub Pages 的回退发布方式；新站或免费验证失败时不关闭旧站，不开通付费计划。诊断对象与临时记录在验收后清理，需保留的验证资源记录在非公开运维文档。
+各阶段由主 Agent review，运行适用测试、构建、公开产物隐私检查及集成验收后按计划发布。凭证留在被忽略的私人配置；CI 只上传公开产物。保留 GitHub Pages 的回退发布方式，不开通付费计划。诊断对象与临时记录在验收后清理，仓库运维记录不纳入网站文档白名单，私有验收证据留在 `.local/`。
 
 - Workers 的本地文件系统不作为持久数据库；现有 node:sqlite、子进程和长期内存队列需要适配。登录计算、检索和 JSON 处理需实测免费 CPU 限制，不能通过降低密码保护强度来迁就额度。
 - D1 保存业务数据与必要索引，大段正文优先放私有 R2。规划单库容量、查询索引、备份与导入校验，迁移脚本保留现有本机数据，不静默覆盖人工修正。
@@ -594,7 +594,7 @@ PDF 和 EPUB 阅读器支持授权文件；MOBI 和 AZW3 提供原格式下载�
 
 导入、公开目录、全部书籍详情、文档导出、私人登录与阅读、元数据修正、R2 签名与受预算约束的上传计划、AI 任务队列及结果发布均已实现。16 项 Node 检查与 8 项 Python 检查通过；真实 PDF 已在浏览器验证授权阅读。静态产物检查通过，含 1,264 个详情页，未包含原电子书和私人源路径。
 
-私有 R2 桶已创建，项目专用对象凭证已配置到开发环境，真实对象读写、Range 和跨域访问验证通过，尚未上传电子书。远端 AI Key 未配置，AI 相关功能由模拟上游验证。Cloudflare 的生产业务迁移（Workers API、D1 业务数据与 Workflows 任务）尚未实施或验收；CF-01 的基础设施诊断已完成评估，CF-02 静态迁移进行中。现有 GitHub Pages 与 Node.js + SQLite 开发方式仍有效。
+私有 R2 桶已创建，项目专用对象凭证已配置到开发环境，真实对象读写、Range 和跨域访问验证通过，尚未上传电子书。远端 AI Key 未配置，AI 相关功能由模拟上游验证。Cloudflare 的生产业务迁移（Workers API、D1 业务数据与 Workflows 任务）尚未实施或验收；CF-01 的基础设施诊断已完成评估，CF-02 静态迁移已完成。现有 GitHub Pages 与 Node.js + SQLite 开发方式仍有效。
 
 2026 年 10 月 15 日复跑 16 项 Node 测试、8 项 Python 测试、1,280 页面构建和公开产物隐私检查通过。具体运行方式与限制见运行与部署说明。
 
@@ -666,15 +666,17 @@ AI 调用只通过 /v1/tasks，使用 research_summary 或 topic_analysis，不�
 
 # The Shelf 运行与部署
 
-当前网页发布到 GitHub Pages，私人阅读和 AI 使用独立开发后端；云端存储与模型未配置时，公开书架和文档仍然可用。后续计划迁到 Cloudflare，尚未实施。paw 继续作为开发和导入机器。
+当前公开网页发布到 Cloudflare Workers Static Assets，私人阅读和 AI 仍由独立开发后端提供；云端存储与模型未配置时，公开书架和文档仍然可用。GitHub Pages 保留回退部署。paw 继续作为开发和导入机器。
 
-更新日期：2026 年 10 月 15 日。阶段：首版运行说明，追加待实施的迁移计划。
+更新日期：2026 年 10 月 15 日。阶段：首版运行说明；CF-02 静态站已上线，CF-03 及后续业务迁移待实施。
 
 ## Cloudflare 迁移状态
 
-目标为 Workers Static Assets、同源 Workers API、D1 与 Workflows，继续使用现有私有 R2。先完成免费运行验证，再分阶段迁移；具体任务、依赖与切换门槛见[开发计划](development-plan.md)。
+CF-02 静态站已部署在 `https://the-shelf.iamzhutuo.workers.dev/`，根路径提供公开书架和文档。线上 Worker 已确认没有 API bindings，preview URLs 关闭。Workers API、D1、登录、私人阅读和 Workflows 尚未上线；继续使用现有私有 R2。后续任务、依赖与门槛见[开发计划](development-plan.md)。
 
-仓库已有 Workers Static Assets 纯静态配置和独立根路径构建。目标 URL 为 `https://the-shelf.iamzhutuo.workers.dev/`；在本轮本机 review 和云端静态验收完成前，GitHub Pages 仍是当前网站。新工作流默认只构建、检查并保存 artifact；自动部署需专门配置单 Worker 范围的 `SHELF_CF_DEPLOY_TOKEN`、`SHELF_CF_ACCOUNT_ID` Secrets，并设置仓库变量 `SHELF_CF_AUTO_DEPLOY=true`。该专用凭证尚不可用，因此不能称 GitHub 自动部署已启用。R2 对象凭证不能当作 Workers 或 D1 部署凭证。Pages 工作流保留作为回退。
+Workers Static Assets 站点已通过线上验收：HTTP/2 对 1,303 个静态资源的检查全部返回 200，覆盖 1,280 个 HTML 页面与全部 1,264 个书籍详情；29 项 GET 检查覆盖首页、书籍、阅读页、文档索引、全部 12 篇文档的 HTML/raw、合并 Markdown，内容与 MIME 均符合预期；不存在路径返回真实 404。Cloudflare CI 运行 38677306877 构建和 artifact 成功、部署步骤按默认配置跳过；GitHub Pages 运行 38677307035 成功。主站已切换到 `https://the-shelf.iamzhutuo.workers.dev/`，Pages 工作流和站点保留为回退。
+
+Cloudflare 工作流默认只构建、检查并保存 artifact。由于单 Worker 专用 `SHELF_CF_DEPLOY_TOKEN` 尚未配置，CI 自动部署仍关闭；本机受控发布可用。R2 对象凭证不能当作 Workers 或 D1 部署凭证。Node 批量 fetch 验证曾遇到间歇 TLS 连接重置，因此不把 `verify:static --url` 记为通过；上述线上验收使用 HTTP/2 检查完成。
 
 本地生成和检查静态站点：
 
@@ -682,9 +684,12 @@ AI 调用只通过 /v1/tasks，使用 research_summary 或 topic_analysis，不�
 npm run build:cloudflare
 npm run verify:public
 npm run verify:static
+npm run deploy:cloudflare
 ```
 
 `build:cloudflare` 强制站点 URL 使用纯 HTTPS origin 和根路径，不受 Pages 仓库前缀影响，也不连接生产 API；可用 `SHELF_CF_SITE_URL` 覆盖目标 origin。部署后可使用 `npm run verify:static -- --url https://example.workers.dev` 只读检查生成的 HTML、资源、代表页面和真实 404。
+
+`deploy:cloudflare` 仅部署通过公开产物与静态站预检的现有 `dist`，固定目标 Worker 名称 `the-shelf`，并要求部署账号与项目账号配置匹配。部署配置、临时日志保存在权限受限的 `.local/cf-static/` 下，日志会脱敏；不要手动复制构建物到其他 Worker。GitHub Actions 只有配置 `SHELF_CF_DEPLOY_TOKEN` 和 `SHELF_CF_ACCOUNT_ID` 两个 Secrets，并将仓库变量 `SHELF_CF_AUTO_DEPLOY` 设为 `true` 时才执行自动部署；启用开关但缺少任一 Secret 会明确失败。
 
 ## 环境与本机启动
 
@@ -744,7 +749,7 @@ npm run upload:plan -- file_example
 
 对象存储设置必须允许实际网页来源读取文件及 Range。网页读取签名 R2 地址不附带 cookie，本机内容接口附带所有者会话；签名链接到期后重新申请。
 
-## GitHub Pages
+## GitHub Pages 回退
 
 仓库为 sickate/the-shelf，站点路径为 /the-shelf/。main 分支提交触发工作流，依次安装依赖、运行测试、构建、检查公开产物并部署 Pages。
 

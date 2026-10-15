@@ -168,8 +168,10 @@ export async function verifyLocal({ dist = path.join(ROOT, "dist"), catalogFile 
   return { dist, files: files.length, html: files.filter((f) => f.relative.endsWith(".html")).length, books: catalog.books.length, documents: index.documents.length, bytes: files.reduce((sum, file) => sum + file.size, 0), basePath, origin, filesList: files.map((f) => f.relative) };
 }
 
-async function request(url, method, attempts = 1) {
-  let lastError;
+const RETRY_DELAYS_MS = [200, 400, 800, 1600];
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function request(url, method, attempts = 5) {
   let lastResponse;
   for (let attempt = 0; attempt < attempts; attempt++) {
     const controller = new AbortController();
@@ -180,18 +182,18 @@ async function request(url, method, attempts = 1) {
       lastResponse = response;
       if (attempt + 1 < attempts && (response.status === 408 || response.status === 429 || response.status >= 500)) {
         await response.body?.cancel();
-        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+        await pause(RETRY_DELAYS_MS[attempt]);
         continue;
       }
-      return response;
-    } catch (error) {
+      return { response, attempts: attempt + 1 };
+    } catch {
       clearTimeout(timeout);
-      lastError = error;
-      if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      lastResponse = null;
+      if (attempt + 1 < attempts) await pause(RETRY_DELAYS_MS[attempt]);
     }
   }
-  if (lastResponse) return lastResponse;
-  throw lastError;
+  if (lastResponse) return { response: lastResponse, attempts };
+  throw new Error(`${method} ${url} failed after ${attempts} attempts (network or timeout)`);
 }
 
 async function pool(items, concurrency, worker) {
@@ -210,41 +212,51 @@ export async function verifyRemote(local, rawOrigin) {
   const basePath = local.basePath;
   const urlFor = (relative) => new URL(basePath + relative.replace(/^\/+/, ""), origin).href;
   const targetFiles = local.filesList.filter((file) => file.endsWith(".html") || /\.(?:css|js|mjs|json|svg|woff2?|ttf|otf|wasm|png|jpe?g|webp|ico|xml|txt|md)$/i.test(file));
-  await pool(targetFiles, 6, async (file) => {
-    const response = await request(urlFor(file), "HEAD", 3);
-    if (!response.ok) fail(`remote HEAD ${response.status} for ${urlFor(file)}`);
+  let checked = 0;
+  await pool(targetFiles, 3, async (file) => {
+    const url = urlFor(file);
+    const { response, attempts } = await request(url, "HEAD");
+    if (!response.ok) fail(`HEAD ${url} returned HTTP ${response.status} after ${attempts} attempt(s)`);
+    checked++;
+    if (checked % 250 === 0 || checked === targetFiles.length)
+      console.error(`Static HEAD verification: ${checked}/${targetFiles.length}`);
   });
 
-  const home = await request(urlFor("index.html"), "GET", 3);
+  const homeUrl = urlFor("index.html");
+  const { response: home, attempts: homeAttempts } = await request(homeUrl, "GET");
   const homeBody = await home.text();
-  if (!home.ok || !homeBody.includes("The Shelf")) fail("remote home GET did not return expected bookcase HTML");
-  if (!home.headers.get("content-type")?.includes("text/html")) fail("remote home has incorrect content type");
-  if (homeBody !== await readFile(path.join(local.dist, "index.html"), "utf8")) fail("remote home differs from the built static artifact");
+  if (!home.ok) fail(`GET ${homeUrl} returned HTTP ${home.status} after ${homeAttempts} attempt(s)`);
+  if (!homeBody.includes("The Shelf")) fail(`GET ${homeUrl} content did not match the expected homepage after ${homeAttempts} attempt(s)`);
+  if (!home.headers.get("content-type")?.includes("text/html")) fail(`GET ${homeUrl} returned an incorrect content type after ${homeAttempts} attempt(s)`);
+  if (homeBody !== await readFile(path.join(local.dist, "index.html"), "utf8")) fail(`GET ${homeUrl} differs from the built artifact after ${homeAttempts} attempt(s)`);
   const book = local.filesList.find((file) => /^books\/[^/]+\/index\.html$/.test(file));
   if (!book) fail("no book detail page available for remote sample");
-  const bookResponse = await request(urlFor(book), "GET", 3);
+  const bookUrl = urlFor(book);
+  const { response: bookResponse, attempts: bookAttempts } = await request(bookUrl, "GET");
   const bookBody = await bookResponse.text();
-  if (!bookResponse.ok || !bookBody.includes("在线阅读")) fail(`remote book GET failed content check for ${book}`);
-  if (!bookResponse.headers.get("content-type")?.includes("text/html")) fail("remote book page has incorrect content type");
-  if (bookBody !== await readFile(path.join(local.dist, book), "utf8")) fail(`remote book page differs from the built artifact: ${book}`);
+  if (!bookResponse.ok) fail(`GET ${bookUrl} returned HTTP ${bookResponse.status} after ${bookAttempts} attempt(s)`);
+  if (!bookBody.includes("在线阅读")) fail(`GET ${bookUrl} content failed its reader check after ${bookAttempts} attempt(s)`);
+  if (!bookResponse.headers.get("content-type")?.includes("text/html")) fail(`GET ${bookUrl} returned an incorrect content type after ${bookAttempts} attempt(s)`);
+  if (bookBody !== await readFile(path.join(local.dist, book), "utf8")) fail(`GET ${bookUrl} differs from the built artifact after ${bookAttempts} attempt(s)`);
   for (const [sample, contentType] of [["docs/index.json", "application/json"], ["docs/all.md", "text/markdown"], ["docs/raw/overview.md", "text/markdown"]]) {
-    const response = await request(urlFor(sample), "GET", 3);
-    if (!response.ok) fail(`remote GET ${response.status} for ${sample}`);
+    const url = urlFor(sample);
+    const { response, attempts } = await request(url, "GET");
+    if (!response.ok) fail(`GET ${url} returned HTTP ${response.status} after ${attempts} attempt(s)`);
     const body = await response.text();
-    if (!response.headers.get("content-type")?.includes(contentType)) fail(`remote ${sample} has incorrect content type`);
+    if (!response.headers.get("content-type")?.includes(contentType)) fail(`GET ${url} returned an incorrect content type after ${attempts} attempt(s)`);
     const expected = await readFile(path.join(local.dist, sample), "utf8");
-    if (body !== expected) fail(`remote ${sample} differs from the built static artifact`);
+    if (body !== expected) fail(`GET ${url} differs from the built artifact after ${attempts} attempt(s)`);
     if (sample.endsWith("index.json")) {
       const remoteIndex = JSON.parse(body);
       const localIndex = JSON.parse(expected);
-      if (remoteIndex.basePath !== basePath || remoteIndex.version !== localIndex.version) fail("remote docs index has incorrect basePath or version");
-    } else if (!body.trim()) fail(`remote ${sample} is empty`);
+      if (remoteIndex.basePath !== basePath || remoteIndex.version !== localIndex.version) fail(`GET ${url} has incorrect docs basePath or version after ${attempts} attempt(s)`);
+    } else if (!body.trim()) fail(`GET ${url} was empty after ${attempts} attempt(s)`);
   }
-  const missing = await request(urlFor("__shelf_static_verify_missing__/"), "GET", 3);
+  const missingUrl = urlFor("__shelf_static_verify_missing__/");
+  const { response: missing, attempts: missingAttempts } = await request(missingUrl, "GET");
   const missingBody = await missing.text();
-  if (missing.status !== 404) fail(`nonexistent path returned ${missing.status}, expected 404`);
-  const homeAgain = await (await request(urlFor("index.html"), "GET", 3)).text();
-  if (missingBody === homeAgain) fail("nonexistent path returned the home page instead of a real 404");
+  if (missing.status !== 404) fail(`GET ${missingUrl} returned HTTP ${missing.status}, expected 404 after ${missingAttempts} attempt(s)`);
+  if (missingBody === homeBody) fail(`GET ${missingUrl} returned the home page instead of a real 404 after ${missingAttempts} attempt(s)`);
   return { origin, checked: targetFiles.length, missingPathStatus: missing.status };
 }
 

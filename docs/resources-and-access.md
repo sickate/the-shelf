@@ -10,9 +10,17 @@
 
 ## 部署边界
 
-`paw@paw:~/code/the-shelf` 是开发目录，未配置常驻服务、生产域名或反向代理。当前 Node.js 后端使用本机 HTTP 和 SQLite；Cloudflare 已有私有 R2 文件存储，并于 10 月 15 日新增仅供 CF-01 使用的诊断资源。它们不是生产后端；现有 GitHub Pages 继续服务。
+`paw@paw:~/code/the-shelf` 是开发目录，未配置常驻 Node.js 业务服务、生产 API 域名或反向代理。当前 Node.js 后端使用本机 HTTP 和 SQLite；CF-02 静态站正式发布在 Cloudflare Workers Static Assets，GitHub Pages 保留回退。Cloudflare 另有私有 R2 文件存储，以及仅供 CF-01 使用且已完成清理核验的诊断资源。
 
-10 月 15 日用户确认将 Cloudflare 统一托管加入计划，目标为 Workers Static Assets、Workers、D1 与 Workflows；先验证免费运行条件，再逐步迁移。CF-01 验证资源已结束运行并完成清理核验；CF-02 静态迁移进行中，尚未切换现有 GitHub Pages，也没有生产业务后端。资源地址、账号/数据库标识和凭证留在忽略的 `.local/` 文件中，不在此记录。任务顺序见 `docs/development-plan.md`。
+10 月 15 日用户确认将 Cloudflare 统一托管加入计划，目标为 Workers Static Assets、Workers、D1 与 Workflows；先验证免费运行条件，再逐步迁移。CF-01 验证资源已结束运行并完成清理核验；CF-02 静态站已发布到 Workers Static Assets 并通过线上验收，GitHub Pages 保留回退。业务 API、生产登录和私人阅读尚未迁移。资源地址、账号/数据库标识和凭证留在忽略的 `.local/` 文件中，不在此记录。任务顺序见 `docs/development-plan.md`。
+
+## Cloudflare Workers Static Assets（CF-02）
+
+正式静态站：<https://the-shelf.iamzhutuo.workers.dev/>。主 Agent 使用 paw 上的受控 helper 发布。控制 API 回读的 worker subdomain 为 `iamzhutuo`，preview 关闭，bindings 为 0。GitHub Actions Cloudflare 工作流 `38677306877` 成功构建 artifact，deploy step 因未配置单 Worker 专用 token 而按预期 skip；Pages 工作流 `38677307035` 成功，旧站继续作为回退。
+
+线上独立 HTTP/2 全量检查覆盖 1,303 项资源，全部返回 200，其中 1,280 个 HTML、含 1,264 个书籍详情页。另对 29 个 GET 路径检查首页、书籍页、阅读入口、12 份文档 HTML 与 raw、docs index 与 all；逐字比对本地构建内容及 MIME 均通过，缺失路径返回 404。Node 批量 fetch 曾间歇 TLS 失败；最终通过依据是独立 curl HTTP/2 检查，不把 npm remote 命令表述为通过。
+
+证据文件位于忽略的 `.local/cf-static/`，包括 release、响应头摘要、内容摘要和 CORS 回读。CF-02 源码提交 `308751c` 与 workflow 修正 `127be0b` 已推送；网络校验脚本增强随本轮收尾提交。当前完整验收为 56 项 Node、8 项 Python、构建及公开产物隐私检查通过；静态实现 review 已通过。GitHub 自动部署仍需严格限定于单一 Worker 的专用 token；不得复制账号级通用 token 到 GitHub。CF-02 已完成，CF-03 登录实现尚未开始。
 
 ## GitHub
 
@@ -102,9 +110,9 @@ ssh -N -L 4321:127.0.0.1:4321 -L 8787:127.0.0.1:8787 paw@paw
 
 `SHELF_OAI_BASE_URL` 和 `SHELF_OAI_KEY` 暂留空。现有任务入口只接受服务环境配置的 Key，旧管理页签发的数据库 Key 无法用于 `/v1/tasks`。专用任务 Key 需通过该服务的运维配置接入后验证；本次尚未修改现有 AI 生产服务或调用模型。
 
-Cloudflare 为计划中的生产目标；免费 CPU、D1 持久化和 Workflows 长任务验证优先于真实 AI。生产站点与同源 API 地址、项目专用部署权限和 AI 任务 Key 仍待实施时确定。当前 R2 与 GitHub 已可供 paw 开发使用；AI 未配置时仍明确停用，不会发起模型请求。
+Cloudflare 静态网站已发布，免费 CPU、D1 持久化和 Workflows 长任务基础验证已完成。生产业务 API 地址与同源路由、登录和私人阅读迁移、GitHub 自动部署所需的单 Worker 专用 token，以及 AI 任务 Key 仍待后续阶段确定。当前 R2 与 GitHub 已可供 paw 开发使用；AI 未配置时仍明确停用，不会发起模型请求。
 
-10 月 15 日最新 CF-02 完整验收运行 56 项 Node 测试、8 项 Python 测试、构建及公开产物隐私检查均通过。CF-02 静态实现经 review 通过，下一步为提交、推送、确认 CI，再本地部署和线上 URL 验收。
+10 月 15 日 CF-02 完整验收运行 56 项 Node 测试、8 项 Python 测试、构建及公开产物隐私检查均通过；静态实现经 review、发布和线上验收通过。当前站点及检查证据见 CF-02 记录。
 
 ## CF-01 云端诊断记录（2026-10-15）
 
@@ -122,7 +130,7 @@ Cloudflare 为计划中的生产目标；免费 CPU、D1 持久化和 Workflows 
 
 CF-01 评估结论为“评估完成，鉴权需适配”：免费 D1、R2 与 Workflow 基础能力验证通过；Node 登录不可直接照搬，CF-03 必须先设计并验证安全低 CPU 登录方案，同时保留现有凭证强度、限流和会话安全。CF-01 源码提交 `720690b` 已推送，GitHub Actions 工作流 `38675230094` 成功；完整检查为 41 项 Node、8 项 Python、构建与隐私检查通过。没有上传电子书或调用真实 AI。
 
-CF-01 源码 probe 12 项（含清理竞态）和隐私检查 13 项通过；CF-01 当时完整验收为 41 项 Node、8 项 Python，且源码 CI 成功。CF-02 本轮完整验收为 56 项 Node、8 项 Python、构建和隐私检查通过。现有诊断对象的无签名 R2 GET 返回 400 拒绝；未授权诊断 GET、POST、DELETE 均返回 401；主 probe 的 workers.dev 与 preview 入口已禁用，mock 为私有。CF-02 静态实现 review 已通过；使用本机现有认证部署后，再做线上 URL 验收。GitHub 自动部署尚无严格限定于单一 Worker 的专用 token，不能标为已完成，也不能把账号级通用 token 复制到 GitHub。当前 GitHub Pages 保持服务。详见 [CF-01 probe 操作说明](../cloudflare/probe/README.md)；该运维记录不进入公开文档清单。
+CF-01 源码 probe 12 项（含清理竞态）和隐私检查 13 项通过；CF-01 当时完整验收为 41 项 Node、8 项 Python，且源码 CI 成功。CF-02 本轮完整验收为 56 项 Node、8 项 Python、构建和隐私检查通过。现有诊断对象的无签名 R2 GET 返回 400 拒绝；未授权诊断 GET、POST、DELETE 均返回 401；主 probe 的 workers.dev 与 preview 入口已禁用，mock 为私有。CF-02 静态实现 review、部署与线上 URL 验收均通过，详细结果见 CF-02 记录。GitHub 自动部署尚无严格限定于单一 Worker 的专用 token，不能标为已完成，也不能把账号级通用 token 复制到 GitHub。当前 GitHub Pages 保持服务。详见 [CF-01 probe 操作说明](../cloudflare/probe/README.md)；该运维记录不纳入网站文档白名单，私有证据仅存于被忽略的 `.local/`。
 
 ## 公开仓库提交检查
 

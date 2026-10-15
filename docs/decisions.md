@@ -21,9 +21,9 @@
 
 ## 暂定实现选择
 
-当前静态前端继续由 GitHub Pages 服务。CF-02 增加 Workers Static Assets 根路径构建，目标 URL 为 `https://the-shelf.iamzhutuo.workers.dev/`；通过本轮 review 与线上验收后再决定切换。文件使用 R2 Standard，业务后端为独立 Node.js 服务，数据与任务使用 SQLite。生产后端部署位置尚未选定，paw 用于开发。超过门槛、超预算或复制未完成的文件都能被目录收录。
+当前静态前端使用 Cloudflare Workers Static Assets，主站为 `https://the-shelf.iamzhutuo.workers.dev/`，线上静态资源已验收；GitHub Pages 保留回退。文件使用 R2 Standard，业务后端为独立 Node.js 服务，数据与任务使用 SQLite。生产业务后端部署位置尚未选定，paw 用于开发。超过门槛、超预算或复制未完成的文件都能被目录收录。
 
-以上为现有实现。后续目标方案采用 Workers Static Assets、Workers、D1、Workflows 和现有私有 R2；生产部署以免费适配验证结果为准，目前尚未迁移。不把已有 Node.js 后端直接改成 paw 上的生产常驻服务。
+以上为现有实现。后续业务方案目标采用 Workers API、D1、Workflows 和现有私有 R2；登录、私人阅读、数据和任务仍未迁移。不把已有 Node.js 后端直接改成 paw 上的生产常驻服务。
 
 大小单位暂按十进制 MB；本项目存储预算初设 8 GB，实际额度还要扣除同一账号其他占用。所有者独立登录，匿名访问者不开放 AI 生成。
 
@@ -31,6 +31,6 @@
 
 ## 下一阶段需要核实的状态
 
-收藏复制已确认完成，已生成真实目录；R2 凭证与诊断对象读写已验证。下一阶段先核实 Cloudflare 免费计划、账号共享额度、项目部署权限、Workers CPU、D1 容量及长任务执行，再完成真实文件阅读与 AI 接入。实际站点地址和切换时机在迁移阶段确定。
+静态站已部署并验收，Worker 不含 API bindings 且 preview URLs 关闭；CI 自动部署因尚缺专用单 Worker token 而保持关闭。下一阶段继续核实 Cloudflare 免费计划、账号共享额度、Workers CPU、D1 容量及长任务执行，再完成真实文件阅读与 AI 接入。
 
 现有所有者密码登录继续保留业务语义；首批验证使用逐文件选择的合格 EPUB 与 PDF。AI 专用 Key 与现有服务接口验证独立处理。不为迁移购买新域名或付费计划，不修改收藏源文件。各任务依赖和验收见[开发计划](development-plan.md)。

@@ -28,7 +28,7 @@
 
 当前工作区就是 paw 上的项目开发目录。默认直接在当前工作区执行，不额外 SSH 到 paw 或重复同步副本；跨机操作仍按具体任务需要和既有授权判断。生产后端部署位置尚未选定，不自行将开发配置改为常驻生产部署。
 
-当前公开网页由 Astro + GitHub Pages 工作流部署，Cloudflare Workers Static Assets 静态构建配置已加入仓库，目标 URL 为 `https://the-shelf.iamzhutuo.workers.dev/`；本轮主 Agent review 和线上验收完成前，Pages 仍为当前公开站。Cloudflare 工作流默认仅构建并保存 artifact，需单 Worker 专用部署 Secrets 和显式仓库变量才能启用自动部署。当前后端为 Node.js HTTP + SQLite，文件存储为私有 R2。AI 接入现有命名任务服务，真实 Key 的签发与验证独立处理。Workers API、D1 与 Workflows 仍是待迁移目标，不得因提交计划或文档而标为上线，也不得把 paw 改为生产服务器。
+当前公开网页由 Astro + Cloudflare Workers Static Assets 部署，主站为 `https://the-shelf.iamzhutuo.workers.dev/`；GitHub Pages 工作流和站点保留为回退。Cloudflare 工作流默认构建并保存 artifact；单 Worker 专用部署凭证尚未配置，因此 CI 自动部署保持关闭，本机受控发布可用。当前后端仍为 Node.js HTTP + SQLite，文件存储为私有 R2。Workers API、D1、登录、私人阅读与 Workflows 尚未迁移上线；AI 接入现有命名任务服务，真实 Key 的签发与验证独立处理。不得把静态站上线描述为业务后端上线，也不得把 paw 改为生产服务器。
 
 运维资源、凭证位置和验证结果见 `docs/resources-and-access.md`。这个文件不在网站文档发布清单内。公开文档以 `scripts/export-docs.mjs` 的固定清单为准，不自动公开新文档。
 
