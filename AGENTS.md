@@ -26,10 +26,10 @@
 
 ## 开发与部署
 
-paw 是开发机器。生产后端部署位置尚未选定，不自行将开发配置改为常驻生产部署。
+当前工作区就是 paw 上的项目开发目录。默认直接在当前工作区执行，不额外 SSH 到 paw 或重复同步副本；跨机操作仍按具体任务需要和既有授权判断。生产后端部署位置尚未选定，不自行将开发配置改为常驻生产部署。
 
 当前公开网页使用 Astro + GitHub Pages，push 到 main 后由现有 GitHub Actions 部署；当前后端为 Node.js HTTP + SQLite，文件存储为私有 R2。AI 接入现有命名任务服务，真实 Key 的签发与验证独立处理。Cloudflare Workers Static Assets、Workers API、D1 与 Workflows 是开发计划中的迁移目标，尚未实施或验收；不得因提交计划或文档而上线迁移，也不得把 paw 改为生产服务器。
 
 运维资源、凭证位置和验证结果见 `docs/resources-and-access.md`。这个文件不在网站文档发布清单内。公开文档以 `scripts/export-docs.mjs` 的固定清单为准，不自动公开新文档。
 
-在 paw 的非交互 SSH 中先设置 `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH`。运行现有测试、构建和 `npm run verify:public`，保留原有 `.local` 私人映射、数据库和收藏源文件。
+在 paw 的非交互 SSH 中先设置 `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH`。运行现有测试、构建和 `npm run verify:public`，保留原有 `.local` 私人映射、数据库和收藏源文件。此 PATH 规则仅适用于确有 SSH 的场景。
