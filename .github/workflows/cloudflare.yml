@@ -18,7 +18,6 @@ jobs:
     env:
       ASTRO_TELEMETRY_DISABLED: "1"
       WRANGLER_SEND_METRICS: "false"
-      WRANGLER_LOG_PATH: ${{ runner.temp }}/the-shelf-wrangler.log
     steps:
       - uses: actions/checkout@v7
         with:
