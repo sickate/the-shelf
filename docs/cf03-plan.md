@@ -2,7 +2,13 @@
 
 更新日期：2026 年 10 月 15 日。状态：CF-03 P1 进行中、未验收；CPU生产门槛未通过，不发布API。代码及CLI修复均已推送并通过CI；默认disabled静态改进已部署并通过线上验收，以receipt为准。本文不是上线验收记录。
 
-最终本地验证为138项Node、8项Python通过；metadata真实DOM 11项与account真实DOM 9项断言通过。check/production D1已独立建立，check schema与002保守预算迁移已应用并回读，production库仍空。production secrets仅在本地生成，未安装Worker或写入auth；check Worker有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。多轮云HTTP安全/CAS/撤销及合成导入、snapshot保留override通过，原子20并发争用最后1额度仅1个成功。CPU结果、账号共享R2证据、生产登录/文件与reader闭环仍未达门槛。源码提交 `0ae8825` 已推送；Cloudflare CI `38724875134` 构建 artifact 成功，Pages CI `38724875089` 成功。首次真实静态 CLI 在任何 Cloudflare 写入前遇到入口循环并停止；CLI修复已通过主 Agent review，新增两项真实独立进程 static/API CLI smoke后总计138项Node与8项Python全通过。CLI修复提交 `3e1aa89` 已推送；Cloudflare CI `38725881041` 构建成功、部署按预期跳过，Pages CI `38725881116` 成功。默认disabled的静态改进已通过本机受控发布及线上验收：首次网络检查完成1248项后中断，随后仅恢复剩余56项，合计1304项HEAD均为200；32项GET与本地字节及MIME一致，缺失页、`/api/health` 与 `/api` 均返回404，runtime保持disabled；线上账号页经真实Chrome DOM验证，凭证控件为disabled。
+静态改进发布时本地验证为138项Node、8项Python通过；metadata真实DOM 11项与account真实DOM 9项断言通过。check/production D1已独立建立，check schema与002保守预算迁移已应用并回读，production库仍空。production secrets仅在本地生成，未安装Worker或写入auth；check Worker有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。多轮云HTTP安全/CAS/撤销及合成导入、snapshot保留override通过，原子20并发争用最后1额度仅1个成功。CPU结果、账号共享R2证据、生产登录/文件与reader闭环仍未达门槛。源码提交 `0ae8825` 已推送；Cloudflare CI `38724875134` 构建 artifact 成功，Pages CI `38724875089` 成功。首次真实静态 CLI 在任何 Cloudflare 写入前遇到入口循环并停止；CLI修复已通过主 Agent review，新增两项真实独立进程 static/API CLI smoke后总计138项Node与8项Python全通过。CLI修复提交 `3e1aa89` 已推送；Cloudflare CI `38725881041` 构建成功、部署按预期跳过，Pages CI `38725881116` 成功。默认disabled的静态改进已通过本机受控发布及线上验收：首次网络检查完成1248项后中断，随后仅恢复剩余56项，合计1304项HEAD均为200；32项GET与本地字节及MIME一致，缺失页、`/api/health` 与 `/api` 均返回404，runtime保持disabled；线上账号页经真实Chrome DOM验证，凭证控件为disabled。
+
+本轮阶段收尾：CPU证据分析器与重复配置解码最小候选已分别提交并推送 `5a6242d`、`15cd401`，两阶段Cloudflare及Pages CI均成功；最终156项Node、8项Python、disabled build、真实secret隐私扫描与verify:static通过。check的HTTP/2首轮21请求、80断言、真实CAS两次mutation admission及generation撤销HTTP检查通过；warm未运行、满批维护未触发。
+
+最后一次同窗只读取得平台aggregate requests=21、errors=0，CPU P50/P95/P99/max=2.090/4.387/4.835/4.835ms，sampleInterval=1、同一version；分析器仍判 `unknown/incomplete_evidence`，保留 `group_aggregate_count_mismatch`、`ambiguous_attribution`、`missing_request_traffic`，不能凭aggregate低值判通过。平台max现已可取，原始逐请求CPU序列仍缺；HTTP/1与HTTP/2负载不可直接用于优化性能因果比较。本轮云分支结束，不加预算或采样；最终账本business48/100、explicitManagement84/90、D1management38/40，另有1次受控helper部署（内部HTTP未精确计数）。关闭证据确认check auth=0、active=0、入口disabled；最终只读不改变状态，生产API未启用、主站静态不变。
+
+下一优先级先固化并测试受控sampler，完整收集两轮业务请求后再等待analytics，核验真实CAS及满批维护覆盖；形成新计划后再考虑下一云轮，不直接追加采样或优化。 CPU/CF-03仍未验收通过；R2条件汇总授权已执行，但新鲜完整证据仍不足，无原文件上传。
 
 本文只保存在仓库，不加入 `scripts/export-docs.mjs` 的公开文档白名单。实际账号 ID、数据库 ID、对象 key、选中文件 ID、密钥和原始验收记录只保存在被忽略的 `.local/`。本文不读取或复制真实 `.env` / `.local` 数据。
 
@@ -205,7 +211,7 @@ schema本地测试不能替代D1真实并发/rollback测试，HTTP测试不能�
 
 只有CPU门槛、原子并发、私密边界、真实两文件及reader、测试/构建/隐私、主Agent review全部通过才把CF-03标为完成。记录本地测试结果、commit、push、远端workflow状态、实际生产部署版本、线上验证与回退演练结果，分别列出。CF-03没有真实AI/Workflows能力。
 
-当前尚未完成的门槛：CPU P95<=5ms（历史首轮P95/P99=5.634/13.184ms；SQL优化冷5.313/10.873ms、热4.236/5.830ms，42样本合并5.313/10.873ms；最近小优化版本包含部署后首次访问的首轮21请求P50/P95/P99=2.512/6.554/10.981ms；同版本后续完整热轮21请求（不能保证复用同一isolate），HTTP/66断言通过，CPU P50/P95/P99=2.341/6.017/6.180ms，errors均为0；两轮P95都未达到5ms目标。六个版本/轮次共126请求，另有2次tail健康检查，共128次（低于150）；最终候选版本首轮21次与同版本后续完整热轮21次，共42次。无raw max且tail连接后无CPU events；P99不代表最大值）、满足freshness的R2账号共享用量完整证据（条件授权已执行）、生产auth安装/登录验证、两份真实上传与reader浏览器闭环。安全/CAS/撤销、D1并发最后一槽及合成导入/snapshot已通过相应云端检查；最终本地138项Node、8项Python和DOM断言通过。check/production D1已独立建立，production库空；production secrets未装Worker或写auth。仅EPUB 1,799,179 bytes与PDF 2,588,862 bytes的dry-plan因`account_storage_unknown`阻止，无原书上传、无真实AI。账号R2总存储及当月A/B数量纯汇总的条件只读授权已核查并执行，但最新存储点仍不满足5分钟freshness、未生成合格evidence；The Shelf与Volt同账号，Volt没有R2（只读核查通过），Workers/D1额度共享且Volt用量未知。CF-03 P1继续进行中，下一步先做调用级CPU观测，再评估减少D1往返原型；不改5ms目标，仍需计划、Sol实现、主Agent review和云端采样；CF-04及AI等待CF-03。代码及CLI修复已推送并通过CI，默认disabled静态改进已部署并通过线上验收，以receipt为准；API不发布，当前保留CF-02静态站。不得放宽5ms目标、降低凭证强度或付费绕过。
+静态改进发布时的阻断记录（以下为当时状态，最新见第10节）：CPU P95<=5ms（历史首轮P95/P99=5.634/13.184ms；SQL优化冷5.313/10.873ms、热4.236/5.830ms，42样本合并5.313/10.873ms；最近小优化版本包含部署后首次访问的首轮21请求P50/P95/P99=2.512/6.554/10.981ms；同版本后续完整热轮21请求（不能保证复用同一isolate），HTTP/66断言通过，CPU P50/P95/P99=2.341/6.017/6.180ms，errors均为0；两轮P95都未达到5ms目标。六个版本/轮次共126请求，另有2次tail健康检查，共128次（低于150）；最终候选版本首轮21次与同版本后续完整热轮21次，共42次。当时未取得平台max且tail连接后无CPU events；P99不代表最大值，本轮补查见第10节）、满足freshness的R2账号共享用量完整证据（条件授权已执行）、生产auth安装/登录验证、两份真实上传与reader浏览器闭环。安全/CAS/撤销、D1并发最后一槽及合成导入/snapshot已通过相应云端检查；当时本地138项Node、8项Python和DOM断言通过。check/production D1已独立建立，production库空；production secrets未装Worker或写auth。仅EPUB 1,799,179 bytes与PDF 2,588,862 bytes的dry-plan因`account_storage_unknown`阻止，无原书上传、无真实AI。账号R2总存储及当月A/B数量纯汇总的条件只读授权已核查并执行，但最新存储点仍不满足5分钟freshness、未生成合格evidence；The Shelf与Volt同账号，Volt没有R2（只读核查通过），Workers/D1额度共享且Volt用量未知。当时CF-03 P1继续进行中，计划先做调用级CPU观测，再评估减少D1往返原型；不改5ms目标，仍需计划、Sol实现、主Agent review和云端采样；CF-04及AI等待CF-03。代码及CLI修复已推送并通过CI，默认disabled静态改进已部署并通过线上验收，以receipt为准；API不发布，当前保留CF-02静态站。不得放宽5ms目标、降低凭证强度或付费绕过。
 
 ## 9. 实现方精确契约（review后的基线）
 
@@ -300,7 +306,7 @@ metadata事务将当前patch合并changes、校验并CAS持久化、新version�
 预算的固定policy直接封装在schema trigger中，不建由请求传参决定的policies表。精确责任由Worker与CLI共用同一schema模块：`counters(scope,kind,bucket,window_start,count)`复合唯一键、`admissions(scope,request_id,kind,created_at)`、`storage_state(id=1,account_id,observed_account_bytes,observed_at,ceiling_bytes,reserved_bytes,committed_bytes,evidence_hash,evidence_complete,updated_at)`、`upload_reservations(reservation_id,scope,file_id,book_id,object_key,size_bytes,format,sha256,state,etag,content_verified,absence_verified,created_at,updated_at)`。receipt/request ID不可由网页任意复用以免逃预算。reservation object_key全局唯一，scope/file_id活跃预留唯一；所有状态转移走固定事务/trigger。Worker access准入也原子检查session generation/file version，签名只使用该次准入返回的对象记录。
 
 
-## 10. 调用与路由级 CPU 观测执行计划（2026-10-15，新一轮，待实施）
+## 10. 调用与路由级 CPU 观测执行计划与阶段记录（2026-10-15，本轮云分支已结束）
 
 本节是后续实施基线，不代表观测工具、优化或云端验收已完成。本次只读review覆盖 `worker.mjs`、`core.mjs`、`security.mjs`、schema预算/会话/CAS triggers及本文已有CPU记录；未读取真实凭证或私有原始证据、未恢复check、未触云。上一轮128/150是独立历史轮次，不与本轮拼接成更好看的分布，也不以新预算为由清空当日D1限额。
 
@@ -383,7 +389,7 @@ runtime profile本轮只做供主Agent review的最小能力probe，不开发管
 
 ### 10.7 本轮阶段结果（2026-10-15）
 
-CPU-01离线分析器已完成主Agent review修正，新增15项专项及最终153项Node、8项Python、disabled build、真实私钥隐私扫描、verify:static均通过；已用旧真实warm证据成功运行分析器，保留aggregate并拒绝missing startedAt的路由推断。
+CPU-01离线分析器已完成主Agent review修正，新增15项专项及CPU-01阶段当时153项Node、8项Python、disabled build、真实私钥隐私扫描、verify:static均通过；已用旧真实warm证据成功运行分析器，保留aggregate并拒绝missing startedAt的路由推断。
 按固定旧候选version与完整时间范围补查：首轮21请求P50/P95/P99=2.512/6.554/10.981ms、平台max=10.981ms；后续21请求=2.341/6.017/6.180ms、max=6.180ms；合并42请求=2.409/6.180/10.981ms、max=10.981ms。三组avg.sampleInterval均为1、dimensions.scriptVersion相同；max.cpuTime的schema描述为“Maximum CPU time for one request - microseconds”，已按微秒转ms，区别于P99和仍未取得的原始CPU序列。
 旧receipt仅有响应at，缺少完整请求窗口，分析器拒绝路由唯一归因但保留全部aggregate；CF-03 CPU gate仍fail。历史记录中的max缺失表示当时未取得，本轮补查不改写当时记录。私有证据位于 `.local/cf03/cpu-round-q2yZiT/`，不公开真实version UUID、账号ID或秘密。
 profile流程首次恢复时health返回404（传播阶段，未调用profile），finally关闭；第二次明确等待30秒后health/session均200，唯一一次profile POST返回404、code10393“无近期执行”，未取得pprof；不能据此判定Free不支持或权限被拒。
@@ -418,3 +424,30 @@ session/CSRF/SQL/原子预算/访问密钥强度均不变；只验证每请求�
 保留真实并发metadata pair，用已有generation UPDATE RETURNING同时核验本轮两个mutation admission，不新增往返；HMAC/session/CSRF/撤销/文件未注册检查照旧。每轮D1仅合成book INSERT及generation UPDATE两次管理调用，移除本变更不影响的冗余扫描，session/entry在最终关闭时统一核验。
 业务累计最多7+42=49/100，显式管理fetch仍不超过80、D1管理子上限24维持。Wrangler helper内部HTTP不能精确计数，另明确授权本阶段仅1次固定check/原绑定的受控部署工具操作，与显式fetch ledger分开报告；不冒称CLI内部计数精确或总HTTP<=80已证明，这是统计口径的透明补充，不扩大平台费用、业务及D1安全上限。
 helper若要求扩大资源范围或付费则停止，不操作production；当前主站静态部署不变，所有分支finally关闭check auth、撤销旧会话及关闭workers.dev/preview入口并回读。按完整固定窗口真实平台CPU报告P95<=5ms、max<10ms、CPU-limit errors=0门槛，不以本地操作次数或HTTP成功替代。
+
+10.9恢复计划与拦截记录：提交 `15cd401` 的Cloudflare CI `38735625693` 与Pages CI `38735625931` 均成功，check已受控部署1次；子runner误用含CI:true的baseEnvironment，readProjectEnvironment以 `code=ci` 在任何业务请求/fixture写入前正确拦截。finally已确认auth=0、active sessions=0、入口disabled。
+当前账本保留业务7/100、显式管理48/80、D1管理20、helper部署1；不清零、不重部署、不换凭证或端点。恢复仅在root本地明确非CI时向子runner传PATH/TMP/LANG等最小环境，不注入CI:true；先核验已部署candidate UUID及3份源hash未变，再恢复check auth/entry。
+本次恢复/关闭额外D1开销将管理子上限由24有界修订为32，已用20继续计入；显式管理总上限80、业务100、费用/上传预算均不变，先预留足够收尾余量。仍最多原完整21+21请求，首轮明确fail可停止；所有分支finally关闭auth、撤销会话、禁用入口并回读，不修改业务源码。
+第一次恢复的最小env已移除CI但漏传当前本地进程中的Cloudflare token，凭证guard以 `code=credentials` 再次在业务/fixture写入前停止并finally关闭；账本仍为business7、explicit56、D1管理24、helper1，32/80/100上限不变。
+主Agent已在同一非CI最小env显式传入项目账号与现有token（仅子进程env，不落盘、不入argv/log）完成独立无网络preflight，账号配置、key格式及本地非CI检查均通过；此后才继续同一candidate版本，源hash/UUID不变、不重部署、不重放已业务写入，仍最多原21+21请求。
+
+### 10.10 最后一次有界验收传输修正（计划与已有结果）
+
+`15cd401`候选在check完成20请求、60断言后，真实CAS coverage断言失败：D1仅1条metadata mutation，另一409是提前stale，最后generation-session HTTP未发；不是完整21请求，不能判gate通过。
+该20请求同version、sampleInterval=1，平台CPU P50/P95/P99/max=1.535/4.179/7.677/7.677ms、errors=0；样本少于21且CAS负载不同，较低P95不证明优化有效。当前账本业务27、显式管理68、D1管理31、helper部署1；auth=0、active=0、入口disabled已确认。
+check D1本轮平台统计rowsRead=845、rowsWritten=285、readQueries=62、writeQueries=54；后续audit另读187行，可能尚未反映于该平台统计，不将延迟指标当最终完整成本。
+仅由Sol修正private sampler传输，使用node:http2固定check、单TLS连接执行相同21项语义请求，CAS两stream并发共享已用连接；避免第二HTTP/1连接建立错开只是待验证假设，不是已证根因。race coverage断言移至21个HTTP之后，失败也保存完整窗口；不改业务源码。
+主Agent完成无网络preflight与代码review后，仅对同一已部署候选执行，不重部署、不换凭证；最多部署后首个完整21及后续21，首轮明确失败即停，业务总计最多69/100；不保证首轮isolate冷或后轮同isolate，HTTP/2与旧HTTP/1基线不可直接作性能因果比较。
+因现有余额不足，仅此一次透明修订显式管理上限80→90、D1管理32→40，用于有界采集、恢复和关闭；既有账本不清零，100k读/15k写行上限、费用/上传规则、安全要求和5ms门槛不变，不新开付费。
+禁止追加candidate/profile或再扩大额度；失败或证据不足即保留阶段成果、停止本轮云分支。所有分支finally关闭auth、撤销会话、禁用入口并回读active=0；生产API保持关闭，不把传输修正或HTTP成功称为CPU验收通过。
+主Agent在1次官方D1 query batch内，仅为check预置64条旧合成admissions、8条旧daily counters、128条旧minute counters及32条revoked/expired sessions，不禁用或绕过正常trigger，所选历史时间窗也须满足其限额；不倒减当日/分钟计数、不清空真实ledger，维护before统计整合auth读取、after整合既有generation RETURNING，无新增HTTP或额外DB往返。
+候选两轮40次合法API admission至少覆盖一次ordinal32维护，按限量fixture的before/after与真实meta核对删除量；第一轮失败即停且不宣称满批证明，既有读写行上限及40次D1管理子上限不变。
+10.10实际HTTP/2结果：首轮完整21请求、80断言、CAS metadataAdmissions=2及generation后HTTP authenticated=false均通过；控制器在3次GraphQL读取仍仅见3/21（avg.sampleInterval=1、same version）时按unknown停止，未运行warm，finally已回读auth=0、active=0、入口disabled。
+当前累计business48/100、explicit83/90、D1management38/40、helper部署1；maintenanceAfter仍为old admissions64/daily50/minute142/sessions32，首轮未触发满批维护，warm及满批均未验收，不得称完整CPU验收通过。
+现在停止全部business/profile/deploy，不扩大90/40/100；因官方聚合明显迟到，仅在剩余显式预算内增加一次延迟的最终旧窗口GraphQL只读（该窗第4次，对原每窗最多3次的唯一有界修订，无业务/传输重试），固定check、同version和原完整21窗口，不改范围稀释、不混旧20窗口；若仍不完整即unknown结束本轮。
+HTTP/1与HTTP/2不能据此归因性能效果，CPU/CF-03仍未通过。后续阶段应先完整采集两轮HTTP再等待analytics，并将受控sampler固化、测试化，避免ops环境与采集时序错误；这是下一阶段事项，本轮不继续业务采样。
+
+10.10最终只读收尾：第4次固定同version、原完整21窗口GraphQL读取已完成，aggregate requests=21、errors=0、sampleInterval=1，CPU P50/P95/P99/max=2.090/4.387/4.835/4.835ms；平台max是独立字段，原始逐请求CPU序列仍缺。
+分析器gate仍为 `unknown/incomplete_evidence`，reasons为 `group_aggregate_count_mismatch`、`ambiguous_attribution`、`missing_request_traffic`；完整aggregate已保留，不能仅凭较低P95/max判通过，不与旧20请求或profile窗口混合。
+最终ledger为business48/100、explicitManagement84/90、D1management38/40、helper部署1；auth=0、active=0、entry off的关闭证据来自candidate-h2-result，最后一次只读不改状态。warm未跑、满批维护未触发，本轮云分支结束，不再扩预算或采样，生产API及主站静态不变、无R2对象写入。
+阶段提交 `5a6242d`、`15cd401` 均已push且各自Cloudflare/Pages CI成功；最终156项Node、8项Python、disabled build、真实secret隐私扫描及verify:static通过。下一阶段先固化测试受控sampler，业务两轮完整采集后再等analytics，验证真实CAS与满批维护覆盖，再另行计划云轮；CPU/CF-03未通过，R2新鲜证据不足、无原文件上传仍保留。
