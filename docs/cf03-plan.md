@@ -173,7 +173,7 @@ secret通过受控stdin/平台secret API安装，不进入普通配置文件/arg
 
 ### A. Free鉴权前置门槛
 
-在真实目标账号Workers Free隔离环境，以与生产相同的代码/compatibility_date/绑定/schema进行：正确/错误/畸形key、限流拒绝、session查询、CSRF失败、冷启动/热请求、D1可撤销会话与generation切换。先用独立合成随机凭证，不使用真实所有者密码；测试诊断入口不得裸露。本轮多次优化的采样预算：每个候选版本冷启动与热请求各21次、单版本合计不超过50次，整轮最多150次；CLI初始化诊断另计。每个版本的完整结果都保留，不选择性报告较低样本。
+在真实目标账号Workers Free隔离环境，以与生产相同的代码/compatibility_date/绑定/schema进行：正确/错误/畸形key、限流拒绝、session查询、CSRF失败、冷启动/热请求、D1可撤销会话与generation切换。先用独立合成随机凭证，不使用真实所有者密码；测试诊断入口不得裸露。上一轮多次优化的历史采样预算：每个候选版本冷启动与热请求各21次、单版本合计不超过50次，整轮最多150次；历史实际128次。本次调用级观测采用第10节独立有限预算，不重置或掩盖上一轮记录。每个版本的完整结果都保留，不选择性报告较低样本。
 
 使用Cloudflare实际tail/analytics的CPU字段采样，保留采样来源、样本数、p50/p95、可取得的真实max、1102/其他错误和D1行读写；可信GraphQL分位或按秒单请求记录可作证据，P99不能冒称max，拿不到raw max须明确报告缺失。`Date.now`/wall time、单次200、CF-01旧探针或本地Miniflare均不能代替CPU证据。Workers Free当前10ms CPU限制依据[官方限制](https://developers.cloudflare.com/workers/platform/limits/)。目标样本p95<=5ms、可取得真实max时max<10ms且零CPU-limit错误，冷启动另记录；P99不是max，raw max缺失须如实写明。当前每日D1写入保守上界为36,220行（CLI初始化诊断另计）；同账号Volt用量未知，不能保证免费额度。余量不足则评估减少D1往返，不降低凭证强度。动态API日预算最多1000请求。拿不到可信CPU字段时明确门槛未通过，保留静态部署，不开付费。
 
@@ -298,3 +298,94 @@ catalog_books.public_json存该书完整publicBook（含公开files），不再�
 metadata事务将当前patch合并changes、校验并CAS持久化、新version与public_state.revision+1一起提交。单纯base导入也递增public_state.revision；初始public_state revision=0，首次导入变1。base revision是内容hash/输入receipt标识，与全局递增revision不同，不用时间戳代替版本。仅公开可见变更递增public revision（会话/限流不递增，避免快照永不稳定）。快照外层私有receipt记录该revision与artifact hash，公开schema保持原样。
 
 预算的固定policy直接封装在schema trigger中，不建由请求传参决定的policies表。精确责任由Worker与CLI共用同一schema模块：`counters(scope,kind,bucket,window_start,count)`复合唯一键、`admissions(scope,request_id,kind,created_at)`、`storage_state(id=1,account_id,observed_account_bytes,observed_at,ceiling_bytes,reserved_bytes,committed_bytes,evidence_hash,evidence_complete,updated_at)`、`upload_reservations(reservation_id,scope,file_id,book_id,object_key,size_bytes,format,sha256,state,etag,content_verified,absence_verified,created_at,updated_at)`。receipt/request ID不可由网页任意复用以免逃预算。reservation object_key全局唯一，scope/file_id活跃预留唯一；所有状态转移走固定事务/trigger。Worker access准入也原子检查session generation/file version，签名只使用该次准入返回的对象记录。
+
+
+## 10. 调用与路由级 CPU 观测执行计划（2026-10-15，新一轮，待实施）
+
+本节是后续实施基线，不代表观测工具、优化或云端验收已完成。本次只读review覆盖 `worker.mjs`、`core.mjs`、`security.mjs`、schema预算/会话/CAS triggers及本文已有CPU记录；未读取真实凭证或私有原始证据、未恢复check、未触云。上一轮128/150是独立历史轮次，不与本轮拼接成更好看的分布，也不以新预算为由清空当日D1限额。
+
+### 10.1 目标、边界与当前假设
+
+目标是建立可复核的路由总CPU证据及云端函数调用栈证据，先区分共同请求开销、metadata业务处理与D1 binding周边序列化，再实施至多一个有证据支持的最小优化。保持256 bit CSPRNG访问密钥、HMAC verifier和畸形key的dummy verify、Origin/CSRF、主库即时session撤销与generation、元数据CAS、HEAD后文件descriptor复核、原子全局/IP预算、清理上界和现有费用门槛。不得以缓存会话/预算、弱化密码学、放宽5ms目标或付费解决采样失败。
+
+本轮不启用生产API、不安装生产auth、不改变主站静态部署及runtime disabled，不上传原书或合成R2对象、不调用AI/Workflows。工具仅访问固定check Worker与独立check D1；不增加公开诊断路由、诊断响应字段或header，不在生产业务代码添加计时/console/custom spans。R2条件汇总授权已执行，5分钟freshness仍不满足；后续必须有有效采样时间，REST汇总若没有采样时间，查询时刻不能代替observedAt，不为CPU阶段放宽上传门槛。
+
+现有代码给出的可检验假设如下，均不是已定位根因：
+
+| 路径 | 当前工作量 | 应验证的问题 |
+| --- | --- | --- |
+| 所有合法API | 配置/URL及密钥格式检查，IP HMAC；可用cookie再做session digest；admission+ordinal+session同批 | 固定共同开销、binding返回处理、初始化/JIT或GC是否占主要样本 |
+| metadata提前版本冲突 | admission batch→version/category条件SELECT→409 | 与CAS失败分支分开，不能用旧version快路径代替真实并发冲突 |
+| metadata成功/真实CAS失败 | 上述两次D1后，分类ID/patch处理，再mutation admission+CAS RETURNING+latest version同批，共3次D1；清理时额外1批 | category查询扫描、D1数据编码/解码、返回JSON/对象分配是否昂贵；远端SQL耗时不直接计成Worker CPU |
+| unknown category | SQL已优先known ID；未知才SHA256，最多64项promise缓存 | 首次hash与同isolate复用差异；不同isolate缓存不可假设命中，known ID不能被hash覆盖 |
+| maintenance | D1当次ordinal为1或32倍数才批量清理 | 保留一次真实满批样本，不能通过删空过期行或避开ordinal降低测试工作量 |
+| malformed login | 严格canonical校验，不抛decode异常，仍subtle.verify | 比较verify及共同路径，不能再用“畸形输入异常”解释已修版本的高值 |
+
+历史10.873/10.981ms等仍保留。此前按邻近秒给请求贴CPU标签，只能作为候选关联：如有多个候选请求、并发CAS同秒、时钟漂移或未保存开始时间，离线分析器必须拒绝唯一归因。JIT、GC、平台差异只是待profile验证的推测。
+
+### 10.2 证据分层与采样口径
+
+1. **路由总CPU**：优先取得check限定的invocation原始CPU记录（实际字段、单位、request关联以实测schema为准）；没有raw CPU时，使用固定script/version/时间范围的GraphQL CPU分位及requests/errors，保留原始响应和可取得的sampling/confidence信息。先由受控schema查询确认字段，不假设GraphQL提供URL、HTTP状态或request ID维度。相邻请求记录只能建立关联，不能创造不存在的维度。
+2. **函数调用CPU**：优先使用平台已部署Worker的runtime CPU profile，固定check和实际运行的version UUID，使用官方管理API或现有工具；不用可能指向未部署版本的latest。官方说明profile捕获的是最近活跃、已经加载的isolate，需捕获期间有流量；它不是历史回放、不能证明首次冷启动、也不保证抓到并发对中的每个请求。保存原始pprof及self/total/采样数；本轮不新增源映射配置；若现有profile不可读，先记录限制，另行review后再考虑源映射。Free/现有权限是否实际支持须由主Agent验证，失败不升级付费、不新建通用token。[官方runtime profiling](https://developers.cloudflare.com/workers/observability/profiling-in-production/)
+3. **辅助结构信息**：本地测试可记录SQL/binding次数与D1 meta的rows_read/rows_written；云端只接受平台已有输出。D1 duration、trace span elapsed time、网络RTT、Date.now/performance.now差值都是不同口径，不能当CPU、不能用“总CPU减D1墙钟”等推导函数CPU。本轮不启用tracing；若以后确需它定位I/O结构，先另行补计划和隐私review，不能临时扩大本轮范围。[CPU与wall time口径](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/)、[DevTools计时限制](https://developers.cloudflare.com/workers/observability/dev-tools/cpu-usage/)
+
+GraphQL的Adaptive数据可能采样，低样本P95/P99只能描述本次有限样本，不能推出长期尾部保证；P99不是max，单秒count=1也不自动成为raw CPU。缺失/延迟数据不填0，不平均各秒分位或把各组P99拼成总体分位。有原始CPU序列时使用预先固定的nearest-rank方法计算P50/P95/P99与observed max；只有分组分位时，整体分布须另向平台查询同一完整范围，不以平均或加权平均分位代替。按平台字段保存原单位，报告统一ms；记录转换方式。无raw max继续明确缺失。[官方采样说明](https://developers.cloudflare.com/analytics/graphql-api/sampling/)
+
+runner每次请求在私有receipt保存单调递增序号、预定route模板/分支、版本、客户端UTC开始和结束、server Date与Cf-Ray（若有）、预期/实际HTTP状态、body长度/hash及是否maintenance；禁止存accessKey、cookie、CSRF、body明文或签名URL。server Date仅辅助时钟核对。普通请求分配隔离时间窗口，不同路由不共享同一秒；跨秒、时钟不一致、count不匹配均标ambiguous/missing，不强行贴标签。真实CAS pair单独窗口，只报告pair聚合，除非raw平台事件能唯一关联，否则不能把较高CPU分配给200或409。旧证据分析同样拒绝歧义。
+
+### 10.3 最小工具与实施分工
+
+全程按 `gpt-6.1-sol / high` 实施安全/观测工具与SQL，主Agent review和真实云操作；Luna仅可做主Agent最终提供证据后的普通文档汇总。实施依赖如下，每块单独交review，不一次搭建通用监控系统。
+
+| 工作块 | 可独立review的交付 | 前置与责任 |
+| --- | --- | --- |
+| CPU-01 离线证据分析器 | `scripts/cf-cpu-evidence.mjs`及对应合成fixtures/tests，纯解析：字段/单位校验、count核对、窗口关联、并发歧义拒绝、分位口径、缺失标识、版本隔离、秘密输出白名单 | 已分配Sol实施，主Agent review；无网络、默认无变更；不读取.env或整个.local；只显式输入证据文件，私有输出0600 |
+| CPU-02 主Agent私有runner/采集 | 主Agent用受review的最小私有runner先保存固定manifest和预算预览，再显式执行；固定check origin/name/DB allowlist、redirect:error、timeout，无mutation自动重试；输出离线分析器的脱敏输入 | 依赖CPU-01 review；本轮不实现通用云CLI、任意查询工具或完整profiling工具；凭证读取与触云仅主Agent执行 |
+| CPU-03 云端定位 | check恢复与关闭receipt、同版本baseline冷/热、一次能力probe及至多2个有效runtime CPU捕获、路由/栈分析，明确可解释与未知部分 | 主Agent执行、Sol分析；先证明观测字段和数据可关联，再消费完整请求预算 |
+| CPU-04 一个最小优化 | 针对已定位热点的小diff与语义/竞态测试；例如metadata分类SELECT的扫描/返回量或一次SQL往返 | 只在CPU-03有证据后由主Agent明确分配Sol；不先改SQL/schema。若涉及新索引，先核算迁移与索引写成本；若需新架构，另写计划，当前停止 |
+| CPU-05 验收与收尾 | 优化后同口径冷/热、安全回归、完整测试/构建/隐私检查、check关闭与证据汇总 | 主Agent复审及云验收；阶段工具/已审代码可commit→push→CI，生产API仍受原门槛限制 |
+
+分析器必须拒绝重复request序号、重叠路由窗口、错误scope/version、非法/负数CPU、不明单位、请求数不一致、混入其他Worker数据、把HTTP状态当runtime status、把pprof捕获总量当请求CPU。提供单秒多候选、跨秒、CAS pair、GraphQL缺项/采样、微秒换算、分位不可合并的测试。主Agent对私有runner另核对默认dry-run、目标guard、预算用尽、执行中断、凭证不入argv/log、私有文件权限、重定向和错误脱敏；不修改业务响应来方便关联。
+
+离线分析器输入先定义小型固定契约：`schemaVersion`、`scope=check`、版本标签、`requests[]`（序号、固定routeLabel枚举、开始/结束UTC、server Date若有、状态、预期分组）、`cpuGroups[]`（覆盖开始/结束、平台count/errors、CPU字段及unit/source、sampling元数据）、可选完整原始CPU数值序列。实际URL、书籍/文件ID、cookie/key/CSRF/IP和任意请求body不在契约中；未知字段拒绝，错误消息不回显输入。routeLabel固定为本次manifest允许的常量，禁止把URL/ID作为标签。仅显式文件读写，无.env、自动发现.local、网络或隐式Cloudflare查询。
+
+时间校验同时覆盖：UTC格式、开始<=结束、请求窗口与查询窗口完全包含、采样秒的半开区间、额外/漏失流量、版本一致性、sampling/count含义。能够匹配单一普通请求才作该请求关联；CAS pair保留组标签，不把aggregate均分给两请求或不同路由。**归因失败仍必须输出完整、已验证的输入aggregate、全部样本计数与最高已有分位，并列出unattributed/ambiguous/missing；不得丢弃高值后计算更好的gate。** 阈值明确不达标时gate=failed，证据覆盖/统计量不足时gate=unknown；只有完整可信口径均满足才gate=passed，路由细分unknown不能冒称函数已定位。原始provider JSON仍仅私有保存，公开摘要只含固定安全字段。
+
+runtime profile本轮只做供主Agent review的最小能力probe，不开发管理框架：先固定check已部署version UUID并确认有预算内流量，再使用现有受控认证请求 `POST /accounts/{account}/workers/workers/the-shelf-cf03-check/versions/{deployedVersion}/profile`，JSON为 `{"duration_ms":1000,"profile_type":"cpu"}`，返回压缩pprof直接写0600私有文件、限制大小；Authorization不入argv/log。根据官方文档需Workers Scripts Read或相应只读角色，不新签通用token；仅1次上述1000ms权限/能力probe；其成功结果也可直接分析，后续至多2次有效捕获、每次不超过5000ms，合计管理请求不超过3次、总捕获时间不超过11秒，不重试失败捕获。若unsupported/403/429或样本不足，保留响应类型与限制，不换端点/扩大权限/无限加流量；离线分析器与路由总CPU仍可独立交付。方法依据[官方profile API与限制](https://developers.cloudflare.com/workers/observability/profiling-in-production/)，本计划没有执行该probe，也不假设目标Free环境支持。
+
+### 10.4 本轮有限预算与停止条件
+
+本轮新增**最多100次check业务HTTP请求**，不是每天重新获得100次，不跨日偷偷重置。所有setup、首次请求、profile流量、失败、timeout、重试、检查退出状态均计入；上次128次仅作历史。预算预分配：baseline固定完整21请求一轮；一个候选冷/热同样21请求×2=42次；路由隔离/profile诊断最多16次；准备/关闭、必要专项和失败余量共21次，合计100。先纯离线CPU-01，云采集在其review后才执行；没有有据候选不消费42次。未使用某块不新增替代候选；每阶段有预算余额但无可信证据也不盲跑。
+
+诊断最多16次，预定metadata success 4、旧version conflict 2、真实并发CAS 3对6、畸形login 4；包括profile窗口流量，不新增请求补满或刷health。建立路径的额外setup从21次余量扣，所有请求须先计入manifest。profile只做前述小probe，成功/失败都计管理请求。保持login/IP每分钟5、metadata/IP每分钟20等现有阈值，禁止高频回放、sleep后无限重试或为了profile放宽限额。成功session创建最多12次/本轮且同时active不超过10、login尝试最多20、metadata写路径尝试最多40；均须连同固定manifest验证可满足，不能执行后再调整分母。
+
+管理面请求（GraphQL、profile、D1 REST、settings/deploy/关闭回读等）合计最多80次，子上限GraphQL24、profile3、D1管理24，其余29；每个明确查询窗口因聚合延迟最多3次读取，429/权限拒绝或profile unsupported不换端点绕过。D1本轮估算预留不超过100,000 rows_read、15,000 rows_written，含setup、维护满批、专项及索引成本；100次业务请求不自动保证该D1上界；执行前按当前schema计算各块最坏成本，不能只拿无过期行时的实测值。每批消耗与剩余记入私有ledger，实际meta在批后核对，下一批前按最坏值预留，超出即停。账号其他项目Workers/D1用量未知，不能据此宣称账号免费余量有保证；配额报错立即收尾，不升级付费，不启用外部日志服务、Logpush、Tail Worker或新观测资源。
+
+本轮不启用Workers Logs或tracing、不新增源映射等观测配置；只分析现有平台CPU记录与最小runtime profile probe。私有原始profile/CPU证据文件合计不超过20MiB，不记录请求header/body；无法取得可信记录时保留限制，不扩大观测范围。
+
+### 10.5 check恢复、固定对照与收尾
+
+主Agent先回读固定check名称、独立DB ID、origin/scope、已应用schema/002、关闭状态及现有版本，保存可恢复版本/配置摘要和合成DB所需备份；不列其他项目资源。使用现有受控helper，不新增source maps或日志选项，不放宽生产/static默认。只恢复check入口及check auth，按generation单调递增启用，旧会话继续无效；不重装/打印生产密钥、不连接production D1。启用后先用预算内最少请求验证观测可取，失败立刻关闭，不先跑42次。
+
+固定manifest在第一次执行前保存hash、顺序、输入大小、unknown category、预期HTTP及业务状态、维护安排；保留原21请求的完整业务负载，不替换为health。baseline的21次与候选每轮21次使用相同逻辑输入和种类，测试metadata有真正同expectedVersion的并发pair，并通过check D1 mutation admission/CAS结果证明race loser，而不是两次串行旧版本冲突。first-access轮只叫部署后首次访问，不保证isolate冷；hot轮也不保证同isolate。profile请求单独报告，不掺入候选最终21+21分布，不用简单请求稀释P95。
+
+满批maintenance至少做一次：预置仅check合成的到期记录，在真实D1日计数达到下一个维护ordinal时触发，回读证明LIMIT删除上界；每轮维护安排一致并单列有/无维护样本。不倒减真实日/minute计数、不删当日准入来重获额度；如需测试fixture隔离，先review并保留真实消耗ledger，不把专项状态当正常预算证据。重置metadata用独立合成book/fixture或受控check数据准备，所有SQL/索引写计入本轮管理和D1预算，不改生产库。
+
+所有分支（成功、失败、预算到顶、观察工具不可用、中断）均执行有界finally收尾：先关闭check auth并增加generation、撤销check sessions，再禁用workers.dev与preview URLs、停止profile/tail，确认没有遗留观测任务或新增观测配置，回读DB和入口状态。若关闭失败，不标收尾完成，记录未关闭资源和下一项具体补救；不删除D1/秘密/现有R2对象，不以恢复旧DB覆盖后来数据。主站静态始终保持原版本和disabled能力。
+
+### 10.6 验收与回退
+
+阶段1达标是离线分析器可复现且脱敏、主Agent私有runner采样输入通过review、实际check路由CPU可关联（歧义如实拒绝）、至少获得有足够栈样本的云端函数profile或明确平台不可用限制，并产出一个可验证热点或“暂无法归因”。profile不能覆盖的native crypto、binding内部和短函数采样误差须注明，不能把无样本解释为无开销。只有调用证据支持且最小变更能保持同事务/CAS/撤销语义时进入CPU-04；否则保留成果并停止，不无限变更架构。
+
+候选必须完成本地现有完整Node/Python测试、构建和verify:public，并补强受影响竞态/错误分支；主Agent review通过才部署check。最终验收使用无debugger/额外profile或trace活动的同一候选版本完整冷/热21+21：每轮及合并均报告平台P50/P95/P99、requests/errors与缺失数据，P95<=5ms仍是门槛；若取得真实max须<10ms，raw max拿不到继续明确缺失；1102/其他CPU-limit errors必须为0。高P99仍报告并调查，不因HTTP200抹去；无法可信计算合并值或字段缺失时不宣称门槛通过。历史失败版本和本轮baseline均保留，不只展示最佳轮。
+
+本轮不自动推广到生产：通过CPU仅解除这一项阻断，生产auth、账号新鲜R2 evidence、真实两文件与reader等既有门槛逐项执行后才判断对应发布资格。未通过则回到已审版本或保留候选本地代码，关闭check，主站维持已验收静态站；不会回滚已通过的静态改进。阶段工具可按commit→push→现有CI构建（部署仍按既有禁用配置）交付，分别报告本地、CI、check实验、生产未启用状态。
+
+### 10.7 本轮阶段结果（2026-10-15）
+
+CPU-01离线分析器已完成主Agent review修正，新增15项专项及最终153项Node、8项Python、disabled build、真实私钥隐私扫描、verify:static均通过；已用旧真实warm证据成功运行分析器，保留aggregate并拒绝missing startedAt的路由推断。
+按固定旧候选version与完整时间范围补查：首轮21请求P50/P95/P99=2.512/6.554/10.981ms、平台max=10.981ms；后续21请求=2.341/6.017/6.180ms、max=6.180ms；合并42请求=2.409/6.180/10.981ms、max=10.981ms。三组avg.sampleInterval均为1、dimensions.scriptVersion相同；max.cpuTime的schema描述为“Maximum CPU time for one request - microseconds”，已按微秒转ms，区别于P99和仍未取得的原始CPU序列。
+旧receipt仅有响应at，缺少完整请求窗口，分析器拒绝路由唯一归因但保留全部aggregate；CF-03 CPU gate仍fail。历史记录中的max缺失表示当时未取得，本轮补查不改写当时记录。私有证据位于 `.local/cf03/cpu-round-q2yZiT/`，不公开真实version UUID、账号ID或秘密。
+profile流程首次恢复时health返回404（传播阶段，未调用profile），finally关闭；第二次明确等待30秒后health/session均200，唯一一次profile POST返回404、code10393“无近期执行”，未取得pprof；不能据此判定Free不支持或权限被拒。
+最终check auth disabled、active sessions=0、workers.dev及preview disabled均已回读确认；production与静态部署未变，无R2对象写入。额外GraphQL已执行，累计业务请求3/100、管理请求26/80；固定check D1自本轮12:00Z起平台统计rowsRead=26、rowsWritten=18、readQueries=6、writeQueries=6（含两次启闭）。两个成功health/session执行已出现在GraphQL，sampleInterval=1，CPU P50/P95/P99/max=1.589/6.603/6.603/6.603ms；仅2样本不能判通过，也不与旧21样本混合；profile仍为10393。
+下一步先补充较长但有限的一致流量窗口、route隔离诊断的计划及预算/失败重试口径，再交主Agent执行；当前暂无函数热点证据，不实施SQL优化，尤其不直接合并会改变登录失败计数事务的操作。
