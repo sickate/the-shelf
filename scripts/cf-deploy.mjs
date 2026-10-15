@@ -11,12 +11,23 @@ const ACCOUNT_KEYS = [
   "SHELF_CF_ACCOUNT_ID",
   "CLOUDFLARE_ACCOUNT_ID",
 ];
-const PRIVATE_KEYS = [
+export const PRIVATE_KEYS = [
   ...ACCOUNT_KEYS,
   "SHELF_CF_DEPLOY_TOKEN",
   "CLOUDFLARE_API_TOKEN",
   "CF_PROBE_TOKEN",
   "SHELF_CF_PROBE_TOKEN",
+  "SHELF_CF_OWNER_ACCESS_KEY",
+  "OWNER_KEY_PEPPER",
+  "SESSION_SECRET",
+  "R2_ACCESS_KEY_ID",
+  "R2_SECRET_ACCESS_KEY",
+  "SHELF_CF_CHECK_OWNER_ACCESS_KEY",
+  "SHELF_CF_CHECK_OWNER_KEY_PEPPER",
+  "SHELF_CF_CHECK_SESSION_SECRET",
+  "SHELF_CF_PRODUCTION_OWNER_ACCESS_KEY",
+  "SHELF_CF_PRODUCTION_OWNER_KEY_PEPPER",
+  "SHELF_CF_PRODUCTION_SESSION_SECRET",
   "SHELF_OAI_KEY",
   "SHELF_R2_ACCESS_KEY_ID",
   "SHELF_R2_SECRET_ACCESS_KEY",
@@ -30,6 +41,10 @@ const MESSAGES = {
   preflight: "Static deployment checks failed; inspect the private log.",
   deploy:
     "Cloudflare deployment failed or its outcome is uncertain; inspect the private log before retrying.",
+  bindings:
+    "Static deployment would replace an API Worker; use an explicit verified static rollback.",
+  remote:
+    "Cloudflare Worker settings could not be verified; deployment stopped safely.",
   internal:
     "Static deployment stopped safely; inspect the private log if available.",
 };
@@ -129,12 +144,12 @@ export function selectCredentials(environment = {}, fileEnvironment = {}) {
   };
 }
 
-async function regularFile(filename) {
+export async function regularFile(filename) {
   const stat = await fs.lstat(filename);
   if (!stat.isFile() || stat.isSymbolicLink()) reject("files");
   return stat;
 }
-async function privateDirectory(directory) {
+export async function privateDirectory(directory) {
   try {
     await fs.mkdir(directory, { mode: 0o700 });
   } catch (error) {
@@ -144,7 +159,7 @@ async function privateDirectory(directory) {
   if (!stat.isDirectory() || stat.isSymbolicLink()) reject("files");
   await fs.chmod(directory, 0o700);
 }
-async function privateFile(filename, content = "") {
+export async function privateFile(filename, content = "") {
   const file = await fs.open(filename, "wx", 0o600);
   try {
     await file.writeFile(content);
@@ -152,7 +167,7 @@ async function privateFile(filename, content = "") {
     await file.close();
   }
 }
-async function inspectAssets(directory) {
+export async function inspectAssets(directory) {
   const stat = await fs.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) reject("files");
   const entries = await fs.readdir(directory, { withFileTypes: true });
@@ -170,7 +185,7 @@ async function inspectAssets(directory) {
     else if (!entry.isFile()) reject("files");
   }
 }
-function baseEnvironment(environment, runDirectory) {
+export function baseEnvironment(environment, runDirectory) {
   const result = {};
   // Do not forward NODE_OPTIONS, alternate API endpoints, proxies, auth keys,
   // Wrangler environments, CLI name overrides, or unrelated project secrets.
@@ -261,7 +276,7 @@ export async function runChild({
     }
   }
 }
-async function scrubLog(filename, values) {
+export async function scrubLog(filename, values) {
   let text;
   try {
     text = await fs.readFile(filename, "utf8");
@@ -277,6 +292,8 @@ export async function deploy({
   root = ROOT,
   environment = process.env,
   runner = runChild,
+  inspector,
+  staticRollback = false,
 } = {}) {
   let runDirectory, credentials;
   let phase = "files";
@@ -303,8 +320,40 @@ export async function deploy({
       reject("config");
     }
     const config = validateConfig(source);
+    const apiPolicy = await import("./cf-api-deploy.mjs");
+    const privacySecrets = await apiPolicy.loadPrivacySecrets(repository);
+    credentials.privateValues.push(...Object.values(privacySecrets));
+    phase = "remote";
+    const settings = await (inspector || apiPolicy.readRemoteSettings)(
+      credentials,
+      "the-shelf",
+    );
+    const bindings = settings?.bindings || [];
+    const hasApi = !apiPolicy.safeStaticBindings(settings || { bindings: [] });
+    if (hasApi) {
+      if (!staticRollback) reject("bindings");
+      const resources = apiPolicy.validateDeployConfig(
+        await apiPolicy.readPrivateJson(repository, ".local/cf03/deploy.json"),
+      );
+      apiPolicy.validateRemoteBindings(
+        settings,
+        "production",
+        resources.profiles.production.databaseId,
+        { accountId: credentials.accountId },
+      );
+    } else if (staticRollback) reject("bindings");
+    phase = "files";
     const assets = path.join(repository, "dist");
     await inspectAssets(assets);
+    try {
+      const runtime = JSON.parse(
+        await fs.readFile(path.join(assets, "data/runtime.json"), "utf8"),
+      );
+      if (runtime.apiMode !== "disabled" || runtime.schemaVersion !== 1)
+        reject("config");
+    } catch {
+      reject("config");
+    }
     if (
       JSON.parse(
         await fs.readFile(path.join(assets, "docs/index.json"), "utf8"),
@@ -316,6 +365,11 @@ export async function deploy({
     await privateDirectory(privateRoot);
     runDirectory = await fs.mkdtemp(path.join(privateRoot, "deploy-"));
     await fs.chmod(runDirectory, 0o700);
+    if (hasApi)
+      await privateFile(
+        path.join(runDirectory, "rollback-bindings.json"),
+        JSON.stringify({ at: new Date().toISOString(), bindings }, null, 2),
+      );
     const logPath = path.join(runDirectory, "deploy.log");
     await privateFile(logPath);
     await privateFile(path.join(runDirectory, "wrangler.log"));
@@ -332,7 +386,7 @@ export async function deploy({
     );
     const childEnvironment = baseEnvironment(environment, runDirectory);
     const checkEnvironment = { ...childEnvironment };
-    const merged = { ...fileEnvironment, ...environment };
+    const merged = { ...fileEnvironment, ...environment, ...privacySecrets };
     for (const key of PRIVATE_KEYS)
       if (merged[key] !== undefined) checkEnvironment[key] = merged[key];
     // Validate without exposing tokens to npm, a shell, static source or argv.
@@ -376,6 +430,13 @@ export async function deploy({
       ],
     });
     if (result.code !== 0 || result.signal) reject("deploy");
+    phase = "remote";
+    const deployed = await (inspector || apiPolicy.readRemoteSettings)(
+      credentials,
+      "the-shelf",
+    );
+    if (!deployed || !apiPolicy.safeStaticBindings(deployed))
+      reject("bindings");
     return {
       ok: true,
       url: PUBLIC_URL,
@@ -407,8 +468,12 @@ export async function deploy({
 
 export async function main() {
   try {
-    if (process.argv.length > 2) reject("config");
-    const result = await deploy();
+    const argv = process.argv.slice(2);
+    if (argv.length && (argv.length !== 1 || argv[0] !== "--static-rollback"))
+      reject("config");
+    const result = await deploy({
+      staticRollback: argv[0] === "--static-rollback",
+    });
     console.log(`Cloudflare static deployment succeeded: ${result.url}`);
     console.log(`Private deployment log: ${result.logPath}`);
   } catch (error) {

@@ -43,6 +43,11 @@ async function fixture(t, config = sourceConfig()) {
   await fs.mkdir(path.join(root, "dist"));
   await fs.writeFile(path.join(root, "dist/index.html"), "<p>The Shelf</p>");
   await fs.mkdir(path.join(root, "dist/docs"));
+  await fs.mkdir(path.join(root, "dist/data"));
+  await fs.writeFile(
+    path.join(root, "dist/data/runtime.json"),
+    JSON.stringify({ schemaVersion: 1, apiMode: "disabled" }),
+  );
   await fs.writeFile(
     path.join(root, "dist/docs/index.json"),
     JSON.stringify({ basePath: "/" }),
@@ -205,6 +210,7 @@ test("deployment uses isolated config, empty dotenv, minimal environment and pri
     WRANGLER_LOG_PATH: "/untrusted/global.log",
   };
   const result = await deploy({
+    inspector: async () => ({ bindings: [] }),
     root,
     environment,
     runner: async (call) => {
@@ -276,6 +282,7 @@ test("preflight failures prevent deployment and deployment errors reveal no nati
   let count = 0;
   await assert.rejects(
     deploy({
+      inspector: async () => ({ bindings: [] }),
       root,
       environment: localEnvironment(),
       runner: async () => {
@@ -289,6 +296,7 @@ test("preflight failures prevent deployment and deployment errors reveal no nati
   count = 0;
   await assert.rejects(
     deploy({
+      inspector: async () => ({ bindings: [] }),
       root,
       environment: localEnvironment(),
       runner: async (call) => {
@@ -329,6 +337,7 @@ test("unsafe asset links, private directories and symlinked private workspace re
     await setup(root);
     await assert.rejects(
       deploy({
+        inspector: async () => ({ bindings: [] }),
         root,
         environment: localEnvironment(),
         runner: () => assert.fail("must not execute"),
@@ -375,10 +384,188 @@ test("child logs redact credentials before persistence and Pages artifacts canno
   );
   await assert.rejects(
     deploy({
+      inspector: async () => ({ bindings: [] }),
       root,
       environment: localEnvironment(),
       runner: () => assert.fail("must not execute"),
     }),
     safeError("config"),
+  );
+});
+
+test("ordinary static deployment cannot replace an API Worker or accept its frontend artifact", async (t) => {
+  const root = await fixture(t);
+  await assert.rejects(
+    deploy({
+      root,
+      environment: localEnvironment(),
+      inspector: async () => ({
+        bindings: [{ name: "DB", type: "d1", id: "unknown" }],
+      }),
+      runner: () => assert.fail("must not run"),
+    }),
+    safeError("bindings"),
+  );
+  await fs.writeFile(
+    path.join(root, "dist/data/runtime.json"),
+    JSON.stringify({ schemaVersion: 1, apiMode: "same-origin" }),
+  );
+  await assert.rejects(
+    deploy({
+      root,
+      environment: localEnvironment(),
+      inspector: async () => ({ bindings: [] }),
+      runner: () => assert.fail("must not run"),
+    }),
+    safeError("config"),
+  );
+});
+
+test("explicit static rollback verifies and records the exact previous API bindings", async (t) => {
+  const { PROFILES, SECRET_NAMES } =
+    await import("../scripts/cf-api-deploy.mjs");
+  const root = await fixture(t),
+    checkId = "11111111-1111-4111-8111-111111111111",
+    prodId = "22222222-2222-4222-8222-222222222222";
+  await fs.mkdir(path.join(root, ".local"), { mode: 0o700 });
+  await fs.mkdir(path.join(root, ".local/cf03"), { mode: 0o700 });
+  await fs.writeFile(
+    path.join(root, ".local/cf03/deploy.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      profiles: {
+        check: {
+          databaseId: checkId,
+          databaseName: PROFILES.check.databaseName,
+        },
+        production: {
+          databaseId: prodId,
+          databaseName: PROFILES.production.databaseName,
+        },
+      },
+    }),
+    { mode: 0o600 },
+  );
+  const settings = {
+    bindings: [
+      { name: "DB", type: "d1", id: prodId },
+      { name: "BOOKS", type: "r2_bucket", bucket_name: "the-shelf-books" },
+      { name: "ASSETS", type: "assets" },
+      ...SECRET_NAMES.map((name) => ({ name, type: "secret_text" })),
+      ...Object.entries({
+        APP_SCOPE: "production",
+        SITE_ORIGIN: PROFILES.production.origin,
+        R2_ACCOUNT_ID: ACCOUNT,
+        R2_BUCKET: "the-shelf-books",
+      }).map(([name, text]) => ({ name, text, type: "plain_text" })),
+    ],
+  };
+  let calls = 0;
+  const result = await deploy({
+    root,
+    staticRollback: true,
+    environment: localEnvironment(),
+    inspector: async () =>
+      calls === 0
+        ? settings
+        : {
+            bindings: settings.bindings.filter(
+              (b) => b.type === "secret_text" || b.type === "assets",
+            ),
+          },
+    runner: async () => {
+      calls++;
+      return { code: 0 };
+    },
+  });
+  assert.equal(calls, 3);
+  const record = path.join(
+    root,
+    path.dirname(result.logPath),
+    "rollback-bindings.json",
+  );
+  assert.equal((await fs.stat(record)).mode & 0o777, 0o600);
+  assert.deepEqual(
+    JSON.parse(await fs.readFile(record, "utf8")).bindings,
+    settings.bindings,
+  );
+  const staticSettings = {
+    bindings: settings.bindings.filter(
+      (b) => b.type === "secret_text" || b.type === "assets",
+    ),
+  };
+  await deploy({
+    root,
+    environment: localEnvironment(),
+    inspector: async () => staticSettings,
+    runner: async () => {
+      calls++;
+      return { code: 0 };
+    },
+  });
+  assert.equal(
+    calls,
+    6,
+    "ordinary static publication works after explicit rollback retained secrets",
+  );
+  settings.bindings.find((b) => b.name === "DB").id = checkId;
+  await assert.rejects(
+    deploy({
+      root,
+      staticRollback: true,
+      environment: localEnvironment(),
+      inspector: async () => settings,
+      runner: () => assert.fail("must not deploy wrong DB"),
+    }),
+  );
+});
+
+test("retained known secrets allow subsequent ordinary static publishing and postflight rejects leftover API bindings", async (t) => {
+  const { SECRET_NAMES } = await import("../scripts/cf-api-deploy.mjs");
+  const root = await fixture(t),
+    retained = {
+      bindings: [
+        { name: "ASSETS", type: "assets" },
+        ...SECRET_NAMES.map((name) => ({ name, type: "secret_text" })),
+      ],
+    };
+  let inspected = 0;
+  const result = await deploy({
+    root,
+    environment: localEnvironment(),
+    inspector: async () => {
+      inspected++;
+      return retained;
+    },
+    runner: async () => ({ code: 0 }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(inspected, 2);
+  for (const bad of [
+    { name: "DB", type: "d1", id: "unexpected" },
+    { name: "BOOKS", type: "r2_bucket", bucket_name: "the-shelf-books" },
+    { name: "UNKNOWN", type: "plain_text", text: "unsafe" },
+  ]) {
+    let reads = 0;
+    await assert.rejects(
+      deploy({
+        root,
+        environment: localEnvironment(),
+        inspector: async () =>
+          ++reads === 1 ? retained : { bindings: [...retained.bindings, bad] },
+        runner: async () => ({ code: 0 }),
+      }),
+      safeError("bindings"),
+    );
+  }
+  await assert.rejects(
+    deploy({
+      root,
+      environment: localEnvironment(),
+      inspector: async () => ({ bindings: retained.bindings.slice(0, 2) }),
+      runner: () =>
+        assert.fail("partial secrets are not an approved static state"),
+    }),
+    safeError("bindings"),
   );
 });

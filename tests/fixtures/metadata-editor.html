@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" /><title>Metadata editor DOM verification</title>
+  <form id="editor">
+    <fieldset disabled id="fields">
+      <input id="title" value="静态标题" /><select id="category">
+        <option value="静态分类">静态分类</option></select
+      ><textarea id="description">保留输入</textarea
+      ><button id="save">保存</button>
+    </fieldset>
+  </form>
+  <pre id="result">running</pre>
+  <script type="module">
+    import { metadataEditor, selectCategory } from "/metadata-editor.mjs";
+    const fieldset = document.getElementById("fields"),
+      title = document.getElementById("title"),
+      category = document.getElementById("category"),
+      button = document.getElementById("save");
+    const controller = metadataEditor(fieldset),
+      assertions = [];
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+      assertions.push(message);
+    };
+    const deferred = () => {
+      let resolve, reject;
+      const promise = new Promise((a, b) => {
+        resolve = a;
+        reject = b;
+      });
+      return { promise, resolve, reject };
+    };
+    try {
+      let clicks = 0;
+      button.onclick = (e) => {
+        e.preventDefault();
+        clicks++;
+      };
+      const initial = deferred();
+      const loading = controller.load(async () => {
+        await initial.promise;
+        title.value = "云端标题";
+        selectCategory(category, "云端新增分类");
+      });
+      assert(
+        [...fieldset.querySelectorAll("input,select,textarea,button")].every(
+          (el) => el.matches(":disabled"),
+        ),
+        "slow initial GET locks every native control",
+      );
+      button.click();
+      assert(clicks === 0, "disabled submit ignores user activation");
+      title.focus();
+      assert(
+        document.activeElement !== title,
+        "disabled input cannot receive editing focus",
+      );
+      initial.resolve();
+      await loading;
+      assert(
+        !fieldset.disabled && controller.ready,
+        "successful initial GET unlocks controls",
+      );
+      assert(
+        category.value === "云端新增分类",
+        "new cloud category remains selectable",
+      );
+      title.value = "人工修改标题";
+      const pending = deferred();
+      let payload;
+      const saving = controller.save(async () => {
+        payload = { title: title.value, category: category.value };
+        await pending.promise;
+        title.value = payload.title;
+      });
+      assert(
+        [...fieldset.querySelectorAll("input,select,textarea,button")].every(
+          (el) => el.matches(":disabled"),
+        ),
+        "slow POST locks every native control",
+      );
+      assert(
+        payload.title === "人工修改标题" && payload.category === "云端新增分类",
+        "title-only edit preserves new cloud category in payload",
+      );
+      button.click();
+      assert(clicks === 0, "second submit cannot race pending save");
+      pending.resolve();
+      await saving;
+      assert(
+        !fieldset.disabled && title.value === "人工修改标题",
+        "successful save unlocks and retains submitted input",
+      );
+      title.value = "失败时保留的输入";
+      const failed = deferred();
+      const failure = controller.save(async () => {
+        await failed.promise;
+      });
+      failed.reject(new Error("fixture failure"));
+      try {
+        await failure;
+      } catch {}
+      assert(
+        !fieldset.disabled && title.value === "失败时保留的输入",
+        "save error safely unlocks without replacing input",
+      );
+      selectCategory(category, "<img src=x onerror=alert(1)>");
+      assert(
+        !category.querySelector("img"),
+        "new category uses textContent without HTML injection",
+      );
+      document.body.dataset.result = "pass";
+      document.getElementById("result").textContent = JSON.stringify(
+        { ok: true, assertions },
+        null,
+        2,
+      );
+    } catch (error) {
+      document.body.dataset.result = "fail";
+      document.getElementById("result").textContent = String(error.stack);
+    }
+  </script>
+</html>

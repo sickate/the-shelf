@@ -1,5 +1,6 @@
 import { base } from "../lib/client";
-import { api, session, errorText, accessUrl, explainCode } from "../lib/api";
+import { api, session, errorText, fetchFile, explainCode } from "../lib/api";
+import { metadataEditor, selectCategory } from "../lib/metadata-editor.mjs";
 import { buildJobInput } from "../lib/job-input.mjs";
 export async function initBook() {
   const book =
@@ -11,6 +12,11 @@ export async function initBook() {
     timers = new Map<string, number>();
   let authenticated = false;
   let aiEnabled = false;
+  let metadataVersion: number | null = null;
+  let versionedMetadata = false;
+  const editor = metadataEditor(
+    document.getElementById("metadata-fields") as HTMLFieldSetElement,
+  );
   let stopped = false;
   window.addEventListener("pagehide", () => {
     stopped = true;
@@ -26,7 +32,9 @@ export async function initBook() {
       "metadata-category": updated.category || "",
     };
     for (const [id, value] of Object.entries(fields)) {
-      (document.getElementById(id) as HTMLInputElement).value = value;
+      if (id === "metadata-category")
+        selectCategory(document.getElementById(id), value);
+      else (document.getElementById(id) as HTMLInputElement).value = value;
     }
     document.getElementById("book-title")!.textContent = updated.title;
     document.getElementById("cover-title")!.textContent = updated.title;
@@ -54,35 +62,65 @@ export async function initBook() {
   }
   document.getElementById("metadata-form")!.onsubmit = async (event) => {
     event.preventDefault();
-    if (!authenticated) return;
-    const form = document.getElementById("metadata-form")!,
-      button = form.querySelector("button")!,
-      target = document.getElementById("metadata-message")!,
-      value = (id: string) =>
-        (document.getElementById(id) as HTMLInputElement).value.trim();
-    button.disabled = true;
-    try {
-      const category = document.getElementById(
-        "metadata-category",
-      ) as HTMLSelectElement;
-      const data = await api(`/api/books/${book}/metadata`, {
-        title: value("metadata-title"),
-        author: value("metadata-author") || null,
-        description: value("metadata-description"),
-        category: category.value,
-        tags: value("metadata-tags")
-          .split(/[,，]/)
-          .map((t) => t.trim())
-          .filter(Boolean),
-      });
-      applyMetadata(data.book);
-      target.textContent =
-        "信息已保存，当前详情与后续 AI 任务会使用新信息。公开静态目录将在下次构建后更新。";
-    } catch (e) {
-      target.textContent = errorText(e);
-    } finally {
-      button.disabled = false;
-    }
+    if (!authenticated || !editor.ready) return;
+    await editor.save(async () => {
+      if (versionedMetadata && !Number.isInteger(metadataVersion)) {
+        document.getElementById("metadata-message")!.textContent =
+          "元数据版本尚未读取，请重新载入页面后再编辑。";
+        return;
+      }
+      const form = document.getElementById("metadata-form")!,
+        button = form.querySelector("button")!,
+        target = document.getElementById("metadata-message")!,
+        value = (id: string) =>
+          (document.getElementById(id) as HTMLInputElement).value.trim();
+      button.disabled = true;
+      try {
+        const category = document.getElementById(
+          "metadata-category",
+        ) as HTMLSelectElement;
+        const changes = {
+          title: value("metadata-title"),
+          author: value("metadata-author") || null,
+          description: value("metadata-description"),
+          category: category.value,
+          tags: value("metadata-tags")
+            .split(/[,，]/)
+            .map((t) => t.trim())
+            .filter(Boolean),
+        };
+        const data = await api(
+          `/api/books/${book}/metadata`,
+          versionedMetadata
+            ? { expectedVersion: metadataVersion, changes }
+            : changes,
+        );
+        if (Number.isInteger(data.metadataVersion))
+          metadataVersion = data.metadataVersion;
+        applyMetadata(data.book);
+        target.textContent =
+          "信息已保存，当前详情与后续 AI 任务会使用新信息。公开静态目录将在下次构建后更新。";
+      } catch (e) {
+        target.textContent = errorText(e);
+        if ((e as any)?.code === "metadata_conflict") {
+          try {
+            const latest = await api(`/api/books/${book}`);
+            metadataVersion = latest.metadataVersion;
+            const current = latest.book || latest;
+            const details = document.createElement("p");
+            details.textContent = `最新内容：${current.title} · ${current.author || "作者未标注"} · ${current.category}；${current.description || "暂无简介"}；标签：${(current.tags || []).join("、")}。输入已保留，请核对后再次保存。`;
+            target.append(details);
+          } catch {
+            metadataVersion = null;
+            target.append(
+              " 最新版本暂不可读取，请保留输入并稍后重新载入页面。",
+            );
+          }
+        }
+      } finally {
+        button.disabled = false;
+      }
+    });
   };
   function result(job: any, personal: boolean) {
     const section = document.createElement("article");
@@ -241,11 +279,15 @@ export async function initBook() {
       target.textContent = errorText(e);
     }
   }
-  published();
   try {
     const [s, c] = await Promise.all([session(), api("/api/config")]);
     authenticated = s.authenticated;
     aiEnabled = c.aiConfigured;
+    if (aiEnabled) published();
+    else
+      document.getElementById("published")!.textContent =
+        "AI 整理结果暂未启用。";
+    versionedMetadata = c.authScheme === "owner-access-key";
     document.getElementById("ai-session")!.textContent = !authenticated
       ? "登录所有者账号后，可生成并查看私人记录。"
       : !aiEnabled
@@ -255,12 +297,16 @@ export async function initBook() {
     if (authenticated) {
       document.getElementById("metadata-editor")!.hidden = false;
       try {
-        const info = await api(`/api/books/${book}`);
-        applyMetadata(info.book || info);
+        await editor.load(async () => {
+          const info = await api(`/api/books/${book}`);
+          if (Number.isInteger(info.metadataVersion))
+            metadataVersion = info.metadataVersion;
+          applyMetadata(info.book || info);
+        });
       } catch (e) {
         document.getElementById("metadata-message")!.textContent = errorText(e);
       }
-      await refreshHistory();
+      if (c.privateHistory !== false) await refreshHistory();
     }
   } catch (e) {
     document.getElementById("ai-session")!.textContent = errorText(e);
@@ -317,14 +363,9 @@ export async function initBook() {
         const target = document.getElementById("file-message")!;
         try {
           await session();
-          const access = await api(
-            `/api/files/${encodeURIComponent(button.dataset.download!)}/access`,
+          const { access, response } = await fetchFile(
+            button.dataset.download!,
           );
-          const response = await fetch(accessUrl(access.url), {
-            credentials: access.mode === "r2" ? "omit" : "include",
-          });
-          if (!response.ok)
-            throw new Error(`文件读取失败 (${response.status})`);
           const url = URL.createObjectURL(await response.blob());
           const a = document.createElement("a");
           a.href = url;

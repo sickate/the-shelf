@@ -34,6 +34,17 @@ function fixture(t, files = {}, catalog = { books: [] }) {
 
 test("public artifacts reject configured Cloudflare credentials and account identifiers", async (t) => {
   const names = [
+    "SHELF_CF_OWNER_ACCESS_KEY",
+    "OWNER_KEY_PEPPER",
+    "SESSION_SECRET",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+    "SHELF_CF_CHECK_OWNER_ACCESS_KEY",
+    "SHELF_CF_CHECK_OWNER_KEY_PEPPER",
+    "SHELF_CF_CHECK_SESSION_SECRET",
+    "SHELF_CF_PRODUCTION_OWNER_ACCESS_KEY",
+    "SHELF_CF_PRODUCTION_OWNER_KEY_PEPPER",
+    "SHELF_CF_PRODUCTION_SESSION_SECRET",
     "CLOUDFLARE_API_TOKEN",
     "CLOUDFLARE_ACCOUNT_ID",
     "SHELF_CF_DEPLOY_TOKEN",

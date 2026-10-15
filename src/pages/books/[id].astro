@@ -1,5 +1,6 @@
 ---
 import Layout from "../../layouts/Layout.astro";
+import { canAccessFile } from "../../lib/file-availability.mjs";
 import { catalog, path, size, status, color } from "../../lib/data";
 export function getStaticPaths() {
   return catalog.books.map((book) => ({
@@ -57,61 +58,67 @@ const { book } = Astro.props;
         中国文学」。
       </p>
       <form id="metadata-form">
-        <label>
-          书名
-          <input
-            id="metadata-title"
-            value={book.title}
-            required
-            maxlength="300"
-          />
-        </label>
-        <div class="form-row">
+        <fieldset
+          id="metadata-fields"
+          disabled
+          style="border:0;padding:0;margin:0;min-width:0"
+        >
           <label>
-            作者
+            书名
             <input
-              id="metadata-author"
-              value={book.author || ""}
-              placeholder="留空表示未知"
-              maxlength="200"
+              id="metadata-title"
+              value={book.title}
+              required
+              maxlength="300"
             />
           </label>
+          <div class="form-row">
+            <label>
+              作者
+              <input
+                id="metadata-author"
+                value={book.author || ""}
+                placeholder="留空表示未知"
+                maxlength="200"
+              />
+            </label>
+            <label>
+              分类
+              <select id="metadata-category">
+                {catalog.categories.map((c) => (
+                  <option
+                    value={c.name}
+                    data-id={c.id}
+                    selected={c.id === book.categoryId}
+                  >
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <label>
-            分类
-            <select id="metadata-category">
-              {catalog.categories.map((c) => (
-                <option
-                  value={c.name}
-                  data-id={c.id}
-                  selected={c.id === book.categoryId}
-                >
-                  {c.name}
-                </option>
-              ))}
-            </select>
+            标签
+            <input
+              id="metadata-tags"
+              value={book.tags.join(", ")}
+              placeholder="用逗号分隔，例如：小说, 中国文学"
+              maxlength="1000"
+            />
           </label>
-        </div>
-        <label>
-          标签
-          <input
-            id="metadata-tags"
-            value={book.tags.join(", ")}
-            placeholder="用逗号分隔，例如：小说, 中国文学"
-            maxlength="1000"
-          />
-        </label>
-        <label style="margin-top:14px">
-          简介
-          <textarea
-            id="metadata-description"
-            maxlength="4000"
-          >{book.description}</textarea>
-        </label>
-        <p>
-          <button type="submit" class="primary">
-            保存信息
-          </button>
-        </p>
+          <label style="margin-top:14px">
+            简介
+            <textarea
+              id="metadata-description"
+              maxlength="4000"
+            >{book.description}</textarea>
+          </label>
+          <p>
+            <button type="submit" class="primary">
+              保存信息
+            </button>
+          </p>
+        </fieldset>
       </form>
       <p id="metadata-message" class="status-text" role="status"></p>
     </details>
@@ -135,13 +142,19 @@ const { book } = Astro.props;
                   ? "超过 20 MB 门槛，暂不上传或在线读取。"
                   : f.reason === "empty"
                     ? "文件为空，无法读取。"
-                    : f.readable
-                      ? "支持浏览器阅读格式；需确认文件实际可用。"
-                      : "浏览器不直接支持此格式；可下载原文件，使用 Calibre 转为 EPUB。"}
+                    : f.reason === "not_uploaded" &&
+                        import.meta.env.PUBLIC_SHELF_API_MODE
+                      ? "等待上传；目前不能在线阅读或下载。"
+                      : f.readable
+                        ? "支持浏览器阅读格式；需确认文件实际可用。"
+                        : "浏览器不直接支持此格式；可下载原文件，使用 Calibre 转为 EPUB。"}
               </p>
             </div>
             <div class="file-actions">
-              {f.status === "candidate" && (
+              {canAccessFile(
+                f,
+                import.meta.env.PUBLIC_SHELF_API_MODE || "",
+              ) && (
                 <>
                   <a
                     class="button"

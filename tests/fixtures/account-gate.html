@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" /><title>Account startup DOM verification</title>
+  <fieldset id="controls" disabled>
+    <input type="password" id="credential" /><button type="button" id="login">
+      登录</button
+    ><button type="button" id="logout">退出</button>
+  </fieldset>
+  <button id="retry" type="button" disabled hidden>
+    重新检查连接与登录状态
+  </button>
+  <p id="status">登录状态尚未确认</p>
+  <pre id="result">running</pre>
+  <script type="module">
+    import { accountGate } from "/account-gate.mjs";
+    const controls = document.getElementById("controls"),
+      retry = document.getElementById("retry"),
+      login = document.getElementById("login"),
+      logout = document.getElementById("logout"),
+      status = document.getElementById("status"),
+      assertions = [];
+    const assert = (value, message) => {
+      if (!value) throw new Error(message);
+      assertions.push(message);
+    };
+    const deferred = () => {
+      let resolve, reject;
+      const promise = new Promise((a, b) => {
+        resolve = a;
+        reject = b;
+      });
+      return { promise, resolve, reject };
+    };
+    const turn = () => new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      const config = deferred(),
+        session = deferred();
+      let csrf = "unknown",
+        posts = 0,
+        action;
+      const gate = accountGate({
+        fieldset: controls,
+        retryButton: retry,
+        loadConfig: () => config.promise,
+        loadSession: async () => {
+          const s = await session.promise;
+          csrf = s.csrfToken;
+          return s;
+        },
+        onReady: (_c, s) =>
+          (status.textContent = s.authenticated ? "已登录" : "尚未登录"),
+        onFailure: () => (status.textContent = "登录状态尚未确认"),
+      });
+      login.onclick = () => {
+        action = gate.run(async () => {
+          posts++;
+          csrf = "login-csrf";
+          status.textContent = "已登录";
+        });
+      };
+      logout.onclick = () => {
+        action = gate.run(async () => {
+          posts++;
+          csrf = null;
+          status.textContent = "已退出";
+        });
+      };
+      const starting = gate.initialize();
+      config.resolve({ apiConfigured: true, authScheme: "owner-access-key" });
+      await turn();
+      assert(
+        [...controls.querySelectorAll("input,button")].every((el) =>
+          el.matches(":disabled"),
+        ),
+        "slow startup natively disables credentials, login and logout",
+      );
+      login.click();
+      logout.click();
+      assert(
+        posts === 0,
+        "fast clicks cannot submit authentication while initial session is pending",
+      );
+      assert(
+        status.textContent === "登录状态尚未确认",
+        "pending startup is not presented as anonymous success",
+      );
+      session.resolve({ authenticated: false, csrfToken: null });
+      await starting;
+      login.click();
+      await action;
+      await turn();
+      assert(
+        posts === 1 && csrf === "login-csrf" && status.textContent === "已登录",
+        "login runs only after all startup responses and its CSRF/UI are not overwritten",
+      );
+      logout.click();
+      await action;
+      await turn();
+      assert(
+        csrf === null && status.textContent === "已退出",
+        "logout cannot be overwritten by a leftover startup response",
+      );
+      const outstanding = deferred();
+      let attempt = 0,
+        sessions = 0,
+        retrying;
+      const recover = accountGate({
+        fieldset: controls,
+        retryButton: retry,
+        loadConfig: () =>
+          ++attempt === 1
+            ? Promise.reject(new Error("synthetic failure"))
+            : { apiConfigured: true },
+        loadSession: () => {
+          sessions++;
+          return attempt === 1
+            ? outstanding.promise
+            : { authenticated: true, csrfToken: "recovered-csrf" };
+        },
+        onPending: () => (status.textContent = "登录状态尚未确认"),
+        onReady: (_c, s) => {
+          status.textContent = s.authenticated ? "已登录" : "尚未登录";
+          csrf = s.csrfToken;
+        },
+        onFailure: () => (status.textContent = "检查失败，登录状态尚未确认"),
+      });
+      retry.onclick = () => {
+        retrying = recover.initialize();
+      };
+      login.onclick = () => recover.run(() => posts++);
+      logout.onclick = () => recover.run(() => posts++);
+      const failed = recover.initialize();
+      await turn();
+      retry.click();
+      login.click();
+      assert(
+        sessions === 1 && posts === 2 && retry.disabled,
+        "one failed request cannot unlock retry while another initial response is pending",
+      );
+      outstanding.resolve({ authenticated: false, csrfToken: null });
+      await failed;
+      assert(
+        controls.disabled && !retry.hidden && !retry.disabled,
+        "settled initialization failure exposes an enabled retry while auth remains locked",
+      );
+      assert(
+        status.textContent.includes("尚未确认"),
+        "startup failure never claims a known authentication state",
+      );
+      retry.click();
+      await retrying;
+      assert(
+        !controls.disabled &&
+          retry.hidden &&
+          csrf === "recovered-csrf" &&
+          status.textContent === "已登录",
+        "explicit retry safely restores confirmed state and usable controls",
+      );
+      document.body.dataset.result = "pass";
+      document.getElementById("result").textContent = JSON.stringify(
+        { ok: true, assertions },
+        null,
+        2,
+      );
+    } catch (error) {
+      document.body.dataset.result = "fail";
+      document.getElementById("result").textContent = String(error.stack);
+    }
+  </script>
+</html>

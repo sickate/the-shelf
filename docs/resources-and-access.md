@@ -137,3 +137,9 @@ CF-01 源码 probe 12 项（含清理竞态）和隐私检查 13 项通过；CF-
 用户确认保持仓库 public；GitHub Pages 在 Cloudflare 新站验收前继续使用。10 月 14 日提交前已检查待提交内容与全部已有 Git 历史，并使用独立离线密钥扫描器复核；实际 R2 Access Key ID、Secret Access Key 和所有者密码未出现在代码或历史中。扫描器提示的文档版本 SHA-256 已重新计算核对，测试用假凭证与类型判断均已逐项确认。
 
 `.env`、`.local`、书籍原文件、SQLite、提取正文和临时扫描报告不进入 Git。公开产物检查使用通用私人路径检测规则，不把实际账号标识和私人挂载目录写进规则。两端 R2 配置和所有者密码逐项比对一致；paw 已有有效 GitHub CLI 登录及 SSH 仓库访问。
+
+## CF-03 当前记录（2026-10-15）
+
+CF-03仍为P1进行中、未验收。最终本地136项Node与8项Python测试通过，metadata/account真实DOM分别11/9项断言通过。独立check与production D1已建立；check schema及002保守预算迁移已应用并回读，production库为空。production secrets只在本地生成，未安装Worker或写入auth；check Worker已配置四个secret；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。Cloudflare多轮安全、CAS、撤销、合成导入及snapshot保留override检查通过；原子20并发竞争最后一槽仅1个成功。
+
+CPU门槛未通过：最后小优化包含部署后首次访问的首轮21请求P50/P95/P99为2.512/6.554/10.981ms；同版本后续完整热轮21请求（不能保证复用同一isolate），HTTP/66断言通过，CPU P50/P95/P99为2.341/6.017/6.180ms，errors均为0。两轮P95都未达到5ms目标。六个版本/轮次共126请求，加2次tail健康检查共128次（低于150）；最终候选版本首轮21次与同版本后续完整热轮21次，共42次。Raw max缺失，tail连接后无CPU events；P99不是最大值。下一步先做调用级CPU观测，再评估减少D1往返原型，不改5ms目标。R2账号共享汇总只读授权仍待补；两份选中文件的dry-plan均因`account_storage_unknown`阻止，没有上传原书或调用真实AI。The Shelf与Volt共用Cloudflare账号；Volt无R2（只读核查通过），Workers/D1额度共享且Volt用量未知。代码与默认disabled静态改进待按已有流程发布，以receipt为准；API不发布，当前主站仍为CF-02静态站，Cloudflare CI仅生成artifact，Pages回退保持disabled。详细验收与后续采样计划见[CF-03计划](cf03-plan.md)及[Library操作说明](../cloudflare/library/README.md)。

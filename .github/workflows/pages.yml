@@ -21,6 +21,7 @@ jobs:
       ASTRO_TELEMETRY_DISABLED: "1"
       SHELF_SITE_URL: https://${{ github.repository_owner }}.github.io
       SHELF_BASE_PATH: /the-shelf/
+      PUBLIC_SHELF_API_MODE: "disabled"
       PUBLIC_SHELF_API_URL: ${{ vars.PUBLIC_SHELF_API_URL }}
     steps:
       - uses: actions/checkout@v7

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { fileStatus } from "./file-availability.mjs";
 export interface BookFile {
   id: string;
   format: string;
@@ -58,14 +59,7 @@ export const size = (n: number) =>
     : n >= 1e6
       ? `${(n / 1e6).toFixed(1)} MB`
       : `${(n / 1e3).toFixed(0)} KB`;
-export const status = (f: BookFile) =>
-  f.status === "local_only"
-    ? "仅本地 · 暂缓上传"
-    : f.status === "unavailable"
-      ? "文件异常"
-      : f.reason === "not_uploaded" || f.status === "candidate"
-        ? "待上传 · 私有"
-        : "仅所有者可用";
+export const status = (f: BookFile) => fileStatus(f);
 export const color = (id: string) =>
   ["#9d4230", "#365749", "#4e5574", "#976a37", "#62544a", "#7b4657"][
     Array.from(id).reduce((a, c) => a + c.charCodeAt(0), 0) % 6

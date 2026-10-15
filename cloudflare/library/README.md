@@ -1,0 +1,57 @@
+# CF-03 Library 运维说明
+
+本文说明目前仓库中的 CF-03 初始化、发布与书库数据工具。CF-03 仍处于验收阶段，尚未通过生产门槛，也不代表同源 API、登录或私人阅读已经上线。当前已上线的仍是 Workers Static Assets 静态站，GitHub Pages 作为公开站点回退。
+
+## 环境与初始化
+
+所有 CLI 都从仓库根目录运行。`check` 和 `production` 使用独立 D1、独立 scope/origin，以及各自的 owner key、owner pepper 和 session secret。初始化只创建或核验 `.local/cf03/<profile>/` 下的本机私有文件（目录 0700、文件 0600），包括 `auth-init.sql`；不会创建或修改 Cloudflare 资源，不会应用 schema，也不会安装 Worker secret。
+
+```sh
+npm run cf:init -- --profile check
+npm run cf:init -- --profile production
+```
+
+先建立/核对对应 D1，再显式应用 schema。整份 schema 曾经通过 REST `/query` 失败并返回 `incomplete input`，确认没有表生效；不要用 REST query 执行整份文件。使用官方 Wrangler 文件执行命令。不要裸跑 Wrangler（否则会读取仓库静态站配置），也不要 `source .env`。由受控 operator 先核对 Cloudflare account、D1 ID/name 与目标数据库状态，再以最小子进程环境传入已授权的项目专用凭证运行下列模板；`<...>` 均须替换为已核验值，token 不得放入 argv：
+
+```sh
+node node_modules/wrangler/bin/wrangler.js d1 execute <已核验数据库名> --remote --file <schema或auth SQL> --config <已核验私有配置路径> --env-file <空env文件路径> --yes
+```
+
+若目标库已应用旧版预算 trigger，先按维护计划停止准入并应用 `cloudflare/library/migrations/002-conservative-storage.sql`，核对后再恢复。`auth-init.sql` 也须在 schema 之后由操作者明确应用到对应 D1；重复初始化不会轮换凭证或重置 generation。
+
+API Worker 发布命令只接受 `--profile`，参数顺序如下：
+
+```sh
+npm run deploy:cloudflare:api -- --profile check
+npm run deploy:cloudflare:api -- --profile production
+```
+
+发布前必须已在目标 Worker 配好全部四个 Worker secrets；发布 helper 只验证绑定，不负责签发或安装秘密。`cf:init` 也不会写 D1 owner verifier；需在 schema 应用后明确执行生成的 `auth-init.sql`。API 部署配置使用被忽略的本地 `.local/cf03/deploy.json`，格式可参照 `cloudflare/library/deploy.example.json`；其中 check 与 production 数据库 ID 必须不同。
+
+## 静态站构建与回退
+
+`npm run build:cloudflare:api` 通过 `SHELF_CF_API_MODE=same-origin` 构建仅供生产 origin 的同源 API 前端；默认 `npm run build:cloudflare` 使用 `disabled`。Pages 回退必须维持私有 API 禁用，不能发布 same-origin/API 模式。
+
+`npm run deploy:cloudflare` 仅执行静态发布。若目标 Worker 已绑定 API，helper 会拒绝用静态发布覆盖；确认需要回到 CF-02 静态站时才显式运行 `npm run deploy:cloudflare -- --static-rollback`。Cloudflare CI 默认只构建并保存 artifact，部署步骤关闭；单 Worker 专用部署凭证尚未配置。GitHub Pages 工作流仍是公开站点回退。
+
+## Library CLI
+
+命令格式为 `npm run cf:library -- <action> --profile <check|production> [options]`。每次只选择一个动作；`--profile` 必须提供，选项不可重复。
+
+| 动作 | 用法与作用 |
+| --- | --- |
+| `bootstrap` | `bootstrap --profile check` 先 dry-run；加 `--execute` 才写入。可用 `--overrides <私有JSON路径>` 指定 metadata 修订，执行时可加 `--resume` 续接同一输入的活动导入。租约 token 对旧写入者 fencing，输入 fingerprint 不匹配时拒绝续接。 |
+| `snapshot` | `snapshot --profile production` 生成私有预览；只有 `production` 可加 `--execute` 发布公开快照。发布前用固定公开字段白名单校验，快照期间 revision 必须一致；check 不允许发布。 |
+| `plan` | `plan --profile production --file <fileId>` 只生成本机私有单文件计划；可用 `--manifest <路径>`、`--account-evidence <路径>` 覆盖默认私有输入。计划不是上传许可。 |
+| `upload` | `upload --profile production --file <fileId> --execute` 才执行一次上传。可选同样的 `--manifest` 与 `--account-evidence`。一次只处理一个文件。 |
+| `reconcile` | `reconcile --profile production --file <fileId> --execute` 对现有 reservation 核实对象并恢复状态；若 PUT 结果未知，不能盲目重试。 |
+
+`check` 与 `production` 共用现有私有 `the-shelf-books` 桶及仅限该桶的 Object Read & Write 凭证：应用当前只做对象 HEAD 检查并签发单对象 GET；Library 工具按 scope 限定 key 前缀及允许的 PUT/HEAD/GET 操作。此阶段不要把真实书上传到 check；check 只应用于合成数据验证。现有桶凭证仅有对象读写权限，不能读取账号级共享用量。此前自动审核拒绝读取同账号下可能涉及其他项目的共享用量，因为超出本项目已授权资源范围；已核实 The Shelf 与 Volt 使用同一账号，未核查是否还有其他项目。若要读取账号总量，需另行授权只读权限。此处的阻塞来自授权范围，不代表 Cloudflare 登录、付费计划或技术能力限制。不能用单桶用量或未知值代替账号总量、视作 0；上传前必须具备经核验的完整账号 storage 证据。
+
+文件导入保持逐文件操作：单文件上限 20,000,000 bytes，项目总预算 8,000,000,000 bytes。预算按 `账号已观测占用 + 项目已确认 + 活跃预留 + 本次请求` 保守相加，不猜测或抵扣重复计量；本地 dry-run 缺少 D1 ledger 时会显示预算未知/阻止上传，最终额度由 D1 原子 reservation trigger 判定。PUT 超时或响应不明会保留 reservation 并标记 uncertain；先运行 reconcile。对象缺失只说明当前 HEAD 未发现对象，不能证明延迟 PUT 不会到达，所以不自动释放额度或重试未知 PUT。
+
+## 当前验收状态
+
+最终本地完整验证为136项 Node、8项 Python通过；metadata真实DOM 11项、account真实DOM 9项断言通过。独立check/production D1已建立；check schema与002预算迁移已应用并回读，production库仍空。production secrets仅本地生成，未安装Worker或写入auth；check Worker已有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。云端多轮安全/CAS/撤销通过，原子20并发最后一槽仅1个成功，合成导入与snapshot保留override通过。
+
+CPU门槛未过：最后小优化版本包含部署后首次访问的首轮21请求P50/P95/P99为2.512/6.554/10.981 ms；同版本后续完整热轮21请求（不能保证复用同一isolate），HTTP/66断言通过，CPU P50/P95/P99为2.341/6.017/6.180 ms，errors均为0。冷、热两轮P95都未达到5 ms目标。六个版本/轮次共126请求，加2次tail健康检查共128次（低于150）；最终候选版本首轮21次与同版本后续完整热轮21次，共42次。Raw max缺失，tail连接后没有CPU events；P99不是最大值。下一步先做调用级CPU观测，再评估减少D1往返原型，不改5 ms目标。R2账号共享汇总只读授权待补；EPUB 1,799,179 bytes与PDF 2,588,862 bytes的dry-plan均因`account_storage_unknown`阻止，未上传原书或调用真实AI。代码与默认disabled静态改进待按已有流程发布，以receipt为准；API不发布，CF-03仍未验收。

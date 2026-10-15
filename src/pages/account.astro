@@ -12,24 +12,35 @@ import { path } from "../lib/data";
       <p id="session-status" class="status-text" role="status">
         正在检查登录状态…
       </p>
-      <form id="login">
-        <label>
-          所有者密码
-          <input
-            type="password"
-            id="password"
-            required
-            autocomplete="current-password"
-          />
-        </label>
-        <p>
-          <button class="primary" type="submit">
-            登录书房 →
-          </button>
-        </p>
-      </form>
-      <button id="logout" hidden>
-        退出登录
+      <fieldset
+        id="account-controls"
+        disabled
+        style="border:0;padding:0;margin:0;min-width:0"
+      >
+        <form id="login">
+          <label>
+            <span id="credential-label">所有者密码</span>
+            <input
+              type="password"
+              id="password"
+              required
+              autocomplete="current-password"
+              autocapitalize="off"
+              spellcheck="false"
+            />
+          </label>
+          <p>
+            <button class="primary" type="submit">
+              登录书房 →
+            </button>
+          </p>
+        </form>
+        <button id="logout" hidden>
+          退出登录
+        </button>
+      </fieldset>
+      <button id="retry-account" type="button" hidden disabled>
+        重新检查连接与登录状态
       </button>
       <p id="account-message" class="status-text" role="status"></p>
     </section>
@@ -40,7 +51,7 @@ import { path } from "../lib/data";
       </p>
       <p class="muted">
         书籍与 AI
-        请求由独立后端授权。页面不保存密码或服务密钥；打开书架不会调用模型。
+        请求由业务后端授权。线上所有者访问密钥由项目本机生成；页面不储存登录凭证，打开书架不会调用模型。
       </p>
       <a class="button" href={path("docs/")}>
         阅读产品与实现文档 ↗
@@ -49,10 +60,24 @@ import { path } from "../lib/data";
   </main>
 </Layout>
 <script>
-  import { api, session, errorText, apiBase } from "../lib/api";
+  import {
+    api,
+    session,
+    errorText,
+    apiBase,
+    defaultAuthScheme,
+  } from "../lib/api";
+  import { accountGate } from "../lib/account-gate.mjs";
   const message = document.getElementById("account-message")!,
     login = document.getElementById("login")!,
     logout = document.getElementById("logout")!;
+  let authScheme = defaultAuthScheme;
+  function setScheme(value: string) {
+    authScheme = value;
+    document.getElementById("credential-label")!.textContent =
+      value === "owner-access-key" ? "所有者访问密钥" : "所有者密码";
+  }
+  setScheme(authScheme);
   function update(auth: boolean) {
     document.getElementById("session-status")!.textContent = auth
       ? "已登录 · 可以访问已授权的私人内容"
@@ -60,45 +85,68 @@ import { path } from "../lib/data";
     login.hidden = auth;
     logout.hidden = !auth;
   }
-  session()
-    .then((s) => update(s.authenticated))
-    .catch((e) => {
-      document.getElementById("session-status")!.textContent = errorText(e);
-    });
-  api("/api/config")
-    .then((c) => {
+  const gate = accountGate({
+    fieldset: document.getElementById(
+      "account-controls",
+    ) as HTMLFieldSetElement,
+    retryButton: document.getElementById("retry-account") as HTMLButtonElement,
+    loadConfig: () => api("/api/config"),
+    loadSession: session,
+    onPending: () => {
+      document.getElementById("session-status")!.textContent =
+        "正在确认登录状态…";
+      document.getElementById("config-status")!.textContent =
+        "正在检查业务后端…";
+      message.textContent = "";
+    },
+    onReady: (c: any, s: any) => {
+      setScheme(c.authScheme || defaultAuthScheme);
       document.getElementById("config-status")!.textContent =
         `后端：${apiBase}\nAI：${c.aiConfigured ? "已配置" : "未配置"} · R2：${c.r2Configured ? "已配置" : "未配置"} · 本机文件：${c.localFilesEnabled ? "已启用" : "未启用"}`;
-    })
-    .catch(
-      (e) =>
-        (document.getElementById("config-status")!.textContent = errorText(e)),
-    );
+      update(s.authenticated);
+    },
+    onFailure: (error: unknown) => {
+      document.getElementById("session-status")!.textContent =
+        "登录状态尚未确认，请重新检查连接。";
+      document.getElementById("config-status")!.textContent = errorText(error);
+      message.textContent =
+        "连接检查未完成，暂不能登录或退出。可点击上方按钮重试。";
+    },
+  });
+  document.getElementById("retry-account")!.onclick = () => gate.initialize();
+  void gate.initialize();
   login.onsubmit = async (e) => {
     e.preventDefault();
-    const button = login.querySelector("button")!;
-    button.disabled = true;
-    try {
-      const s = await api("/api/login", {
-        password: (document.getElementById("password") as HTMLInputElement)
-          .value,
-      });
-      (document.getElementById("password") as HTMLInputElement).value = "";
-      update(s.authenticated);
-      message.textContent = "登录成功。现在可以返回书籍详情。";
-    } catch (e) {
-      message.textContent = errorText(e);
-    } finally {
-      button.disabled = false;
-    }
+    await gate.run(async () => {
+      try {
+        const s = await api("/api/login", {
+          [authScheme === "owner-access-key" ? "accessKey" : "password"]: (
+            document.getElementById("password") as HTMLInputElement
+          ).value,
+        });
+        if (s.authenticated !== true)
+          throw new Error("登录尚未确认，请重新检查连接与登录状态。");
+        (document.getElementById("password") as HTMLInputElement).value = "";
+        update(true);
+        message.textContent = "登录成功。现在可以返回书籍详情。";
+      } catch (e) {
+        message.textContent = errorText(e);
+      } finally {
+        (document.getElementById("password") as HTMLInputElement).value = "";
+      }
+    });
   };
   logout.onclick = async () => {
-    try {
-      await api("/api/logout", {});
-      update(false);
-      message.textContent = "已退出。";
-    } catch (e) {
-      message.textContent = errorText(e);
-    }
+    await gate.run(async () => {
+      try {
+        const s = await api("/api/logout", {});
+        if (s.authenticated !== false)
+          throw new Error("退出状态尚未确认，请重新检查连接与登录状态。");
+        update(false);
+        message.textContent = "已退出。";
+      } catch (e) {
+        message.textContent = errorText(e);
+      }
+    });
   };
 </script>

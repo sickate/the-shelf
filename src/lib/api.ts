@@ -1,3 +1,8 @@
+import {
+  resolveApi,
+  fetchAuthorizedFile,
+  runtimeMessages,
+} from "./api-runtime.mjs";
 const messages: Record<string, string> = {
   unauthorized: "请先登录所有者账号。",
   authentication_required: "请先登录所有者账号。",
@@ -14,6 +19,8 @@ Object.assign(messages, {
   csrf_invalid: "会话校验已失效，请重新登录。",
   origin_forbidden: "此网站来源尚未获后端允许，请检查来源配置。",
   invalid_metadata: "书籍信息格式不正确，请检查书名、作者、分类和标签。",
+  metadata_conflict:
+    "此书已在其他页面修改。你的输入已保留，请重新载入最新版本后再编辑。",
   rate_limited: "请求过于频繁，请稍后再试。",
   local_files_disabled: "后端尚未启用本机文件读取。",
   source_text_unavailable: "此书尚未准备可用正文，暂时无法生成书内总结。",
@@ -30,15 +37,19 @@ Object.assign(messages, {
 });
 export const explainCode = (code: string) => messages[code] || code;
 const configured = import.meta.env.PUBLIC_SHELF_API_URL;
-const localHost =
-  typeof location !== "undefined" &&
-  ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
-export const apiBase = (
-  configured || (localHost ? "http://127.0.0.1:8787" : "")
-).replace(/\/$/, "");
+const runtime = resolveApi({
+  mode: import.meta.env.PUBLIC_SHELF_API_MODE,
+  configured,
+  hostname: typeof location === "undefined" ? "" : location.hostname,
+  origin: typeof location === "undefined" ? "" : location.origin,
+});
+const runtimeText = runtimeMessages(runtime, configured);
+messages.invalid_credentials = runtimeText.invalidCredentials;
+export const apiBase = runtime.base;
+export const defaultAuthScheme = runtime.scheme;
 export let csrfToken: string | null = null;
 export async function api(route: string, body?: any) {
-  if (!apiBase)
+  if (!runtime.enabled)
     throw new Error(
       "在线服务尚未连接。公开目录与文档仍可阅读；所有者需配置业务后端地址。",
     );
@@ -58,11 +69,7 @@ export async function api(route: string, body?: any) {
         : {}),
     });
   } catch {
-    throw new Error(
-      configured
-        ? "无法连接业务后端，请检查服务与网站来源设置。"
-        : "业务后端尚未连接。请启动本机 127.0.0.1:8787 服务，或配置 PUBLIC_SHELF_API_URL。",
-    );
+    throw new Error(runtimeText.unreachable);
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -70,13 +77,15 @@ export async function api(route: string, body?: any) {
       typeof data.error === "string"
         ? data.error
         : data.error?.code || data.code;
-    throw new Error(
+    const failure = new Error(
       messages[code] ||
         data.error?.message ||
         data.message ||
         code ||
         `请求失败 (${response.status})`,
     );
+    Object.assign(failure, { code, status: response.status });
+    throw failure;
   }
   if ("csrfToken" in data) csrfToken = data.csrfToken;
   return data;
@@ -88,3 +97,6 @@ export const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 export const accessUrl = (url: string) => new URL(url, apiBase + "/").href;
+
+export const fetchFile = (fileId: string) =>
+  fetchAuthorizedFile(fileId, { api, resolveUrl: accessUrl });

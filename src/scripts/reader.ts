@@ -1,4 +1,4 @@
-import { api, session, errorText, accessUrl } from "../lib/api";
+import { api, session, errorText, fetchFile } from "../lib/api";
 import { base } from "../lib/client";
 export async function initReader() {
   const params = new URLSearchParams(location.search),
@@ -57,15 +57,9 @@ export async function initReader() {
     const s = await session();
     if (!s.authenticated)
       throw new Error("请先登录所有者账号，再返回本页阅读。");
-    const access = await api(`/api/files/${encodeURIComponent(fileId)}/access`);
-    const response = await fetch(accessUrl(access.url), {
-      credentials: access.mode === "r2" ? "omit" : "include",
-    });
-    if (!response.ok) throw new Error(`读取文件失败 (${response.status})`);
+    const { access, response } = await fetchFile(fileId);
     const format = access.format.toUpperCase(),
       mime = response.headers.get("content-type") || "";
-    if (mime.includes("json") || mime.includes("text/html"))
-      throw new Error("文件入口返回了错误的内容类型，无法打开。");
     const bytes = await response.arrayBuffer();
     download.onclick = () => {
       const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
