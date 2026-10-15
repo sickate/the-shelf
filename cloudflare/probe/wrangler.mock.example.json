@@ -1,0 +1,10 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "the-shelf-cf01-mock",
+  "main": "mock.mjs",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "d1_databases": [{ "binding": "CF_DB", "database_name": "the-shelf-cf01", "database_id": "REPLACE_IN_IGNORED_LOCAL_CONFIG" }]
+}

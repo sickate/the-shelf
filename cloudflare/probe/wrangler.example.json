@@ -1,0 +1,14 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "the-shelf-cf01",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "d1_databases": [{ "binding": "CF_DB", "database_name": "the-shelf-cf01", "database_id": "REPLACE_IN_IGNORED_LOCAL_CONFIG" }],
+  "r2_buckets": [{ "binding": "CF_BUCKET", "bucket_name": "the-shelf-books" }],
+  "services": [{ "binding": "CF_MOCK", "service": "the-shelf-cf01-mock" }],
+  "workflows": [{ "binding": "CF_WORKFLOW", "name": "the-shelf-cf01", "class_name": "Cf01Workflow" }]
+}

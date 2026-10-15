@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-15T02:20:37.892Z",
-  "version": "2e5b1933d5c0399b7455c5c500999481009c67537660632ac4dc7e756e06adb0",
+  "generatedAt": "2026-10-15T03:13:53.609Z",
+  "version": "c2d505770c57114765419d5c844e08196f74bc11becdc179f2a814b2df4f5da4",
   "basePath": "/the-shelf/",
   "documents": [
     {
@@ -107,7 +107,7 @@
       "title": "The Shelf 开发计划",
       "description": "第一版已交付真实收藏书架、公开文档，以及可在本机运行的私人阅读与按需 AI 后端。下一阶段计划将线上网站与业务服务逐步统一到 Cloudflare 免费服务；GitHub 继续保存代码，GitHub Pages 在迁移验收前继续提供现有网站。",
       "updatedAt": "2026-10-15",
-      "version": "0ee5ccd371d131681571d5a21dfde99d1d56e94ce11ab670c59ed7ecfe5bbb70",
+      "version": "ef04800b45c99cebf8c48ddb4858b7705ef394af37cdcc066dc441a0b568b778",
       "htmlPath": "/the-shelf/docs/development-plan/",
       "rawPath": "/the-shelf/docs/raw/development-plan.md",
       "htmlUrl": "https://sickate.github.io/the-shelf/docs/development-plan/",

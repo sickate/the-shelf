@@ -10,9 +10,9 @@
 
 ## 部署边界
 
-`paw@paw:~/code/the-shelf` 是开发目录，未配置常驻服务、生产域名或反向代理。当前 Node.js 后端使用本机 HTTP 和 SQLite；已配置的 Cloudflare 资源仍只有私有 R2 文件存储。
+`paw@paw:~/code/the-shelf` 是开发目录，未配置常驻服务、生产域名或反向代理。当前 Node.js 后端使用本机 HTTP 和 SQLite；Cloudflare 已有私有 R2 文件存储，并于 10 月 15 日新增仅供 CF-01 使用的诊断资源。它们不是生产后端；现有 GitHub Pages 继续服务。
 
-10 月 15 日用户确认将 Cloudflare 统一托管加入计划，目标为 Workers Static Assets、Workers、D1 与 Workflows；先验证免费运行条件，再逐步迁移。尚未为这些服务创建项目资源、签发部署凭证或切换现有 GitHub Pages。实际资源名称、地址、绑定、权限与验证结果在实施时补录，任务顺序见 `docs/development-plan.md`。
+10 月 15 日用户确认将 Cloudflare 统一托管加入计划，目标为 Workers Static Assets、Workers、D1 与 Workflows；先验证免费运行条件，再逐步迁移。当前仅创建 CF-01 验证资源，尚未切换现有 GitHub Pages，也没有生产后端。CF-02 尚未开始。资源地址、账号/数据库标识和凭证留在忽略的 `.local/cf01/` 文件中，不在此记录。任务顺序见 `docs/development-plan.md`。
 
 ## GitHub
 
@@ -82,6 +82,8 @@ ssh -N -L 4321:127.0.0.1:4321 -L 8787:127.0.0.1:8787 paw@paw
 
 ## 已完成的验证
 
+下表保留 10 月 14 日历史结果；10 月 15 日新增云端验证见后续 CF-01 记录。
+
 | 验证 | 结果 |
 | --- | --- |
 | paw 运行环境 | Node.js 26.0.0、Python 3.14.5，具备 pdftotext |
@@ -91,7 +93,7 @@ ssh -N -L 4321:127.0.0.1:4321 -L 8787:127.0.0.1:8787 paw@paw
 | 真实开发后端 | 临时本机监听，健康检查、所有者密码登录、会话读取通过；验证结束后关闭 |
 | 真实 R2 对象访问 | 上传、完整读取、206 Range、Pages 与本机 CORS 均通过 |
 | 私有边界 | 无签名请求被拒绝；不允许的 Origin 不获 CORS 访问 |
-| 验证对象清理 | 只使用中性文本诊断对象，验证后已删除；没有上传电子书 |
+| 验证对象清理（10 月 14 日） | 只使用中性文本诊断对象，验证后已删除；没有上传电子书 |
 | 项目审核配置 | 两端实际回读均为 `auto_review`，项目和 Shell 策略已加载 |
 
 所有实际密钥与所有者密码仍仅保存在 `.env`。`npm run verify:public` 现会加载该文件，以便核对配置值未进入发布包。S3 匿名请求实际返回 400 `InvalidArgument`，属于拒绝访问；不能只把 403 视为成功的私有隔离检查。
@@ -103,6 +105,20 @@ ssh -N -L 4321:127.0.0.1:4321 -L 8787:127.0.0.1:8787 paw@paw
 Cloudflare 为计划中的生产目标；免费 CPU、D1 持久化和 Workflows 长任务验证优先于真实 AI。生产站点与同源 API 地址、项目专用部署权限和 AI 任务 Key 仍待实施时确定。当前 R2 与 GitHub 已可供 paw 开发使用；AI 未配置时仍明确停用，不会发起模型请求。
 
 10 月 15 日本地复跑 16 项 Node 测试、8 项 Python 测试、构建及公开产物隐私检查通过。此前已有的 R2、GitHub 与 paw 远端配置本次未重新核验。
+
+## CF-01 云端诊断记录（2026-10-15）
+
+主 Agent 使用本机现有 Cloudflare 认证核对，目标账号与项目 `.env` 中指定账号一致。Workers account-settings 显示 default usage model 为 standard，且 `/workers/standard` 为 true；这两项单独不能判定账号计划。实际部署显式设置 `cpu_ms=10` 被拒绝，返回 code 100328，错误明确指出 Free plan 不支持配置 CPU limits。移除该手动参数后，同项目 Worker 成功部署，因此本次已有实际 Free 计划证据；未升级付费。Billing 接口返回 403，账号令牌权限组接口 `/accounts/id/tokens/permission_groups` 返回 403；当前认证无法读取令牌权限组，未签发新的部署令牌。部署凭证没有复制到 GitHub，也没有创建账号级通用令牌。
+
+已创建专用 D1 `the-shelf-cf01`、主 Worker `the-shelf-cf01`、无公开入口的私有 mock `the-shelf-cf01-mock` 和 Workflow `the-shelf-cf01`。实际 account/database 标识仅在 `.local/cf01/resources.json`，probeBearer 仅在 `.local/cf01/secrets.env`；私有 `evidence.json` 记录探测结果。这些文件权限均为 `0600`。本轮仅向现有私有桶写入 `diagnostics/cf01/<UUID>/neutral.txt` 中性诊断对象，不含电子书；后续清理按 probe 操作流程执行。
+
+已验证 R2 72-byte 对象完整读写和 Range 读取、D1 跨请求持久化，以及 65 秒 Workflow 在客户端退出后继续完成。服务绑定 mock 等待约 65,071 ms；`network_calls` 与 `mock_calls` 均为 1，表示一次性 claim 计数，不代表计费次数。真实 AI 未调用。
+
+密码计算探针的 scrypt 双计算返回 `verified=true`。Cloudflare 在纯计算期间冻结 `Date.now()`，因此 wallMs=0 不表示 CPU 用量为零。GraphQL 同 script 时间窗汇总 P99 为 149,242 微秒（149.242 ms），不能归因到某一次运行的精确 CPU。固定配置 600,000 次迭代的 PBKDF2 云端运行失败；第二次受控错误结果为 `pbkdf2_iteration_limit`。本地 workerd 单次 600,000 次迭代成功不能替代云端验证；不降低参数宣称通过。
+
+840 秒模拟服务绑定长任务已返回 HTTP 202 创建，仍在运行、尚未验收。初次启动响应遇到 TLS 错误后，主 Agent 检查持久状态并使用相同 runID 显式恢复一次。防重复调用证据来自 D1 原子预留和固定实例 ID，不是 404，也不构成自动重试上游的依据；不得自动重发不确定的上游请求。CF-01 整体尚未通过验收。没有上传电子书或调用真实 AI。
+
+完整 `npm test` 的 41 项 Node 检查（含子项）和 8 项 Python 检查通过；其中 CF-01 源码 probe 为 12 项（含清理竞态），隐私检查为 13 项。现有诊断对象的无签名 R2 GET 返回 400 拒绝；未授权诊断 GET、POST、DELETE 均返回 401；mock 的 `workers_dev` 与 preview API 均回读为 false。CF-02 可在既有本机认证下部署静态站点；只有取得严格限定于单一 Worker 的专用 token 后才启用 CI 部署。不得为自动化创建或复制账号级通用 token。当前 GitHub Pages 保持服务。详见 [CF-01 probe 操作说明](../cloudflare/probe/README.md)；该运维记录不进入公开文档清单。
 
 ## 公开仓库提交检查
 
