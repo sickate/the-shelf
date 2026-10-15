@@ -21,7 +21,7 @@
 
 ## 暂定实现选择
 
-静态前端使用 GitHub Pages，文件使用 R2 Standard，业务后端为独立 Node.js 服务，数据与任务使用 SQLite。生产后端部署位置尚未选定，paw 用于开发。超过门槛、超预算或复制未完成的文件都能被目录收录。
+当前静态前端继续由 GitHub Pages 服务。CF-02 增加 Workers Static Assets 根路径构建，目标 URL 为 `https://the-shelf.iamzhutuo.workers.dev/`；通过本轮 review 与线上验收后再决定切换。文件使用 R2 Standard，业务后端为独立 Node.js 服务，数据与任务使用 SQLite。生产后端部署位置尚未选定，paw 用于开发。超过门槛、超预算或复制未完成的文件都能被目录收录。
 
 以上为现有实现。后续目标方案采用 Workers Static Assets、Workers、D1、Workflows 和现有私有 R2；生产部署以免费适配验证结果为准，目前尚未迁移。不把已有 Node.js 后端直接改成 paw 上的生产常驻服务。
 

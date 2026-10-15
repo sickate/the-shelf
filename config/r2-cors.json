@@ -4,6 +4,7 @@
       "allowed": {
         "origins": [
           "https://sickate.github.io",
+          "https://the-shelf.iamzhutuo.workers.dev",
           "http://127.0.0.1:4321",
           "http://localhost:4321"
         ],

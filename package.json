@@ -9,6 +9,9 @@
   "scripts": {
     "dev": "astro dev --host 127.0.0.1",
     "build": "node scripts/export-docs.mjs && astro build",
+    "build:cloudflare": "node scripts/build-cloudflare.mjs",
+    "verify:static": "node scripts/verify-static.mjs",
+    "deploy:cloudflare": "node scripts/cf-deploy.mjs",
     "preview": "astro preview --host 127.0.0.1",
     "server": "node --env-file-if-exists=.env server/index.mjs",
     "docs:export": "node scripts/export-docs.mjs",

@@ -12,7 +12,7 @@
 
 `paw@paw:~/code/the-shelf` 是开发目录，未配置常驻服务、生产域名或反向代理。当前 Node.js 后端使用本机 HTTP 和 SQLite；Cloudflare 已有私有 R2 文件存储，并于 10 月 15 日新增仅供 CF-01 使用的诊断资源。它们不是生产后端；现有 GitHub Pages 继续服务。
 
-10 月 15 日用户确认将 Cloudflare 统一托管加入计划，目标为 Workers Static Assets、Workers、D1 与 Workflows；先验证免费运行条件，再逐步迁移。当前仅创建 CF-01 验证资源，尚未切换现有 GitHub Pages，也没有生产后端。CF-02 尚未开始。资源地址、账号/数据库标识和凭证留在忽略的 `.local/cf01/` 文件中，不在此记录。任务顺序见 `docs/development-plan.md`。
+10 月 15 日用户确认将 Cloudflare 统一托管加入计划，目标为 Workers Static Assets、Workers、D1 与 Workflows；先验证免费运行条件，再逐步迁移。CF-01 验证资源已结束运行并完成清理核验；CF-02 静态迁移进行中，尚未切换现有 GitHub Pages，也没有生产业务后端。资源地址、账号/数据库标识和凭证留在忽略的 `.local/` 文件中，不在此记录。任务顺序见 `docs/development-plan.md`。
 
 ## GitHub
 
@@ -45,7 +45,7 @@ gh api repos/sickate/the-shelf --jq .permissions
 
 若需吊销或轮换，在 Cloudflare R2 → Manage API Tokens 中按 `the-shelf-development` 名称管理。先签发相同单桶范围的新令牌，更新两端 `.env` 并验证后，再吊销旧令牌；不要把权限扩大到所有桶。
 
-CORS 配置源在 `config/r2-cors.json`，已应用并从 Cloudflare 回读核验。仅允许 GitHub Pages 和本机 Astro 来源的 `GET`、`HEAD`，允许阅读器的 Range 请求并暴露相关响应头。生产网站来源变化时需同步调整桶规则。[Cloudflare CORS 文档](https://developers.cloudflare.com/r2/buckets/cors/)。
+CORS 配置源在 `config/r2-cors.json`。10 月 15 日本轮 Cloudflare PUT 后 GET 回读与配置完全匹配：在原有 GitHub Pages 和本机 Astro 来源基础上，仅新增 `https://the-shelf.iamzhutuo.workers.dev`；原 `GET`、`HEAD`、Range 请求及响应头规则保留。回读证据保存在忽略的 `.local/cf-static/`。此改动为 CF-03 跨域阅读准备；当前 CF-02 静态站点尚无线上私人 API。[Cloudflare CORS 文档](https://developers.cloudflare.com/r2/buckets/cors/)。
 
 项目上传预算仍为 8,000,000,000 字节，每个文件不超过 20,000,000 字节。R2 免费额度按整个账号共享，必须先核对账号已有占用；配置预算不是 Cloudflare 的账单封顶。[R2 价格与免费额度](https://developers.cloudflare.com/r2/pricing/)。
 
@@ -104,7 +104,7 @@ ssh -N -L 4321:127.0.0.1:4321 -L 8787:127.0.0.1:8787 paw@paw
 
 Cloudflare 为计划中的生产目标；免费 CPU、D1 持久化和 Workflows 长任务验证优先于真实 AI。生产站点与同源 API 地址、项目专用部署权限和 AI 任务 Key 仍待实施时确定。当前 R2 与 GitHub 已可供 paw 开发使用；AI 未配置时仍明确停用，不会发起模型请求。
 
-10 月 15 日本地复跑 16 项 Node 测试、8 项 Python 测试、构建及公开产物隐私检查通过。此前已有的 R2、GitHub 与 paw 远端配置本次未重新核验。
+10 月 15 日最新 CF-02 完整验收运行 56 项 Node 测试、8 项 Python 测试、构建及公开产物隐私检查均通过。CF-02 静态实现经 review 通过，下一步为提交、推送、确认 CI，再本地部署和线上 URL 验收。
 
 ## CF-01 云端诊断记录（2026-10-15）
 
@@ -116,9 +116,13 @@ Cloudflare 为计划中的生产目标；免费 CPU、D1 持久化和 Workflows 
 
 密码计算探针的 scrypt 双计算返回 `verified=true`。Cloudflare 在纯计算期间冻结 `Date.now()`，因此 wallMs=0 不表示 CPU 用量为零。GraphQL 同 script 时间窗汇总 P99 为 149,242 微秒（149.242 ms），不能归因到某一次运行的精确 CPU。固定配置 600,000 次迭代的 PBKDF2 云端运行失败；第二次受控错误结果为 `pbkdf2_iteration_limit`。本地 workerd 单次 600,000 次迭代成功不能替代云端验证；不降低参数宣称通过。
 
-840 秒模拟服务绑定长任务已返回 HTTP 202 创建，仍在运行、尚未验收。初次启动响应遇到 TLS 错误后，主 Agent 检查持久状态并使用相同 runID 显式恢复一次。防重复调用证据来自 D1 原子预留和固定实例 ID，不是 404，也不构成自动重试上游的依据；不得自动重发不确定的上游请求。CF-01 整体尚未通过验收。没有上传电子书或调用真实 AI。
+840 秒模拟服务绑定长任务已完成，Workflow 状态为 complete，`networkWallMs=840071`；客户端在初次启动后已退出，`network_calls=mock_calls=1`。初始启动响应遇到 TLS 错误后，主 Agent 检查持久状态并使用相同 runID 显式恢复一次。防重复调用证据来自 D1 原子预留和固定实例 ID，不是 404，也不构成自动重试上游的依据；不得自动重发不确定的上游请求。
 
-完整 `npm test` 的 41 项 Node 检查（含子项）和 8 项 Python 检查通过；其中 CF-01 源码 probe 为 12 项（含清理竞态），隐私检查为 13 项。现有诊断对象的无签名 R2 GET 返回 400 拒绝；未授权诊断 GET、POST、DELETE 均返回 401；mock 的 `workers_dev` 与 preview API 均回读为 false。CF-02 可在既有本机认证下部署静态站点；只有取得严格限定于单一 Worker 的专用 token 后才启用 CI 部署。不得为自动化创建或复制账号级通用 token。当前 GitHub Pages 保持服务。详见 [CF-01 probe 操作说明](../cloudflare/probe/README.md)；该运维记录不进入公开文档清单。
+65 秒 uncertain 模拟已结束，Workflow 状态为 complete，业务 run 状态为 uncertain，`networkWallMs=65088`；`network_calls=mock_calls=1`。同标签重复 start 只 GET 既有 run ID，没有新 POST，计数仍为 1。诊断资源清理验证通过：`cf01_runs=0`，保留 7 个预算去重墓碑；主 probe 的 workers.dev 和 preview 入口已禁用，mock 原本即为私有。没有上传电子书或调用真实 AI。
+
+CF-01 评估结论为“评估完成，鉴权需适配”：免费 D1、R2 与 Workflow 基础能力验证通过；Node 登录不可直接照搬，CF-03 必须先设计并验证安全低 CPU 登录方案，同时保留现有凭证强度、限流和会话安全。CF-01 源码提交 `720690b` 已推送，GitHub Actions 工作流 `38675230094` 成功；完整检查为 41 项 Node、8 项 Python、构建与隐私检查通过。没有上传电子书或调用真实 AI。
+
+CF-01 源码 probe 12 项（含清理竞态）和隐私检查 13 项通过；CF-01 当时完整验收为 41 项 Node、8 项 Python，且源码 CI 成功。CF-02 本轮完整验收为 56 项 Node、8 项 Python、构建和隐私检查通过。现有诊断对象的无签名 R2 GET 返回 400 拒绝；未授权诊断 GET、POST、DELETE 均返回 401；主 probe 的 workers.dev 与 preview 入口已禁用，mock 为私有。CF-02 静态实现 review 已通过；使用本机现有认证部署后，再做线上 URL 验收。GitHub 自动部署尚无严格限定于单一 Worker 的专用 token，不能标为已完成，也不能把账号级通用 token 复制到 GitHub。当前 GitHub Pages 保持服务。详见 [CF-01 probe 操作说明](../cloudflare/probe/README.md)；该运维记录不进入公开文档清单。
 
 ## 公开仓库提交检查
 

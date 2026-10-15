@@ -1,0 +1,59 @@
+name: Build and optionally deploy Cloudflare static site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-static
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ASTRO_TELEMETRY_DISABLED: "1"
+      WRANGLER_SEND_METRICS: "false"
+      WRANGLER_LOG_PATH: ${{ runner.temp }}/the-shelf-wrangler.log
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:cloudflare
+      - run: npm run verify:public
+      - run: npm run verify:static
+      - uses: actions/upload-artifact@v7
+        with:
+          name: the-shelf-cloudflare-static
+          path: dist
+          if-no-files-found: error
+          retention-days: 14
+      - name: Deploy to Cloudflare Workers Static Assets
+        if: ${{ vars.SHELF_CF_AUTO_DEPLOY == 'true' }}
+        env:
+          SHELF_CF_AUTO_DEPLOY: ${{ vars.SHELF_CF_AUTO_DEPLOY }}
+          SHELF_CF_DEPLOY_TOKEN: ${{ secrets.SHELF_CF_DEPLOY_TOKEN }}
+          SHELF_CF_ACCOUNT_ID: ${{ secrets.SHELF_CF_ACCOUNT_ID }}
+        run: |
+          if [ -z "$SHELF_CF_DEPLOY_TOKEN" ]; then
+            echo "SHELF_CF_AUTO_DEPLOY is true but secret SHELF_CF_DEPLOY_TOKEN is missing." >&2
+            exit 1
+          fi
+          if [ -z "$SHELF_CF_ACCOUNT_ID" ]; then
+            echo "SHELF_CF_AUTO_DEPLOY is true but secret SHELF_CF_ACCOUNT_ID is missing." >&2
+            exit 1
+          fi
+          npm run deploy:cloudflare
+      - name: Explain local deployment path
+        if: ${{ vars.SHELF_CF_AUTO_DEPLOY != 'true' }}
+        run: echo "Static build verified and artifact uploaded; automatic deployment is disabled pending a dedicated Worker-scoped deployment token."

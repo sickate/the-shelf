@@ -1,18 +1,18 @@
 {
-  "generatedAt": "2026-10-15T03:13:53.609Z",
-  "version": "c2d505770c57114765419d5c844e08196f74bc11becdc179f2a814b2df4f5da4",
-  "basePath": "/the-shelf/",
+  "generatedAt": "2026-10-15T03:35:44.533Z",
+  "version": "0339af90034b8d7ac67ced45b80b38ca6cdfe3f46ef5544319b94b616ead2fea",
+  "basePath": "/",
   "documents": [
     {
       "id": "overview",
       "title": "The Shelf 产品与实现文档",
       "description": "The Shelf 的书架和设计文档公开，电子书默认私有。所有文件都进入收藏目录；超过 20 MB 的文件暂不上传，详情页仍显示格式、大小和可用状态。AI 仅在主动提问或请求总结时调用。",
       "updatedAt": "2026-10-15",
-      "version": "68e13cab232baa4d3c1b636d9830b6989857e7789c979a8bbc9a0589163a0c67",
-      "htmlPath": "/the-shelf/docs/",
-      "rawPath": "/the-shelf/docs/raw/overview.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/overview.md"
+      "version": "b7de4395085f5b4aa81278bfa0e438d4330e184091c66a3d49305e4c3f6dbd1e",
+      "htmlPath": "/docs/",
+      "rawPath": "/docs/raw/overview.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/overview.md"
     },
     {
       "id": "product",
@@ -20,21 +20,21 @@
       "description": "The Shelf 让收藏中的每一本书都能被找到，即使电子书暂时没有上传。公开访问者可以查看分类目录、书籍基本信息和已发布内容；所有者登录后可以阅读私有书籍、提问和管理收藏。",
       "updatedAt": "2026-10-13",
       "version": "99e033535b7614ac8ad42da5b6d31800dcd54b75711652b1f43375e4dfb01cae",
-      "htmlPath": "/the-shelf/docs/product/",
-      "rawPath": "/the-shelf/docs/raw/product.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/product/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/product.md"
+      "htmlPath": "/docs/product/",
+      "rawPath": "/docs/raw/product.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/product/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/product.md"
     },
     {
       "id": "architecture",
       "title": "The Shelf 系统架构",
       "description": "公开目录和文档使用静态网页；私人文件访问与按需 AI 使用由独立业务后端处理。大文件留在本地时，云端只保留公开目录所需的信息。",
       "updatedAt": "2026-10-15",
-      "version": "509fdb9b77ef482cc26db6b382e93e1cb368bba3447e149f02ed8f72259bbbec",
-      "htmlPath": "/the-shelf/docs/architecture/",
-      "rawPath": "/the-shelf/docs/raw/architecture.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/architecture/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/architecture.md"
+      "version": "ca096fc251ea5eef6795265359d496ae87eb4117ea6c588ff060c19594f73eb9",
+      "htmlPath": "/docs/architecture/",
+      "rawPath": "/docs/raw/architecture.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/architecture/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/architecture.md"
     },
     {
       "id": "import-policy",
@@ -42,10 +42,10 @@
       "description": "所有电子书文件都进入收藏清单，但不保证都进入云端。上传资格由文件稳定性、单文件大小、总存储预算和人工选择共同决定。",
       "updatedAt": "2026-10-13",
       "version": "b3fc1bc6615c8c54e2ed31081e5baaccee70d8b5e1192081263347eb4e606e0f",
-      "htmlPath": "/the-shelf/docs/import-policy/",
-      "rawPath": "/the-shelf/docs/raw/import-policy.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/import-policy/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/import-policy.md"
+      "htmlPath": "/docs/import-policy/",
+      "rawPath": "/docs/raw/import-policy.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/import-policy/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/import-policy.md"
     },
     {
       "id": "inventory",
@@ -53,10 +53,10 @@
       "description": "两次只读盘点表明，20 MB 门槛能让当前核心电子书格式的大小候选总量落在项目暂定的 8 GB 存储预算内。候选仍需检查完整性、重复版本和云端实际占用后才能上传。",
       "updatedAt": "2026-10-14",
       "version": "fac979cd232bc83b3b5a6cdde69481f32c3eb6a7667c5bfeb70d80b684c37950",
-      "htmlPath": "/the-shelf/docs/inventory/",
-      "rawPath": "/the-shelf/docs/raw/inventory.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/inventory/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/inventory.md"
+      "htmlPath": "/docs/inventory/",
+      "rawPath": "/docs/raw/inventory.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/inventory/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/inventory.md"
     },
     {
       "id": "ai",
@@ -64,54 +64,54 @@
       "description": "AI 按所有者请求执行。导入只准备文件和检索数据，打开页面只读取已有结果。书内问答、全书总结和作者资料使用不同的材料来源。",
       "updatedAt": "2026-10-13",
       "version": "2d00b82a3735111eb6de780997dd7ee26975ac463fc1c79fe1cc7eada7651547",
-      "htmlPath": "/the-shelf/docs/ai/",
-      "rawPath": "/the-shelf/docs/raw/ai.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/ai/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/ai.md"
+      "htmlPath": "/docs/ai/",
+      "rawPath": "/docs/raw/ai.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/ai/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/ai.md"
     },
     {
       "id": "public-docs",
       "title": "The Shelf 公开文档区域",
       "description": "产品、架构、实现顺序和设计决策使用公开文档区域提供给人和其他 AI。读取文档不需要进入私人管理后台，也不要求登录、浏览器脚本或 AI Key。",
       "updatedAt": "2026-10-15",
-      "version": "0c1ad5e59ecac9a4ed273ea8ff70f1b02420ba883384d4312209e789e58f3665",
-      "htmlPath": "/the-shelf/docs/public-docs/",
-      "rawPath": "/the-shelf/docs/raw/public-docs.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/public-docs/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/public-docs.md"
+      "version": "8c708930bd5e350bd2775908cb328cb84429cb51f7802b95ceb448bf9f19ef4a",
+      "htmlPath": "/docs/public-docs/",
+      "rawPath": "/docs/raw/public-docs.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/public-docs/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/public-docs.md"
     },
     {
       "id": "implementation-plan",
       "title": "The Shelf 实现顺序与验收",
       "description": "首版目录、文档、私人阅读与 AI 后端已实现并通过本地验证。后续先验证 Cloudflare 免费运行条件，再迁移网站与业务后端，完成真实阅读和 AI 接入。任务编号和优先级以[开发计划](development-plan.md)为准。",
       "updatedAt": "2026-10-15",
-      "version": "7ed246dcceb8c593a6f51c0505bd59723459f8bfd6daee71c7cd0dc71217573e",
-      "htmlPath": "/the-shelf/docs/implementation-plan/",
-      "rawPath": "/the-shelf/docs/raw/implementation-plan.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/implementation-plan/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/implementation-plan.md"
+      "version": "02b3367e82f16ad7c14cb1233acada9a79c8f76e9df1922c1d04587d913a0458",
+      "htmlPath": "/docs/implementation-plan/",
+      "rawPath": "/docs/raw/implementation-plan.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/implementation-plan/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/implementation-plan.md"
     },
     {
       "id": "decisions",
       "title": "The Shelf 设计决策",
       "description": "决策记录明确区分用户已确认的要求与实现时可以调整的选择。未来参与项目的 AI 应先遵守已确认约束，再评估具体技术方案。",
       "updatedAt": "2026-10-15",
-      "version": "7944c4e8a347dec9ebde3223048eb6d24655a4883ded07ea7661c6f654c3ad5f",
-      "htmlPath": "/the-shelf/docs/decisions/",
-      "rawPath": "/the-shelf/docs/raw/decisions.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/decisions/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/decisions.md"
+      "version": "dee146f8279961b87df06ad636a5755bcf2d6408d35611c697a845f06d8f7a8d",
+      "htmlPath": "/docs/decisions/",
+      "rawPath": "/docs/raw/decisions.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/decisions/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/decisions.md"
     },
     {
       "id": "development-plan",
       "title": "The Shelf 开发计划",
       "description": "第一版已交付真实收藏书架、公开文档，以及可在本机运行的私人阅读与按需 AI 后端。下一阶段计划将线上网站与业务服务逐步统一到 Cloudflare 免费服务；GitHub 继续保存代码，GitHub Pages 在迁移验收前继续提供现有网站。",
       "updatedAt": "2026-10-15",
-      "version": "ef04800b45c99cebf8c48ddb4858b7705ef394af37cdcc066dc441a0b568b778",
-      "htmlPath": "/the-shelf/docs/development-plan/",
-      "rawPath": "/the-shelf/docs/raw/development-plan.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/development-plan/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/development-plan.md"
+      "version": "4485ea5dda000f97b824f976f974a6dc0d9415de37a454c0c04d2db2dd4a1b16",
+      "htmlPath": "/docs/development-plan/",
+      "rawPath": "/docs/raw/development-plan.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/development-plan.md"
     },
     {
       "id": "contracts",
@@ -119,21 +119,21 @@
       "description": "静态网站只消费经过筛选的公开目录和文档数据，后端单独读取私人文件映射。此契约统一导入、网页与后台实现，字段变更要同步消费方和验证。",
       "updatedAt": "2026-10-14",
       "version": "f50f646ef34e33097897fbf2e9c5e321d2ef33a5cffd0c737dc9b1a69f1223f9",
-      "htmlPath": "/the-shelf/docs/contracts/",
-      "rawPath": "/the-shelf/docs/raw/contracts.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/contracts/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/contracts.md"
+      "htmlPath": "/docs/contracts/",
+      "rawPath": "/docs/raw/contracts.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/contracts/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/contracts.md"
     },
     {
       "id": "runbook",
       "title": "The Shelf 运行与部署",
       "description": "当前网页发布到 GitHub Pages，私人阅读和 AI 使用独立开发后端；云端存储与模型未配置时，公开书架和文档仍然可用。后续计划迁到 Cloudflare，尚未实施。paw 继续作为开发和导入机器。",
       "updatedAt": "2026-10-15",
-      "version": "2f5c42eaab3299d31ab7b2ad614bf6d898f18614e721957124de4e6dce10778f",
-      "htmlPath": "/the-shelf/docs/runbook/",
-      "rawPath": "/the-shelf/docs/raw/runbook.md",
-      "htmlUrl": "https://sickate.github.io/the-shelf/docs/runbook/",
-      "rawUrl": "https://sickate.github.io/the-shelf/docs/raw/runbook.md"
+      "version": "7eb550d890e12e4b387e5a7abe9c128d26c20deef17b8d3cfa131ccd1821ad1f",
+      "htmlPath": "/docs/runbook/",
+      "rawPath": "/docs/raw/runbook.md",
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/runbook/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/runbook.md"
     }
   ]
 }

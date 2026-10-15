@@ -2,7 +2,7 @@
 
 The Shelf 是公开展示个人电子书收藏、按权限提供下载和在线阅读、并支持按需 AI 问答的书库。第一版以不增加现金支出为约束：网页使用 GitHub Pages，电子书使用免费存储额度，AI 接入已有服务。业务后端的生产部署位置尚未选定；paw 用于开发。
 
-下一阶段已计划逐步迁到 Cloudflare Workers Static Assets、Workers、D1 与 Workflows，继续使用现有私有 R2。先验证免费后端，再迁移网站、私人阅读与 AI；目前尚未执行，GitHub Pages 继续服务。优先级与验收见[开发计划](docs/development-plan.md)。
+当前对外网站仍由 GitHub Pages 服务。CF-02 已加入 Workers Static Assets 根路径构建、静态产物检查和 Cloudflare 工作流；新站目标为 https://the-shelf.iamzhutuo.workers.dev/，本轮云端验收完成前不标为已上线。工作流默认只构建并上传 artifact；自动部署还需为单一 Worker 配置专用 GitHub Secrets 和 `SHELF_CF_AUTO_DEPLOY=true`。GitHub Pages 工作流保留为回退。优先级与验收见[开发计划](docs/development-plan.md)。
 
 第一版已实现真实收藏目录、分类搜索、文件详情、公开文档、个人登录、授权阅读和按需 AI 后端。R2 与 AI 需要配置凭证后启用；没有配置时不会上传文件或调用模型。
 
@@ -33,6 +33,8 @@ npm run server
 npm test
 npm run build
 npm run verify:public
+npm run build:cloudflare
+npm run verify:static
 ```
 
-GitHub Pages 工作流自动构建目录与全部详情，公开产品文档的 HTML、JSON 索引、单篇 Markdown 和合并 Markdown。部署和后端配置见 [运行与部署](docs/runbook.md)。
+`build:cloudflare` 显式使用 Cloudflare 根路径，不受本机 Pages 基路径配置影响。可用 `SHELF_CF_SITE_URL` 覆盖目标 HTTPS origin；`verify:static --url https://...` 只读检查远端。GitHub Pages 工作流继续发布原站；Cloudflare 工作流会构建、检查并上传 artifact，默认不自动部署。部署和后端配置见 [运行与部署](docs/runbook.md)。

@@ -8,7 +8,17 @@
 
 目标为 Workers Static Assets、同源 Workers API、D1 与 Workflows，继续使用现有私有 R2。先完成免费运行验证，再分阶段迁移；具体任务、依赖与切换门槛见[开发计划](development-plan.md)。
 
-当前没有可直接使用的 Cloudflare 应用部署配置，以下命令仍针对现有开发环境和 GitHub Pages。R2 对象凭证仅覆盖现有桶，不能当作 Workers 或 D1 部署凭证。新站点通过验收后才切换发布，并同步 URL、基路径、Cookie、CSRF 和 R2 CORS；保留回退方案，不开通付费计划。
+仓库已有 Workers Static Assets 纯静态配置和独立根路径构建。目标 URL 为 `https://the-shelf.iamzhutuo.workers.dev/`；在本轮本机 review 和云端静态验收完成前，GitHub Pages 仍是当前网站。新工作流默认只构建、检查并保存 artifact；自动部署需专门配置单 Worker 范围的 `SHELF_CF_DEPLOY_TOKEN`、`SHELF_CF_ACCOUNT_ID` Secrets，并设置仓库变量 `SHELF_CF_AUTO_DEPLOY=true`。该专用凭证尚不可用，因此不能称 GitHub 自动部署已启用。R2 对象凭证不能当作 Workers 或 D1 部署凭证。Pages 工作流保留作为回退。
+
+本地生成和检查静态站点：
+
+```sh
+npm run build:cloudflare
+npm run verify:public
+npm run verify:static
+```
+
+`build:cloudflare` 强制站点 URL 使用纯 HTTPS origin 和根路径，不受 Pages 仓库前缀影响，也不连接生产 API；可用 `SHELF_CF_SITE_URL` 覆盖目标 origin。部署后可使用 `npm run verify:static -- --url https://example.workers.dev` 只读检查生成的 HTML、资源、代表页面和真实 404。
 
 ## 环境与本机启动
 
