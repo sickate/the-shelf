@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 15 日。状态：CF-03 P1 进行中、未验收；CPU生产门槛未通过，不发布API。代码与默认disabled静态改进待按已有流程发布，实际以receipt为准。本文不是上线验收记录。
 
-最终本地验证为136项Node、8项Python通过；metadata真实DOM 11项与account真实DOM 9项断言通过。check/production D1已独立建立，check schema与002保守预算迁移已应用并回读，production库仍空。production secrets仅在本地生成，未安装Worker或写入auth；check Worker有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。多轮云HTTP安全/CAS/撤销及合成导入、snapshot保留override通过，原子20并发争用最后1额度仅1个成功。CPU结果、账号共享R2证据、生产登录/文件与reader闭环仍未达门槛。
+最终本地验证为138项Node、8项Python通过；metadata真实DOM 11项与account真实DOM 9项断言通过。check/production D1已独立建立，check schema与002保守预算迁移已应用并回读，production库仍空。production secrets仅在本地生成，未安装Worker或写入auth；check Worker有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。多轮云HTTP安全/CAS/撤销及合成导入、snapshot保留override通过，原子20并发争用最后1额度仅1个成功。CPU结果、账号共享R2证据、生产登录/文件与reader闭环仍未达门槛。源码提交 `0ae8825` 已推送；Cloudflare CI `38724875134` 构建 artifact 成功，Pages CI `38724875089` 成功。首次真实静态 CLI 在任何 Cloudflare 写入前遇到入口循环并停止；CLI修复已通过主 Agent review，新增两项真实独立进程 static/API CLI smoke后总计138项Node与8项Python全通过。修复待单独提交并经CI验证后发布，当前静态站尚未更新。
 
 本文只保存在仓库，不加入 `scripts/export-docs.mjs` 的公开文档白名单。实际账号 ID、数据库 ID、对象 key、选中文件 ID、密钥和原始验收记录只保存在被忽略的 `.local/`。本文不读取或复制真实 `.env` / `.local` 数据。
 
@@ -205,7 +205,7 @@ schema本地测试不能替代D1真实并发/rollback测试，HTTP测试不能�
 
 只有CPU门槛、原子并发、私密边界、真实两文件及reader、测试/构建/隐私、主Agent review全部通过才把CF-03标为完成。记录本地测试结果、commit、push、远端workflow状态、实际生产部署版本、线上验证与回退演练结果，分别列出。CF-03没有真实AI/Workflows能力。
 
-当前尚未完成的门槛：CPU P95<=5ms（历史首轮P95/P99=5.634/13.184ms；SQL优化冷5.313/10.873ms、热4.236/5.830ms，42样本合并5.313/10.873ms；最近小优化版本包含部署后首次访问的首轮21请求P50/P95/P99=2.512/6.554/10.981ms；同版本后续完整热轮21请求（不能保证复用同一isolate），HTTP/66断言通过，CPU P50/P95/P99=2.341/6.017/6.180ms，errors均为0；两轮P95都未达到5ms目标。六个版本/轮次共126请求，另有2次tail健康检查，共128次（低于150）；最终候选版本首轮21次与同版本后续完整热轮21次，共42次。无raw max且tail连接后无CPU events；P99不代表最大值）、R2账号共享用量完整证据、生产auth安装/登录验证、两份真实上传与reader浏览器闭环。安全/CAS/撤销、D1并发最后一槽及合成导入/snapshot已通过相应云端检查；最终本地136项Node、8项Python和DOM断言通过。check/production D1已独立建立，production库空；production secrets未装Worker或写auth。仅EPUB 1,799,179 bytes与PDF 2,588,862 bytes的dry-plan因`account_storage_unknown`阻止，无原书上传、无真实AI。额外账号总量只读权限仍待授权；The Shelf与Volt同账号，Volt没有R2（只读核查通过），Workers/D1额度共享且Volt用量未知。CF-03 P1继续进行中，下一步先做调用级CPU观测，再评估减少D1往返原型；不改5ms目标，仍需计划、Sol实现、主Agent review和云端采样；CF-04及AI等待CF-03。代码与默认disabled静态改进待按已有流程发布，以receipt为准；API不发布，当前保留CF-02静态站。不得放宽5ms目标、降低凭证强度或付费绕过。
+当前尚未完成的门槛：CPU P95<=5ms（历史首轮P95/P99=5.634/13.184ms；SQL优化冷5.313/10.873ms、热4.236/5.830ms，42样本合并5.313/10.873ms；最近小优化版本包含部署后首次访问的首轮21请求P50/P95/P99=2.512/6.554/10.981ms；同版本后续完整热轮21请求（不能保证复用同一isolate），HTTP/66断言通过，CPU P50/P95/P99=2.341/6.017/6.180ms，errors均为0；两轮P95都未达到5ms目标。六个版本/轮次共126请求，另有2次tail健康检查，共128次（低于150）；最终候选版本首轮21次与同版本后续完整热轮21次，共42次。无raw max且tail连接后无CPU events；P99不代表最大值）、R2账号共享用量完整证据、生产auth安装/登录验证、两份真实上传与reader浏览器闭环。安全/CAS/撤销、D1并发最后一槽及合成导入/snapshot已通过相应云端检查；最终本地138项Node、8项Python和DOM断言通过。check/production D1已独立建立，production库空；production secrets未装Worker或写auth。仅EPUB 1,799,179 bytes与PDF 2,588,862 bytes的dry-plan因`account_storage_unknown`阻止，无原书上传、无真实AI。额外账号总量只读权限仍待授权；The Shelf与Volt同账号，Volt没有R2（只读核查通过），Workers/D1额度共享且Volt用量未知。CF-03 P1继续进行中，下一步先做调用级CPU观测，再评估减少D1往返原型；不改5ms目标，仍需计划、Sol实现、主Agent review和云端采样；CF-04及AI等待CF-03。代码与默认disabled静态改进待按已有流程发布，以receipt为准；API不发布，当前保留CF-02静态站。不得放宽5ms目标、降低凭证强度或付费绕过。
 
 ## 9. 实现方精确契约（review后的基线）
 

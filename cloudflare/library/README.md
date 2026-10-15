@@ -52,6 +52,6 @@ npm run deploy:cloudflare:api -- --profile production
 
 ## 当前验收状态
 
-最终本地完整验证为136项 Node、8项 Python通过；metadata真实DOM 11项、account真实DOM 9项断言通过。独立check/production D1已建立；check schema与002预算迁移已应用并回读，production库仍空。production secrets仅本地生成，未安装Worker或写入auth；check Worker已有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。云端多轮安全/CAS/撤销通过，原子20并发最后一槽仅1个成功，合成导入与snapshot保留override通过。
+最终本地完整验证为138项 Node、8项 Python通过；metadata真实DOM 11项、account真实DOM 9项断言通过。独立check/production D1已建立；check schema与002预算迁移已应用并回读，production库仍空。production secrets仅本地生成，未安装Worker或写入auth；check Worker已有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。云端多轮安全/CAS/撤销通过，原子20并发最后一槽仅1个成功，合成导入与snapshot保留override通过。源码提交 `0ae8825` 已推送；Cloudflare CI `38724875134` 构建 artifact 成功，Pages CI `38724875089` 成功。首次真实静态 CLI 在任何 Cloudflare 写入前遇到入口循环并停止；CLI修复已通过主 Agent review，新增两项真实独立进程 static/API CLI smoke后总计138项Node与8项Python全通过。修复待单独提交并经CI验证后发布，当前静态站尚未更新。
 
 CPU门槛未过：最后小优化版本包含部署后首次访问的首轮21请求P50/P95/P99为2.512/6.554/10.981 ms；同版本后续完整热轮21请求（不能保证复用同一isolate），HTTP/66断言通过，CPU P50/P95/P99为2.341/6.017/6.180 ms，errors均为0。冷、热两轮P95都未达到5 ms目标。六个版本/轮次共126请求，加2次tail健康检查共128次（低于150）；最终候选版本首轮21次与同版本后续完整热轮21次，共42次。Raw max缺失，tail连接后没有CPU events；P99不是最大值。下一步先做调用级CPU观测，再评估减少D1往返原型，不改5 ms目标。R2账号共享汇总只读授权待补；EPUB 1,799,179 bytes与PDF 2,588,862 bytes的dry-plan均因`account_storage_unknown`阻止，未上传原书或调用真实AI。代码与默认disabled静态改进待按已有流程发布，以receipt为准；API不发布，CF-03仍未验收。

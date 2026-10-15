@@ -489,4 +489,6 @@ if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 )
-  await main();
+  // Finish module evaluation before deploy dynamically imports the API policy,
+  // whose shared helpers import this module. main handles all failures itself.
+  void main();
