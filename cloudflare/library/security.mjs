@@ -4,6 +4,9 @@ const pattern = /^[A-Za-z0-9_-]{43}$/;
 // final character must have its two padding bits clear; this is exactly the
 // canonical unpadded representation without decoding/re-encoding user input.
 const canonicalPattern = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
+export function isCanonicalKey(value) {
+  return typeof value === "string" && canonicalPattern.test(value);
+}
 export class LibraryError extends Error {
   constructor(code, status = 400) {
     super(code);
@@ -96,8 +99,7 @@ export async function createOwnerVerifier(accessKey, pepper, options) {
 }
 export async function verifyOwnerKey(accessKey, verifier, pepper, options) {
   // A malformed candidate is processed with a fixed neutral candidate; no human password hash exists here.
-  const valid =
-    typeof accessKey === "string" && canonicalPattern.test(accessKey);
+  const valid = isCanonicalKey(accessKey);
   if (!valid) accessKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   const verified = await crypto.subtle.verify(
     "HMAC",

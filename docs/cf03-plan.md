@@ -389,3 +389,32 @@ CPU-01离线分析器已完成主Agent review修正，新增15项专项及最终
 profile流程首次恢复时health返回404（传播阶段，未调用profile），finally关闭；第二次明确等待30秒后health/session均200，唯一一次profile POST返回404、code10393“无近期执行”，未取得pprof；不能据此判定Free不支持或权限被拒。
 最终check auth disabled、active sessions=0、workers.dev及preview disabled均已回读确认；production与静态部署未变，无R2对象写入。额外GraphQL已执行，累计业务请求3/100、管理请求26/80；固定check D1自本轮12:00Z起平台统计rowsRead=26、rowsWritten=18、readQueries=6、writeQueries=6（含两次启闭）。两个成功health/session执行已出现在GraphQL，sampleInterval=1，CPU P50/P95/P99/max=1.589/6.603/6.603/6.603ms；仅2样本不能判通过，也不与旧21样本混合；profile仍为10393。
 下一步先补充较长但有限的一致流量窗口、route隔离诊断的计划及预算/失败重试口径，再交主Agent执行；当前暂无函数热点证据，不实施SQL优化，尤其不直接合并会改变登录失败计数事务的操作。
+
+### 10.8 持续流量下的一次有限profile诊断（待主Agent review执行）
+
+GraphQL已确认前次两个GET确实执行，profile10393不能判为unsupported；此前仅两次GET未形成持续流量。本次以此证据修订10.3“失败不重试”：改变流量模式后仅新增一次capture，属于一次明确的后续诊断，不循环重放失败请求、不放宽既有总预算。
+主Agent先读回check auth/入口已关闭及当前active version，固定同一check与已部署version UUID；恢复check auth/entry后明确等待30秒传播，production与静态站保持不变。
+从既有诊断配额取malformed-login 4次：合法Origin与JSON、固定无效人类字符串、无cookie或真实访问密钥，均预期401；不创建session、不写业务metadata，原子API及登录计数照常消耗，不清零额度。
+首请求完成后启动唯一一次3000ms CPU capture，其余3请求以700ms节奏并行于capture，向最近活跃isolate提供持续业务；所有操作无自动retry，任一错误仍执行finally关闭。不能保证四请求落在同一isolate，须保留实际采样覆盖限制。
+累计capture预计2次（原有1次+本次1次，仍低于3次上限），业务请求预计7/100（现有3+本次4）；管理请求硬停于45/80，D1管理仍不超过24。执行前逐项预留恢复/关闭与回读的管理余额，失败请求同样计入。
+结束或失败均关闭check auth、递增generation并撤销会话，禁用workers.dev/preview，回读确认；失败原样保存status/code并停止profile分支，不换端点、不猜权限/平台原因，不增加流量补样本。
+pprof仅用于函数热点定位，不并入最终gate分布；样本不足则定位未知，不以本地wall time推断CPU热点。仅在有效样本足够且显示具体热点后，由主Agent另行分配最小业务改动；否则交付诊断成果，不宣称优化已完成。
+
+10.8实际执行结果：4次malformed-login均返回401；本次3000ms profile仍返回404、code10393，未取得pprof，profile分支到此停止，不继续尝试，也没有函数热点证据。
+finally已回读确认check auth=0、active sessions=0、workers.dev/preview入口disabled；production及静态站未变。累计业务请求7/100、管理请求39/80（含新增一次GraphQL）。
+这4请求的独立完整窗口具有相同version、sampleInterval=1，CPU P50/P95/P99/max=2.704/7.126/7.126/7.126ms；不与旧21请求混合，低样本不能证明通过。
+离线工具已实际运行，报告P95 fail，同时保留 `fewer_than_21_requests` 与 `ambiguous_attribution`，不丢失aggregate或强行归因路由/函数。
+check D1自本轮12:00Z起平台统计rowsRead=71、rowsWritten=72、readQueries=16、writeQueries=16；未创建session、未写业务metadata或R2对象。
+
+### 10.9 重复配置解码去除最小候选（计划，待delivery实施）
+
+由Sol/high先以独立Buffer oracle证明32字节编码为43字符：42×6+4个数据位，末字符两padding位必须为0；再export `isCanonicalKey` 复用既有精确regex，与 `decodeKey` canonical接受域等价。
+`configuration` 对两个trusted secret仅做canonical格式布尔判断，非法仍503、两secret相同仍拒绝；`verifyOwnerKey` 共用helper且dummy HMAC verify不变，`importHmac` cache miss的实际decodeKey/import不变。
+session/CSRF/SQL/原子预算/访问密钥强度均不变；只验证每请求少两次重复decode及分配，不声称已定位CPU热点或保证性能，profile分支保持停止。
+补独立oracle、非法env在DB前失败、warm解码次数与cache miss测试；主Agent review及完整测试/构建/隐私检查通过后可阶段commit。
+如做云对照，先明示同版本/固定负载/完整窗口及平台CPU计量口径，全部纳入原100业务/80管理预算；本地操作数减少不等于云CPU通过，生产部署仍受原门槛限制。
+
+10.9候选云复测计划：候选3文件已主review通过，针对24项测试及完整156项Node、8项Python、disabled build、真实密钥隐私扫描、verify:static均已通过；候选待云复测。旧版本21/21/42保留为历史baseline，不再发送baseline21；候选最多部署check一次，首轮21完整原业务及后续21（首轮明确fail可停止），不混入profile的4请求、不预设CPU改善。
+保留真实并发metadata pair，用已有generation UPDATE RETURNING同时核验本轮两个mutation admission，不新增往返；HMAC/session/CSRF/撤销/文件未注册检查照旧。每轮D1仅合成book INSERT及generation UPDATE两次管理调用，移除本变更不影响的冗余扫描，session/entry在最终关闭时统一核验。
+业务累计最多7+42=49/100，显式管理fetch仍不超过80、D1管理子上限24维持。Wrangler helper内部HTTP不能精确计数，另明确授权本阶段仅1次固定check/原绑定的受控部署工具操作，与显式fetch ledger分开报告；不冒称CLI内部计数精确或总HTTP<=80已证明，这是统计口径的透明补充，不扩大平台费用、业务及D1安全上限。
+helper若要求扩大资源范围或付费则停止，不操作production；当前主站静态部署不变，所有分支finally关闭check auth、撤销旧会话及关闭workers.dev/preview入口并回读。按完整固定窗口真实平台CPU报告P95<=5ms、max<10ms、CPU-limit errors=0门槛，不以本地操作次数或HTTP成功替代。

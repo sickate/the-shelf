@@ -2,12 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { createHash, createHmac } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { handleRequest } from "../cloudflare/library/worker.mjs";
 import {
   createOwnerVerifier,
   verifyOwnerKey,
   decodeKey,
+  isCanonicalKey,
   sessionDigest,
   csrfForSession,
   canonicalIp,
@@ -1373,4 +1375,167 @@ test("CF03 stale/unknown storage evidence blocks upload and release requires abs
       .reserved_bytes,
     0,
   );
+});
+
+test("CF03 canonical key predicate agrees with independent Buffer encoding and the unchanged decoder", () => {
+  const oracle = (value) => {
+    if (typeof value !== "string") return false;
+    const bytes = Buffer.from(value, "base64url");
+    return bytes.length === 32 && bytes.toString("base64url") === value;
+  };
+  const check = (value) => {
+    const expected = oracle(value);
+    assert.equal(isCanonicalKey(value), expected);
+    if (expected)
+      assert.deepEqual(
+        Buffer.from(decodeKey(value)),
+        Buffer.from(value, "base64url"),
+      );
+    else
+      assert.throws(() => decodeKey(value), {
+        code: "invalid_credentials",
+        status: 401,
+      });
+  };
+  const alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  for (let i = 0; i < 64; i++) {
+    const bytes = randomBytes(32),
+      key = bytes.toString("base64url");
+    check(key);
+    assert.deepEqual(Buffer.from(decodeKey(key)), bytes);
+    for (const last of alphabet) check(key.slice(0, -1) + last);
+  }
+  const key = Buffer.alloc(32).toString("base64url");
+  for (let position = 0; position < 43; position++)
+    for (const invalid of [
+      "=",
+      "+",
+      "/",
+      " ",
+      "\t",
+      "\r",
+      "\n",
+      "\0",
+      "\u2028",
+      "\u2029",
+      "中",
+      "💡",
+    ])
+      check(key.slice(0, position) + invalid + key.slice(position + 1));
+  for (const affix of [
+    "=",
+    "==",
+    " ",
+    "\t",
+    "\r",
+    "\n",
+    "\r\n",
+    "\u2028",
+    "\u2029",
+  ]) {
+    check(key + affix);
+    check(affix + key);
+  }
+  for (let bytes = 0; bytes <= 64; bytes++)
+    check(Buffer.alloc(bytes).toString("base64url"));
+  for (const value of [
+    undefined,
+    null,
+    false,
+    0,
+    NaN,
+    {},
+    [],
+    new String(key),
+    Buffer.alloc(32),
+    Symbol("fixture"),
+    1n,
+  ])
+    check(value);
+});
+
+test("CF03 invalid trusted secrets and equal secrets fail before any database call", async () => {
+  const valid = Buffer.alloc(32, 71).toString("base64url");
+  let calls = 0;
+  const database = {
+    prepare() {
+      calls++;
+      throw new Error("database must not run");
+    },
+    batch() {
+      calls++;
+      throw new Error("database must not run");
+    },
+  };
+  const environment = {
+    APP_SCOPE: "check",
+    SITE_ORIGIN: origin,
+    DB: database,
+    OWNER_KEY_PEPPER: valid,
+    SESSION_SECRET: Buffer.alloc(32, 72).toString("base64url"),
+  };
+  const noncanonical = valid.slice(0, -1) + "B";
+  for (const field of ["OWNER_KEY_PEPPER", "SESSION_SECRET"])
+    for (const value of [
+      undefined,
+      null,
+      {},
+      "",
+      valid + "=",
+      valid + "\n",
+      noncanonical,
+    ]) {
+      const result = await handleRequest(req("/api/health"), {
+        ...environment,
+        [field]: value,
+      });
+      assert.equal(result.status, 503);
+      assert.equal(
+        await result.text(),
+        '{"error":{"code":"service_unavailable"}}',
+      );
+    }
+  const equal = await handleRequest(req("/api/health"), {
+    ...environment,
+    SESSION_SECRET: valid,
+  });
+  assert.equal(equal.status, 503);
+  assert.equal(calls, 0);
+});
+
+test("CF03 warm configuration skips decoding while a cold HMAC import still decodes real key bytes", () => {
+  // Isolate global instrumentation in a separate process, with no inherited
+  // environment or private fixtures. The parent test process is never patched.
+  const workerUrl = new URL("../cloudflare/library/worker.mjs", import.meta.url)
+    .href;
+  const source = `
+    import assert from 'node:assert/strict';
+    import {randomBytes} from 'node:crypto';
+    const {handleRequest}=await import(${JSON.stringify(workerUrl)});
+    const session=randomBytes(32),pepper=randomBytes(32);
+    const env={APP_SCOPE:'check',SITE_ORIGIN:'https://the-shelf-cf03-check.iamzhutuo.workers.dev',OWNER_KEY_PEPPER:pepper.toString('base64url'),SESSION_SECRET:session.toString('base64url'),DB:{prepare(){return{bind(){return this;}};},async batch(){return[{results:[]},{results:[{count:2}]}];}}};
+    const originalAtob=globalThis.atob,originalImport=crypto.subtle.importKey;
+    let decodes=0,imports=0;
+    try {
+      globalThis.atob=function(...args){decodes++;return originalAtob.apply(this,args);};
+      crypto.subtle.importKey=function(...args){imports++;assert.equal(args[0],'raw');assert.deepEqual(Buffer.from(args[1]),session);return originalImport.apply(this,args);};
+      const request=()=>new Request(env.SITE_ORIGIN+'/api/health',{headers:{'CF-Connecting-IP':'192.0.2.1'}});
+      assert.equal((await handleRequest(request(),env)).status,200);
+      assert.equal(decodes,1,'cold HMAC key must still use the real decoder');
+      assert.equal(imports,1,'cold HMAC key must still be imported by Web Crypto');
+      assert.equal((await handleRequest(request(),env)).status,200);
+      assert.equal(decodes,1,'warm request must not decode trusted configuration again');
+      assert.equal(imports,1,'existing imported HMAC key cache stays unchanged');
+    } finally {globalThis.atob=originalAtob;crypto.subtle.importKey=originalImport;}
+    assert.equal(globalThis.atob,originalAtob);assert.equal(crypto.subtle.importKey,originalImport);
+  `;
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", source],
+    { env: {}, encoding: "utf8", timeout: 5000, maxBuffer: 64 * 1024 },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.signal, null);
+  assert.equal(result.error, undefined);
 });

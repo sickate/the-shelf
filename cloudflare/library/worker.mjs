@@ -1,6 +1,6 @@
 import {
   LibraryError,
-  decodeKey,
+  isCanonicalKey,
   randomKey,
   verifyOwnerKey,
   sessionDigest,
@@ -42,12 +42,11 @@ function configuration(env) {
     env.APP_SCOPE === "production" ? "the-shelf" : "the-shelf-cf03-check";
   if (env.SITE_ORIGIN !== `https://${name}.iamzhutuo.workers.dev`)
     throw new LibraryError("service_unavailable", 503);
-  try {
-    decodeKey(env.OWNER_KEY_PEPPER);
-    decodeKey(env.SESSION_SECRET);
-  } catch {
+  if (
+    !isCanonicalKey(env.OWNER_KEY_PEPPER) ||
+    !isCanonicalKey(env.SESSION_SECRET)
+  )
     throw new LibraryError("service_unavailable", 503);
-  }
   if (env.OWNER_KEY_PEPPER === env.SESSION_SECRET)
     throw new LibraryError("service_unavailable", 503);
   return { scope: env.APP_SCOPE, origin: env.SITE_ORIGIN };
