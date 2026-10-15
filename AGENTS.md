@@ -14,11 +14,21 @@
 
 项目 `.codex/config.toml` 使用 `approvals_reviewer = "auto_review"`，保留 `workspace-write` 沙箱和 `on-request` 升级审核。新会话需信任该项目并支持此设置；不能承诺当前已启动会话会立即重新加载。
 
+## 计划、分工与交付流程
+
+开发前先更新 `docs/development-plan.md` 或对应计划文档，写清目标、范围与明确不做的事项、方案、任务依赖、验收标准、验证步骤，以及部署和回退办法。计划要反映当前实现与待迁移目标的区别；计划更新不代表迁移已实现或通过上线验收，达到计划门槛后在既有授权内自动发布，不重复索要确认。任务复杂度由主 Agent 评估，并在计划中记录实施模型与 reasoning effort。
+
+主 Agent 负责理解需求、制定计划和拆分任务，检查依赖与风险，分配具体实现，审阅每次交付并给出可执行的具体修正建议，整合改动，运行验收与验证，并负责提交、推送和部署流程。子 Agent 负责分配范围内的具体开发；收到 review 意见后完成修正并交回主 Agent 复审。主 Agent 对最终实现和发布结果负责，不以子 Agent 自报完成替代 review 与验证。
+
+默认只使用 `gpt-6-luna` 和 `gpt-6.1-sol`：简单、边界明确的任务分配 Luna，通常使用 low 或 medium；复杂实现分配 Sol，通常使用 medium 或 high。更高 effort 只在问题确有需要时使用。鉴权、隐私、安全边界、数据迁移、持久任务、AI 调用及架构决策即使代码量小，其具体实现也必须分配给 Sol；简单文档等工作可分配给 Luna，并由主 Agent review。Luna 任务同一交付连续两轮修正仍未通过 review 时，升级到 Sol；发现严重安全或架构问题可立即升级。指定模型不可用时，说明具体限制并暂停受影响的分工，不得静默改用第三种模型。
+
+实现完成、主 Agent review 通过、全部适用测试/构建/隐私检查通过后，按 `commit -> push GitHub -> 现有 CI 部署 -> 验证部署结果` 的顺序完成发布，并在报告中区分本地验证、远端工作流状态与线上验证。推送前不得声称远端部署成功。仅在计划的部署门槛通过后、并在既有授权范围内发布迁移；未通过时保留当前可用部署并按计划回退。继续遵守本文件的权限、费用、上传预算和隐私规则。
+
 ## 开发与部署
 
 paw 是开发机器。生产后端部署位置尚未选定，不自行将开发配置改为常驻生产部署。
 
-公开网页使用 Astro + GitHub Pages；后端为 Node.js HTTP + SQLite；文件存储为私有 R2。AI 接入现有命名任务服务，真实 Key 的签发与验证独立处理。
+当前公开网页使用 Astro + GitHub Pages，push 到 main 后由现有 GitHub Actions 部署；当前后端为 Node.js HTTP + SQLite，文件存储为私有 R2。AI 接入现有命名任务服务，真实 Key 的签发与验证独立处理。Cloudflare Workers Static Assets、Workers API、D1 与 Workflows 是开发计划中的迁移目标，尚未实施或验收；不得因提交计划或文档而上线迁移，也不得把 paw 改为生产服务器。
 
 运维资源、凭证位置和验证结果见 `docs/resources-and-access.md`。这个文件不在网站文档发布清单内。公开文档以 `scripts/export-docs.mjs` 的固定清单为准，不自动公开新文档。
 
