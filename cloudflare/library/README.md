@@ -2,6 +2,8 @@
 
 本文说明目前仓库中的 CF-03 初始化、发布与书库数据工具。CF-03 仍处于验收阶段，尚未通过生产门槛，也不代表同源 API、登录或私人阅读已经上线。当前已上线的仍是 Workers Static Assets 静态站，GitHub Pages 作为公开站点回退。
 
+2026-10-16已固化[受控CPU sampler及管理接口契约](../../scripts/cf-cpu-sampler.md)：本地172项Node、8项Python测试通过，包含真实Worker+SQLite两轮CAS与满批维护。工具尚无真实Cloudflare管理adapter，不可直接云采样；下一云轮需先完成adapter review与独立有界计划。CPU及CF-03仍未验收，本阶段不改变线上部署。
+
 ## 环境与初始化
 
 所有 CLI 都从仓库根目录运行。`check` 和 `production` 使用独立 D1、独立 scope/origin，以及各自的 owner key、owner pepper 和 session secret。初始化只创建或核验 `.local/cf03/<profile>/` 下的本机私有文件（目录 0700、文件 0600），包括 `auth-init.sql`；不会创建或修改 Cloudflare 资源，不会应用 schema，也不会安装 Worker secret。

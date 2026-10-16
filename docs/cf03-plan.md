@@ -1,6 +1,8 @@
 # CF-03：Workers + D1 登录与私人阅读实施计划
 
-更新日期：2026 年 10 月 15 日。状态：CF-03 P1 进行中、未验收；CPU生产门槛未通过，不发布API。代码及CLI修复均已推送并通过CI；默认disabled静态改进已部署并通过线上验收，以receipt为准。本文不是上线验收记录。
+更新日期：2026 年 10 月 16 日。状态：CF-03 P1 进行中、未验收；CPU生产门槛未通过，不发布API。代码及CLI修复均已推送并通过CI；默认disabled静态改进已部署并通过线上验收，以receipt为准。本文不是上线验收记录。
+
+10月16日：第11节受控sampler工具已实现并通过主Agent review及本地验证；尚无真实Cloudflare管理adapter，本阶段不触云。后续先实现和审阅管理adapter、核算新一轮预算，再另行执行云验收，不能把本地集成通过当CPU通过。
 
 静态改进发布时本地验证为138项Node、8项Python通过；metadata真实DOM 11项与account真实DOM 9项断言通过。check/production D1已独立建立，check schema与002保守预算迁移已应用并回读，production库仍空。production secrets仅在本地生成，未安装Worker或写入auth；check Worker有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。多轮云HTTP安全/CAS/撤销及合成导入、snapshot保留override通过，原子20并发争用最后1额度仅1个成功。CPU结果、账号共享R2证据、生产登录/文件与reader闭环仍未达门槛。源码提交 `0ae8825` 已推送；Cloudflare CI `38724875134` 构建 artifact 成功，Pages CI `38724875089` 成功。首次真实静态 CLI 在任何 Cloudflare 写入前遇到入口循环并停止；CLI修复已通过主 Agent review，新增两项真实独立进程 static/API CLI smoke后总计138项Node与8项Python全通过。CLI修复提交 `3e1aa89` 已推送；Cloudflare CI `38725881041` 构建成功、部署按预期跳过，Pages CI `38725881116` 成功。默认disabled的静态改进已通过本机受控发布及线上验收：首次网络检查完成1248项后中断，随后仅恢复剩余56项，合计1304项HEAD均为200；32项GET与本地字节及MIME一致，缺失页、`/api/health` 与 `/api` 均返回404，runtime保持disabled；线上账号页经真实Chrome DOM验证，凭证控件为disabled。
 
@@ -459,3 +461,27 @@ HTTP/1与HTTP/2不能据此归因性能效果，CPU/CF-03仍未通过。后续�
 check已关闭auth、撤销全部会话并关闭entry；production API未启用，无书籍上传。CF-03未完成：新候选21 HTTP/80断言及真实CAS通过，aggregate P95=4.387ms/max=4.835ms，但分组证据不完整、gate unknown；warm和满批维护未验收，R2用量证据freshness仍不足。
 最终ledger为business48/100、explicit management84/90、D1 management38/40、helper1，不重置。下次先计划、固化并测试受控sampler（环境传递、真实CAS、两轮HTTP完整收集后再等analytics、满批维护覆盖），之后另行有界云验收；不可直接追加采样或扩大本轮预算。
 今日工作到此停止，不启动下一阶段。
+
+## 11. 受控 sampler 固化（2026-10-16，本地验收完成）
+
+本阶段承接10.11，复杂度高，由 `gpt-6.1-sol / high` 实现，主Agent设计审阅、集成验收与发布。目标是把临时采样流程变为仓库内可review、无网络可测试的固定check工具，避免环境传递遗漏、CAS提前stale、analytics迟到中断热轮及维护覆盖缺失。当前只有私有临时runner；本节计划不代表新sampler或CPU验收已完成。
+
+范围：固定check目标与版本契约、默认dry-run、有限预算和收尾预留、逐请求脱敏receipt、单HTTP/2连接与并发CAS、完整两轮HTTP后才读取analytics、真实mutation admission和满批维护证明、失败与中断时的有界收尾。管理适配器与凭证仅由显式注入的受控调用提供；工具不得自动读取.env或遍历.local、接受任意Worker/DB/URL、输出凭证或自动重试mutation。纯测试使用合成凭证和模拟平台，不访问云端。
+
+明确不做：不修改Worker鉴权/业务/schema，不恢复check、不另开本轮云预算，不追加profile/候选优化，不启用生产API、上传R2对象、调用AI或变更生产部署。10.10最终账本原样保留，新一轮云验收须在工具review通过后另立有界计划及预算，不继承剩余额度为自动执行许可。
+
+依赖与方案：先审阅现有临时HTTP/2 runner和离线分析器契约；实现固定21请求×2的采集状态机及可注入HTTP/管理/时钟适配器；保持每次mutation只发一次，CAS后通过D1的两条真实admission证明竞态路径，generation撤销后的HTTP仍包含在完整21请求中；断言失败保留已发送请求与窗口再停止。两轮全部完成后才进行有限analytics读取，迟到或缺失保留unknown，不掩盖较高CPU。维护证明独立记录触发ordinal和各类删除上界，不由HTTP成功推断通过。
+
+验收：目标/版本/预算不合法时零外部调用；明确非CI与最小环境传递可测；单连接CAS双stream及两次mutation证明可测；21+21请求全部先于analytics；超时、解析/断言失败、中断、预算不足均保留receipt并执行收尾，收尾失败明确报告；不记录key/cookie/CSRF/body/签名URL，私有输出0600且拒绝符号链接；离线分析器兼容。主Agent review每次交付，运行专项及全部Node/Python测试、disabled构建、verify:public和verify:static。
+
+发布与回退：仅工具与仓库计划按commit→push→现有CI交付；CI的Cloudflare步骤继续只构建artifact并跳过部署，Pages保留回退。公开静态站没有产品变更，本阶段不额外发布主站；生产API继续关闭。若工具验证失败，保留现有工具和静态部署，不触云；已推送工具可用revert回退。本地、远端CI、云验收分别报告。
+
+### 11.1 实施与验收记录
+
+Sol/high交付 `scripts/cf-cpu-sampler.mjs`、固定check的 `cf-cpu-sampler-h2.mjs`、[API与管理契约](../scripts/cf-cpu-sampler.md)及16项专项测试。主Agent逐项review并要求修正CAS重复序号与持久化错开、预检失败误写资源、等待超时、CI环境标识、写盘失败阻断收尾、关闭generation自比较、两批维护准备和跨平台读取隐藏请求成本；修正后复审通过。管理预检已拆成version、DB identity、DB state、entry各一次显式调用，不将跨平台事实伪装为单次D1查询。
+
+真实Worker+SQLite无网络集成执行42个HTTP请求、40次真实API准入、两轮各两条metadata mutation admission，以及ordinal 1和32各一次64/8/128/32满批清理。两轮业务完成后才查询三个固定analytics窗口；延迟/缺失保持unknown。故障测试覆盖中断、超时、错误响应、重定向/大小边界、陈旧CAS、目标不符、符号链接、关闭失败及最后一次写盘失败。未触云、未上传对象、未改业务Worker/schema或本机私人数据；旧账本不变。
+
+本地完整172项Node与8项Python测试通过，默认disabled的Cloudflare构建通过。首次全量重跑被沙箱禁止监听127.0.0.1而失败；在项目授权内允许本机端口后同套测试全部通过。公开产物及真实secret隐私扫描通过，verify:static覆盖1304项资源通过；远端CI以本轮交付报告为准。本地CPU明确unknown，不把模拟analytics通过当平台CPU证据。
+
+此阶段只交付可测试的controller/HTTP2传输及管理适配器契约，没有真实Cloudflare管理adapter或可直接执行的云CLI。下一阶段须先由Sol实现固定管理adapter，明确每个真实HTTP、SQL batch、资源核验及保守读写成本，再由主Agent review、另立新云轮预算和观测任务前置核查。原10.10轮已关闭，不能重置或追加；CF-03、生产登录/阅读、R2新鲜证据与CF-04/AI门槛仍未通过。
