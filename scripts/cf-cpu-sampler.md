@@ -391,3 +391,52 @@ SQLite for the full 42 requests, two CAS races and ordinal 1/32 full maintenance
 They additionally cover wrong payloads/targets, drift, partial failure, terminal
 shutdown, response limits, meta summation, abort/timeout, private raw sink and
 missing/mixed analytics. No local test contacts Cloudflare or proves cloud CPU.
+
+## Pinned remote observability omission contract
+
+`validateSamplerObservationSettings(settings, { wranglerVersion })` is a pure
+parser: it reads no files/environment/credentials, executes no CLI or evaluated
+SDK code, mutates no input and makes no requests. The caller must pass the
+**actual installed** Wrangler version read from its package metadata; the only
+accepted version is exported as `SAMPLER_OBSERVABILITY_WRANGLER_VERSION`, currently
+`4.151.0`. A newer version stops rather than silently inheriting this default.
+Tests independently check the installed package and lockfile versions and read
+the pinned bundle's source text without executing it.
+
+The reviewed official installed source is
+`node_modules/wrangler/wrangler-dist/cli.js` from the lockfile's Wrangler 4.151.0:
+
+- `normalizeObservability`, line 179862: absent remote observability returns
+  defaults with overall/logs enabled false and traces enabled false.
+- `normalizeRemoteConfigAsResolvedLocal`, line 179919: remote settings pass
+  through that normalization; this is the relevant **remote** contract.
+- The deployment fallback, line 181080: absent configuration is sent as
+  `observability: worker.observability ?? { enabled: false }`.
+
+These line references identify the pinned bundle, not a promise about future
+bundles. New-project/template defaults are a different contract and are not used.
+The helper allows omission only when the **entire `observability` property is
+absent**. An explicitly present undefined/null value, wrong type, missing enabled
+flag or enabled=true is rejected. Explicit objects require `enabled:false`;
+present logs/traces objects also require their own `enabled:false`. Only the
+reviewed boolean/sampling metadata fields are accepted. Unknown observation
+features fail closed. Regardless of observability omission, `logpush` must be
+explicit false and `tail_consumers` must be an empty array. The helper does not
+check active runtime tails; the separately budgeted fixed tails read still does.
+
+```js
+import { validateSamplerObservationSettings } from "./cf-cpu-sampler-manager.mjs";
+const observationProof = validateSamplerObservationSettings(
+  actualFixedCheckSettings,
+  { wranglerVersion: actualInstalledWranglerPackage.version },
+);
+// observationProof includes a safe source label:
+// 'pinned-remote-default' or 'explicit-disabled', and fixed disabled booleans.
+```
+
+This is a read-only interpretation of existing settings. It does not enable or
+patch observability, relax bindings validation, reset a ledger, authorize a retry,
+or by itself prove cloud CPU acceptance. Synthetic tests cover allowed omissions,
+explicit disabled metadata, wrong versions, null/types, enabled flags, logpush
+and consumer failures; original private settings evidence remains the authority
+for a separately reviewed, budget-preserving continuation.

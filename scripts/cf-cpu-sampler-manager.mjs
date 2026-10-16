@@ -1045,3 +1045,86 @@ function analyticsProjection(response, payload, versionId) {
   }
   return data;
 }
+
+// Remote settings contract from the pinned official Wrangler bundle, not the
+// new-project template defaults. cli.js normalizeObservability (179862), its
+// normalizeRemoteConfigAsResolvedLocal call (179919), and deployment fallback
+// (181080) in Wrangler 4.151.0. No CLI/import/eval or runtime default discovery.
+export const SAMPLER_OBSERVABILITY_WRANGLER_VERSION = "4.151.0";
+export function validateSamplerObservationSettings(settings, contract) {
+  insist(
+    own(contract, ["wranglerVersion"]) &&
+      contract.wranglerVersion === SAMPLER_OBSERVABILITY_WRANGLER_VERSION,
+    "observation_contract_version_mismatch",
+  );
+  const record = (value) =>
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    [Object.prototype, null].includes(Object.getPrototypeOf(value));
+  const only = (value, keys) =>
+    record(value) && Object.keys(value).every((key) => keys.includes(key));
+  const optionalBoolean = (value, name) =>
+    !Object.hasOwn(value, name) || typeof value[name] === "boolean";
+  const optionalRate = (value) =>
+    !Object.hasOwn(value, "head_sampling_rate") ||
+    (typeof value.head_sampling_rate === "number" &&
+      Number.isFinite(value.head_sampling_rate) &&
+      value.head_sampling_rate >= 0 &&
+      value.head_sampling_rate <= 1);
+  insist(
+    record(settings) &&
+      settings.logpush === false &&
+      Array.isArray(settings.tail_consumers) &&
+      settings.tail_consumers.length === 0,
+    "observation_state_unknown_or_enabled",
+  );
+  const omitted = !Object.hasOwn(settings, "observability");
+  if (!omitted) {
+    const obs = settings.observability;
+    insist(
+      only(obs, [
+        "enabled",
+        "logs",
+        "traces",
+        "head_sampling_rate",
+        "redact_query_string",
+      ]) &&
+        obs.enabled === false &&
+        optionalRate(obs) &&
+        optionalBoolean(obs, "redact_query_string"),
+      "observation_state_unknown_or_enabled",
+    );
+    for (const name of ["logs", "traces"]) {
+      if (!Object.hasOwn(obs, name)) continue;
+      const part = obs[name];
+      insist(
+        only(part, [
+          "enabled",
+          "head_sampling_rate",
+          "persist",
+          ...(name === "logs" ? ["invocation_logs"] : []),
+        ]) &&
+          part.enabled === false &&
+          optionalRate(part) &&
+          optionalBoolean(part, "persist") &&
+          (name !== "logs" || optionalBoolean(part, "invocation_logs")),
+        "observation_state_unknown_or_enabled",
+      );
+    }
+  }
+  return {
+    disabled: true,
+    wranglerVersion: SAMPLER_OBSERVABILITY_WRANGLER_VERSION,
+    observabilitySource: omitted
+      ? "pinned-remote-default"
+      : "explicit-disabled",
+    observability: {
+      enabled: false,
+      logs: { enabled: false },
+      traces: { enabled: false },
+    },
+    logpush: false,
+    tailConsumers: 0,
+  };
+}

@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 16 日。状态：CF-03 P1 进行中、未验收；CPU生产门槛未通过，不发布API。代码及CLI修复均已推送并通过CI；默认disabled静态改进已部署并通过线上验收，以receipt为准。本文不是上线验收记录。
 
-10月16日：第11节sampler及第12节固定Cloudflare管理adapter已实现并通过主Agent review和本地验证（187项Node、8项Python）。第12.2节限定下一云轮预算；实际云验收尚未执行，不能把本地集成通过当CPU通过。
+10月16日：第11节sampler及第12节固定Cloudflare管理adapter已实现并通过主Agent review和本地验证；12.3兼容修正后共192项Node、8项Python通过。云轮目前仅一次settings只读、业务0/D1=0，按12.3计划核验接续；不能把本地集成通过当CPU通过。
 
 静态改进发布时本地验证为138项Node、8项Python通过；metadata真实DOM 11项与account真实DOM 9项断言通过。check/production D1已独立建立，check schema与002保守预算迁移已应用并回读，production库仍空。production secrets仅在本地生成，未安装Worker或写入auth；check Worker有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。多轮云HTTP安全/CAS/撤销及合成导入、snapshot保留override通过，原子20并发争用最后1额度仅1个成功。CPU结果、账号共享R2证据、生产登录/文件与reader闭环仍未达门槛。源码提交 `0ae8825` 已推送；Cloudflare CI `38724875134` 构建 artifact 成功，Pages CI `38724875089` 成功。首次真实静态 CLI 在任何 Cloudflare 写入前遇到入口循环并停止；CLI修复已通过主 Agent review，新增两项真实独立进程 static/API CLI smoke后总计138项Node与8项Python全通过。CLI修复提交 `3e1aa89` 已推送；Cloudflare CI `38725881041` 构建成功、部署按预期跳过，Pages CI `38725881116` 成功。默认disabled的静态改进已通过本机受控发布及线上验收：首次网络检查完成1248项后中断，随后仅恢复剩余56项，合计1304项HEAD均为200；32项GET与本地字节及MIME一致，缺失页、`/api/health` 与 `/api` 均返回404，runtime保持disabled；线上账号页经真实Chrome DOM验证，凭证控件为disabled。
 
@@ -521,3 +521,13 @@ Sol/high交付固定manager与14项专项测试；主Agent复审关闭后禁止�
 依固定H2连接完整21×2，真实CAS和generation HTTP、40次API准入及满批维护按receipt证明；再等待300000ms，按首轮/后轮/合并三个固定窗口各最多三读。HTTP失败、CAS提前stale或证据未知则保留完整已有窗口并停止，不加业务、candidate、profile或扩大窗口稀释。CPU门槛仍P95<=5ms、平台max<10ms、errors=0，不能把unknown写成pass。
 
 所有分支由controller有界finally关闭auth、递增generation、撤销会话，禁用entry/preview并分别回读。外层记录写失败也不阻断这四次关闭尝试；关闭失败明确列未核验项，再在保留的补救预算内review具体修复，不标收尾完成。结束后再只读核对settings/tails；不删除D1、secret或旧对象/消费记录，不改主站静态或production。工具先commit→push→现有CI，门槛通过后在已授权范围内执行本计划，不再索要重复批准；结束记录实际CPU、消耗、关闭状态及未过门槛。
+
+12.2首次前置读取：源码 `2b96e40` 两CI成功后执行，固定Worker settings返回logpush=false、tail_consumers=[]，但完全省略observability。严格operator据此安全停止；ledger management1/44、D1=0、business=0，无auth/entry写入。原始settings与停止记录保留，run-start不删除、不重置。
+
+### 12.3 前置settings缺省语义适配（同一12.2轮，本地验收完成）
+
+主Agent核对锁定的官方Wrangler4.151.0源码：`normalizeRemoteConfigAsResolvedLocal` 对远端配置调用 `normalizeObservability`；当整个observability缺省时返回enabled=false、logs.enabled=false、traces.enabled=false。其部署代码也将缺省配置发送为 `{enabled:false}`。这与新建项目模板默认true不同，不能将两者混用。[Workers Logs说明](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)同时说明写入日志需启用observability。以已锁定SDK远端归一化契约为依据，Sol/high补纯解析helper与反例测试：只接受完整字段缺省或合法明确disabled对象；null、错误类型、任何enabled配置、缺失/启用logpush或未知tail consumer状态仍拒绝。不得改变云端配置来绕过检查，也不猜未来SDK的默认值。
+
+helper review、全套验证及CI通过后，允许一次有界的只读前置接续：仅当原receipt证明business0/D1=0/management1且未进入sampler时，独占创建continuation记录并沿用已有管理计数及原始证据，再核查settings/tails。run-start与首次失败原样保留，不加42业务、44管理/20D1总预算，不重放已发送业务或mutation。若仍有未知状态立即停止，不再续接。后续实际采集与关闭完全沿12.2。
+
+Sol/high交付纯解析helper及5项测试；主Agent审阅通过，192项Node与8项Python全部通过。明确区分属性缺省与null/畸形/显式开启，测试同时检查package-lock、实际安装版本及SDK远端归一化源码，升级不能静默沿用旧契约。私有operator接续由Sol复审：原始run-start/第一次停止/evidence保留、continuation独占，计划与表上界完全相同，旧rawBytes须为安全整数并与原始证据字节数相符；管理账本从1继续，不归零。构建、隐私检查及远端CI通过后才执行接续。
