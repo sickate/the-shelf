@@ -46,6 +46,7 @@ function plan() {
     costs: Object.fromEntries(
       [
         "business",
+        "maintenance",
         ...Object.keys(MANAGEMENT_COMMANDS).filter(
           (key) => MANAGEMENT_COMMANDS[key] === "d1",
         ),
@@ -54,6 +55,7 @@ function plan() {
     timeoutMs: 1000,
     spacingMs: 1100,
     analyticsAttempts: 3,
+    analyticsDelayMs: 0,
   };
 }
 async function fixture(t, tweaks = {}) {
@@ -1087,4 +1089,36 @@ test("failure only at final checkpoint cannot return collected or a passing CPU 
   assert.equal(result.cpuGate, "unknown");
   assert.equal(result.cleanup.complete, true);
   assert.equal(result.ledger.business, 42);
+});
+
+test("explicit analytics delay follows all 42 HTTP requests and two maintenance batches are reserved before mutation", async (t) => {
+  const f = await fixture(t);
+  const originalManage = f.adapters.manage;
+  let firstAnalyticsAt;
+  f.options.plan.analyticsDelayMs = 180000;
+  f.adapters.manage = async (command, context) => {
+    if (command === "analytics") firstAnalyticsAt ??= f.adapters.clock.now();
+    return originalManage(command, context);
+  };
+  let reservedBeforeEnable = false;
+  f.adapters.beforeCheckpoint = (record) => {
+    if (
+      record.ledger.management >= 6 &&
+      record.ledger.maintenanceBatchesReserved === 2
+    )
+      reservedBeforeEnable = true;
+  };
+  const result = await runSampler(f.options);
+  assert.equal(result.ok, true);
+  assert.equal(result.ledger.maintenanceBatchesReserved, 2);
+  assert.equal(reservedBeforeEnable, true);
+  assert.ok(
+    firstAnalyticsAt - Date.parse(result.rounds[1].requests.at(-1).endedAt) >=
+      180000,
+  );
+  assert.equal(result.ledger.business, 42);
+  assert.equal(
+    (await runSampler({ plan: f.options.plan })).analyticsDelayMs,
+    180000,
+  );
 });

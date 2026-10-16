@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 16 日。状态：CF-03 P1 进行中、未验收；CPU生产门槛未通过，不发布API。代码及CLI修复均已推送并通过CI；默认disabled静态改进已部署并通过线上验收，以receipt为准。本文不是上线验收记录。
 
-10月16日：第11节受控sampler工具已实现并通过主Agent review及本地验证；尚无真实Cloudflare管理adapter，本阶段不触云。后续先实现和审阅管理adapter、核算新一轮预算，再另行执行云验收，不能把本地集成通过当CPU通过。
+10月16日：第11节sampler及第12节固定Cloudflare管理adapter已实现并通过主Agent review和本地验证（187项Node、8项Python）。第12.2节限定下一云轮预算；实际云验收尚未执行，不能把本地集成通过当CPU通过。
 
 静态改进发布时本地验证为138项Node、8项Python通过；metadata真实DOM 11项与account真实DOM 9项断言通过。check/production D1已独立建立，check schema与002保守预算迁移已应用并回读，production库仍空。production secrets仅在本地生成，未安装Worker或写入auth；check Worker有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。多轮云HTTP安全/CAS/撤销及合成导入、snapshot保留override通过，原子20并发争用最后1额度仅1个成功。CPU结果、账号共享R2证据、生产登录/文件与reader闭环仍未达门槛。源码提交 `0ae8825` 已推送；Cloudflare CI `38724875134` 构建 artifact 成功，Pages CI `38724875089` 成功。首次真实静态 CLI 在任何 Cloudflare 写入前遇到入口循环并停止；CLI修复已通过主 Agent review，新增两项真实独立进程 static/API CLI smoke后总计138项Node与8项Python全通过。CLI修复提交 `3e1aa89` 已推送；Cloudflare CI `38725881041` 构建成功、部署按预期跳过，Pages CI `38725881116` 成功。默认disabled的静态改进已通过本机受控发布及线上验收：首次网络检查完成1248项后中断，随后仅恢复剩余56项，合计1304项HEAD均为200；32项GET与本地字节及MIME一致，缺失页、`/api/health` 与 `/api` 均返回404，runtime保持disabled；线上账号页经真实Chrome DOM验证，凭证控件为disabled。
 
@@ -464,7 +464,7 @@ check已关闭auth、撤销全部会话并关闭entry；production API未启用�
 
 ## 11. 受控 sampler 固化（2026-10-16，本地验收完成）
 
-本阶段承接10.11，复杂度高，由 `gpt-6.1-sol / high` 实现，主Agent设计审阅、集成验收与发布。目标是把临时采样流程变为仓库内可review、无网络可测试的固定check工具，避免环境传递遗漏、CAS提前stale、analytics迟到中断热轮及维护覆盖缺失。当前只有私有临时runner；本节计划不代表新sampler或CPU验收已完成。
+本阶段承接10.11，复杂度高，由 `gpt-6.1-sol / high` 实现，主Agent设计审阅、集成验收与发布。目标是把临时采样流程变为仓库内可review、无网络可测试的固定check工具，避免环境传递遗漏、CAS提前stale、analytics迟到中断热轮及维护覆盖缺失。阶段开始时只有私有临时runner；当前实现结果见11.1，本地验收不代表CPU云验收已完成。
 
 范围：固定check目标与版本契约、默认dry-run、有限预算和收尾预留、逐请求脱敏receipt、单HTTP/2连接与并发CAS、完整两轮HTTP后才读取analytics、真实mutation admission和满批维护证明、失败与中断时的有界收尾。管理适配器与凭证仅由显式注入的受控调用提供；工具不得自动读取.env或遍历.local、接受任意Worker/DB/URL、输出凭证或自动重试mutation。纯测试使用合成凭证和模拟平台，不访问云端。
 
@@ -485,3 +485,39 @@ Sol/high交付 `scripts/cf-cpu-sampler.mjs`、固定check的 `cf-cpu-sampler-h2.
 本地完整172项Node与8项Python测试通过，默认disabled的Cloudflare构建通过。首次全量重跑被沙箱禁止监听127.0.0.1而失败；在项目授权内允许本机端口后同套测试全部通过。公开产物及真实secret隐私扫描通过，verify:static覆盖1304项资源通过；远端CI以本轮交付报告为准。本地CPU明确unknown，不把模拟analytics通过当平台CPU证据。
 
 此阶段只交付可测试的controller/HTTP2传输及管理适配器契约，没有真实Cloudflare管理adapter或可直接执行的云CLI。下一阶段须先由Sol实现固定管理adapter，明确每个真实HTTP、SQL batch、资源核验及保守读写成本，再由主Agent review、另立新云轮预算和观测任务前置核查。原10.10轮已关闭，不能重置或追加；CF-03、生产登录/阅读、R2新鲜证据与CF-04/AI门槛仍未通过。
+
+## 12. 固定check管理适配器与下一轮验收准备（2026-10-16，本地验收完成）
+
+目标：补齐第11节未实现的真实Cloudflare管理adapter，使固定sampler能通过明确的一次HTTP管理命令读取/修改独立check环境。当前controller及H2已通过172项Node、8项Python测试，提交 `26a6aa4` 已推送，Cloudflare CI `38837786472` 成功且部署跳过，Pages CI `38837786363` 成功；生产API仍关闭。复杂度高，鉴权/凭证、持久状态和管理边界由 `gpt-6.1-sol / high` 具体实现，主Agent负责方案、逐次review、集成、实际账号操作和发布。
+
+范围：只接受显式注入的已核验项目账号、deployConfig及固定已部署check版本；封装固定deployment、DB identity/query、subdomain与GraphQL命令；固定SQL和合成fixture，不接受任意URL/SQL/scope。每个command最多一次HTTP，D1批处理按官方契约编码并汇总所有rows_read/rows_written，保留正常trigger和真实日/minute消耗。只返回sampler白名单字段，凭证不入argv、receipt、日志或网站；redirect:error、有界响应、AbortSignal、失败无重试。固定schema/002检查需核验实际SQL，不凭名义version推断迁移完成。fixture只能新增本轮固定合成记录，冲突停止，不覆盖私人数据或旧轮记录。
+
+不做：不修改Worker业务/鉴权/schema，不重部署候选、不创建账号通用token、不碰production D1/auth或R2对象，不启用生产API、AI/Workflows、日志/tracing/profile，不扩大公开文档白名单。第10轮已关闭账本原样保留。适配器实施和纯测试阶段零云请求。
+
+依赖/任务：先核对Cloudflare官方REST/D1/GraphQL契约与现有schema、fixtures；Sol实现adapter与无网络单元/真实SQLite SQL集成，必要时以小diff修复controller契约并说明；主Agent审阅每个目标、SQL与响应投影，验证中断、重定向、超限、缺失/错误meta、schema漂移、重复fixture、版本漂移及跨轮证明。读写估算必须区分保守预留和平台实测，拒绝没有成本依据的execute配置。
+
+验收/发布：专项及全部Node/Python测试、disabled构建、verify:public、真实secret扫描与verify:static通过后，工具按commit→push→现有CI发布，Cloudflare部署保持关闭、Pages回退照常。失败则保留现有静态站，工具可revert，不回滚私人DB或重置真实计数。
+
+云端执行为后置子阶段：adapter review和本地验证通过后，主Agent先补写12.2实际版本、固定命令清单、成本、观测前置核验和新轮独立有限预算，再在现有项目授权内执行；计划满足后不重复索要确认。没有通过这些前置门槛不恢复check、不发送业务样本。新轮仅同一已部署候选21×2，不加候选/profile/重试/原书上传；完整两轮后才等待analytics，缺失保留unknown。所有分支有界关闭check auth、增加generation并撤销会话、禁用entry/preview并独立回读；关闭失败明确报告补救。主站保持disabled，CPU通过也不等于CF-03或私人阅读上线。
+
+### 12.1 adapter实施中的契约修正
+
+原 `costs.business` 对每个HTTP都预留一次满批维护，42次重复计入会虚增至超过15k写行门槛。改为普通业务成本与 `costs.maintenance` 分开：首mutation前持久预留两批维护成本，两轮各20次连续准入、每轮不跨UTC日，按ordinal 1/32最多各触发一批。该估算依赖隔离check与真实admission增量证明，发现额外流量或ordinal不符即失败；不能宣称已经证明不受控外部并发下的行数硬上限。原100k读/15k写数值门槛不变；schema索引、trigger及fixture增长均计入成本公式，业务保守预留与管理平台meta分列。
+
+上一云轮最终aggregate=21但groups仍为首次3条；[官方metrics说明](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/)也提示近几分钟聚合存在延迟。增加显式 `analyticsDelayMs`（0..300000）：42个HTTP完成后、首次analytics前有界分片等待，下一云轮拟300000ms；仍每个固定窗口最多3次读取、不追加业务、不保证等待后数据一定完整。延迟/采样/缺失仍保持unknown，不改CPU阈值或分析器口径。
+
+Sol/high交付固定manager与14项专项测试；主Agent复审关闭后禁止重新启用、按真实rowid核验CAS、schema/002逐对象SQL对照、全批meta求和、非法/缺失分组仍保留有效高aggregate，以及非事务部分提交后不重试/不回滚旧账本。计数增长按慢请求最坏跨分钟估算为400，成本公式及其隔离前提见[sampler操作说明](../scripts/cf-cpu-sampler.md)。完整187项Node、8项Python、格式检查、disabled构建、公开产物检查、真实secret扫描及1304项静态资源检查通过；远端CI以本轮交付报告为准。
+
+### 12.2 单次新云轮（计划，待工具CI及私有operator review通过）
+
+本轮独立于已关闭第10轮，旧账本不重置。只使用收尾receipt固定的同一已部署candidate UUID，私有operator核对其worker/security/core三份源码hash未变；不重新部署，不换凭证。账号来自项目私有环境、DB来自既有deploy allowlist，所有标识与原始证据留 `.local/cf03/manager-round-20261016/`（0700/0600）。默认dry-run已完成无网络本地验证，真实execute独占创建run-start，拒绝重放/续跑。
+
+新轮上限：business=42、explicitManagement=44、D1 management=20、保守rowsRead=100000/rowsWritten=15000、原始证据20MiB；正常操作只允许用到40次管理/18次D1，另4/2仅供失败后的受review补救，不自动重试mutation。sampler本身预留28次管理（含最多9次analytics）/12次D1，另有settings与tails各前后一次只读，共预计32次显式管理；调用前持久化外层账本，失败/timeout照计。首mutation前已预留四次独立关闭/回读及两批maintenance。
+
+表初始上界：admissions256、counters512、sessions128、catalog_books32、metadata_overrides32、catalog_import_rows16、file_registry4、upload_reservations8，其余schema表各4；当前公式预留69500读/10516写，外部settings/tails不读写D1。adapter在只读inspect里核验实际表行数及schema，不符合就停止，不现场扩大假设或门槛。预算是保守估算，实际D1管理meta独立汇总；业务meta与共享账号余量未知部分明确报告，不冒称已证明整账号免费余量。
+
+先读取固定check settings校验原绑定、无新增logs/tracing/logpush/tail consumer，再GET固定Worker tails要求为空；旧profile receipt证明前次有界capture已结束，本轮不启动profile/tail。未知活动或权限不足即停止，不删除外部活动、不扩大权限。manager再独立核对固定已部署version、DB身份、真实schema/002、auth关闭/active0、entry/preview关闭后才启用check。沿用已记录Free环境，不升级付费或修改套餐。
+
+依固定H2连接完整21×2，真实CAS和generation HTTP、40次API准入及满批维护按receipt证明；再等待300000ms，按首轮/后轮/合并三个固定窗口各最多三读。HTTP失败、CAS提前stale或证据未知则保留完整已有窗口并停止，不加业务、candidate、profile或扩大窗口稀释。CPU门槛仍P95<=5ms、平台max<10ms、errors=0，不能把unknown写成pass。
+
+所有分支由controller有界finally关闭auth、递增generation、撤销会话，禁用entry/preview并分别回读。外层记录写失败也不阻断这四次关闭尝试；关闭失败明确列未核验项，再在保留的补救预算内review具体修复，不标收尾完成。结束后再只读核对settings/tails；不删除D1、secret或旧对象/消费记录，不改主站静态或production。工具先commit→push→现有CI，门槛通过后在已授权范围内执行本计划，不再索要重复批准；结束记录实际CPU、消耗、关闭状态及未过门槛。

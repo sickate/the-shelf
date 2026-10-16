@@ -171,6 +171,7 @@ export function validateSamplerPlan(input) {
       "timeoutMs",
       "spacingMs",
       "analyticsAttempts",
+      "analyticsDelayMs",
     ]),
     "invalid_plan",
   );
@@ -219,12 +220,17 @@ export function validateSamplerPlan(input) {
       integer(input.spacingMs) &&
       input.spacingMs >= 1100 &&
       input.spacingMs <= 60000 &&
+      integer(input.analyticsDelayMs) &&
+      input.analyticsDelayMs <= 300000 &&
       integer(input.analyticsAttempts) &&
       input.analyticsAttempts >= 1 &&
       input.analyticsAttempts <= 3,
     "invalid_timing",
   );
-  requireThat(own(input.costs, ["business", ...D1_COMMANDS]), "invalid_costs");
+  requireThat(
+    own(input.costs, ["business", "maintenance", ...D1_COMMANDS]),
+    "invalid_costs",
+  );
   for (const cost of Object.values(input.costs))
     requireThat(
       own(cost, ["rowsRead", "rowsWritten"]) &&
@@ -257,8 +263,11 @@ export function validateSamplerPlan(input) {
     management: Object.values(count).reduce((a, b) => a + b, 0),
     d1: count.inspectDatabaseIdentity,
     analytics: count.analytics,
-    rowsRead: 42 * plan.costs.business.rowsRead,
-    rowsWritten: 42 * plan.costs.business.rowsWritten,
+    rowsRead:
+      42 * plan.costs.business.rowsRead + 2 * plan.costs.maintenance.rowsRead,
+    rowsWritten:
+      42 * plan.costs.business.rowsWritten +
+      2 * plan.costs.maintenance.rowsWritten,
   };
   for (const command of D1_COMMANDS) {
     needed.d1 += count[command];
@@ -355,6 +364,7 @@ export async function runSampler(options) {
       needed,
       cleanupReserve: CLEANUP.length,
       liveManagementAdapterProvided: false,
+      analyticsDelayMs: plan.analyticsDelayMs,
     };
   const environment = options.environment ?? process.env;
   requireThat(!isCi(environment), "local_operator_required");
@@ -424,6 +434,7 @@ export async function runSampler(options) {
   });
   const ledger = {
     business: 0,
+    maintenanceBatchesReserved: 0,
     management: 0,
     d1: 0,
     analytics: 0,
@@ -491,16 +502,18 @@ export async function runSampler(options) {
     const delta =
       kind === "business"
         ? { business: 1, ...plan.costs.business }
-        : {
-            management: 1,
-            ...(MANAGEMENT_COMMANDS[command] === "d1"
-              ? { d1: 1, ...plan.costs[command] }
-              : {}),
-            ...(MANAGEMENT_COMMANDS[command] === "d1-identity"
-              ? { d1: 1 }
-              : {}),
-            ...(command === "analytics" ? { analytics: 1 } : {}),
-          };
+        : kind === "maintenance"
+          ? { ...plan.costs.maintenance }
+          : {
+              management: 1,
+              ...(MANAGEMENT_COMMANDS[command] === "d1"
+                ? { d1: 1, ...plan.costs[command] }
+                : {}),
+              ...(MANAGEMENT_COMMANDS[command] === "d1-identity"
+                ? { d1: 1 }
+                : {}),
+              ...(command === "analytics" ? { analytics: 1 } : {}),
+            };
     const spare = cleanupMode ? {} : cleanupReserve();
     for (const [key, value] of Object.entries(delta))
       requireThat(
@@ -508,6 +521,7 @@ export async function runSampler(options) {
         "budget_exhausted",
       );
     for (const [key, value] of Object.entries(delta)) ledger[key] += value;
+    if (kind === "maintenance") ledger.maintenanceBatchesReserved++;
     await save(); // Persist reservation BEFORE a possibly ambiguous mutation.
   };
   async function bounded(fn, cleanup = false) {
@@ -742,6 +756,8 @@ export async function runSampler(options) {
       entry?.enabled === false && entry.previewsEnabled === false,
       "entry_not_closed",
     );
+    await reserve("maintenance");
+    await reserve("maintenance");
     generation = db.generation;
     touched = true; // Arm finally before the first mutation, including timeout.
     const enabled = await manage("enableAuth", {
@@ -940,6 +956,7 @@ export async function runSampler(options) {
     // Close the business transport before waiting for eventually consistent CPU.
     await bounded(() => connection.close());
     connection = null;
+    await wait(plan.analyticsDelayMs);
     record.state = "analytics";
     await save();
     const windows = [

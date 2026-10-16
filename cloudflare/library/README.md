@@ -2,7 +2,7 @@
 
 本文说明目前仓库中的 CF-03 初始化、发布与书库数据工具。CF-03 仍处于验收阶段，尚未通过生产门槛，也不代表同源 API、登录或私人阅读已经上线。当前已上线的仍是 Workers Static Assets 静态站，GitHub Pages 作为公开站点回退。
 
-2026-10-16已固化[受控CPU sampler及管理接口契约](../../scripts/cf-cpu-sampler.md)：本地172项Node、8项Python测试通过，包含真实Worker+SQLite两轮CAS与满批维护。工具尚无真实Cloudflare管理adapter，不可直接云采样；下一云轮需先完成adapter review与独立有界计划。CPU及CF-03仍未验收，本阶段不改变线上部署。
+2026-10-16已固化[受控CPU sampler与固定Cloudflare管理adapter](../../scripts/cf-cpu-sampler.md)：本地187项Node、8项Python测试通过，包含真实管理SQL与Worker+SQLite两轮CAS、满批维护及故障收尾。工具没有云CLI，实际执行通过已审私有operator和[独立有界计划12.2](../../docs/cf03-plan.md)进行。CPU及CF-03仍未验收，本地测试不等于生产API上线。
 
 ## 环境与初始化
 
