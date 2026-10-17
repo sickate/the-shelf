@@ -29,6 +29,8 @@ npm run server
 
 为后续检索和 AI 准备正文，可使用 `npm run prepare:text -- --file <fileId>` 预览单个 PDF/EPUB；加 `--execute` 才提取并生成带页码或章节定位、来源指纹的私有版本包。文件 ID 来自导入清单，输出仅保存在 `.local/prepared-text/`，不改原文件或现有清单。PDF 需要 pdftotext，EPUB 使用 Python 标准库；命令说明见 [正文准备工具](scripts/prepare-text.md)。准备后可用 `npm run text:select -- --file <fileId> --version <versionHash>` 验证拟选版本，加 `--execute` 才记录选择；重启本机后端后，问答、章节与全书总结使用该版本。选择命令会读取原书核验来源，运行任务时只需对应的正文包；不改原 manifest。云端同步和真实 AI Key 验证仍待后续验收。
 
+云同步的离线基础现包含原书与正文共用的 SQLite 预算账本、正文版本登记和单对象恢复协议，说明见 [共享预算与同步模块](server/storage-authority.md)。该模块尚未接入旧上传命令、远端 D1 或真实 R2 客户端，不能据此认定正文已同步上线。
+
 ## 检查与发布
 
 ```sh

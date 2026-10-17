@@ -173,8 +173,21 @@ The controller requires exactly 20 real API admissions per 21-request round
 admissions. The latter proves the 409 was a true CAS loser. This check runs only
 after the final generation-session HTTP; stale CAS cannot truncate request 21.
 It derives maintenance ordinals at 1 or multiples of 32, validates exact numeric
-before/after decreases and each per-trigger limit, and requires at least one full
-batch across the two rounds. An HTTP 200 alone never proves maintenance.
+before/after decreases and each per-trigger limit, and requires exactly two
+distinct maintenance ordinals across the two rounds. Every trigger must delete
+the full 64/8/128/32 rows; reserved budget and seeded fixture size do not prove
+execution. The second round must start at the first round's ending ordinal,
+with the same UTC day, fixed cutoff and remaining historical fixture counts.
+Replayed/gapped ordinals or inserted/deleted historical rows stop collection.
+An HTTP 200 alone never proves maintenance.
+
+The live starting ordinal is read only. Some fresh real starting ordinals allow
+only one trigger in the fixed 40 admissions. Such a run retains both complete
+21-request records, fails with `maintenance_batches_incomplete` before analytics,
+and performs the normal independent shutdown. It must not reset daily counters,
+alter old admissions, add business requests or enlarge a budget to obtain another
+batch. The default offline mock starts at zero as synthetic initial state; it
+does not provide a cloud counter-reset capability or cloud execution evidence.
 
 The controller starts no observation tasks and never enables logs/tracing. It
 cannot determine the absence of externally created profile/tail sessions from a
@@ -211,7 +224,9 @@ with SQLite executing its real schema/triggers/crypto/CAS, deterministic D1 read
 interleaving for both race participants, real 40 API admissions and full cleanup
 batches at ordinals 1/32. That test supplies no cloud CPU evidence and must remain
 `cpuGate=unknown`. Separate H2 tests exercise synchronous dual-stream creation,
-TLS/ALPN, redirects, size and path guards without networking.
+TLS/ALPN, redirects, size and path guards without networking. Additional mocks
+reject a single full batch after all 42 requests, no executed batch, partial
+deletions, and broken round continuity; reservations never substitute for proofs.
 
 ## Fixed Cloudflare manager
 

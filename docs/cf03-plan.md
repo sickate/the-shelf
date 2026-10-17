@@ -651,3 +651,11 @@ Workers/D1的Free状态均unknown，未调用全账号订阅或宽计费接口�
 4. 真实单文件同步仍先取得新鲜完整R2证据，满足20 MB单文件与8 GB总预算及安全验收；CF-05在正文消费、持久任务和有效任务Key分别验收后接入。未经这些门槛，不把离线包交付记作生产阅读或真实AI上线。
 
 本次结果归档为低复杂度，由主Agent维护及review既有文档；不改工具、部署配置或公开文档清单。构建、公开/静态验证和真实secret扫描通过后commit→push→既有CI，再核验线上静态状态；结果以交付记录为准。失败保留现有部署，可revert文档，不回滚私人证据。结果文档本机验收已通过：disabled构建1280页、公开产物1318文件、静态资源1304项，真实secret扫描1442文件零命中/零不安全文件，diff检查通过；工具源代码未改，完整234项Node与8项Python沿用16.1同源结果，新提交CI独立验证。
+
+## 17. CF-03 两批维护证明离线修正（2026-10-17）
+
+接续14.1与16.2第2项，由Sol/high实现、主Agent review；仅修改sampler、专项合成测试及说明，不执行云端operator、不读取真实`.local`，不改Worker/schema、预算、生产配置或旧历史结果。最终门槛改为两轮`coverageProof.maintenanceOrdinals`合计恰有2个不同ordinal；每个ordinal仍须在20次真实准入差值内触发，并以固定cutoff的before/after证明64/8/128/32精确满额删除。预留两批预算、种入两批fixture与HTTP成功均不替代执行证明。
+
+跨轮再核对ordinal连续、UTC日/cutoff相同及历史fixture剩余计数连续，拒绝重复ordinal、跳过准入或补种fixture。真实当前日ordinal保持只读；若固定40次准入只能触发一次维护，保留完整42个HTTP记录，以`maintenance_batches_incomplete`在analytics前失败并正常独立收尾，不归零日计数、不删账、不追加请求或扩大预算。离线mock的初始ordinal=0仅是合成新库状态，不代表任何真实重置入口。
+
+专项回归覆盖仅一次完整维护、零次实际删除、部分批次删除与跨轮ordinal/cutoff/fixture不连续；完整42请求、真实CAS双mutation、generation撤销、analytics延迟/unknown、预算预留和独立关闭条件均保留。`node --test tests/cf-cpu-sampler.test.mjs tests/cf-cpu-sampler-manager.test.mjs`本机40项通过、零跳过；真实Worker+SQLite以及真实manager SQL集成继续证明40次真实API准入、ordinal1/32各一次满批。这些仅是无网络本地执行证据，CPU仍unknown，未取得新云端、安全或生产验收；主Agent整体验收见本轮交付记录，尚不据此宣称发布成功。

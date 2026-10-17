@@ -790,6 +790,7 @@ export async function runSampler(options) {
         typeof connection.close === "function",
       "single_h2_connection_required",
     );
+    let previousCoverage;
     for (const name of ["first-access", "subsequent"]) {
       if (name === "subsequent") {
         // Avoid reusing the previous minute's login allowance. No retries.
@@ -826,6 +827,18 @@ export async function runSampler(options) {
           before.cutoff < clock.now(),
         "round_fixture_unverified",
       );
+      if (previousCoverage) {
+        const counts = maintenanceCounts(before.maintenance);
+        requireThat(
+          before.ordinal === previousCoverage.ordinal &&
+            before.day === previousCoverage.day &&
+            before.cutoff === previousCoverage.cutoff &&
+            Object.keys(MAINTENANCE_LIMITS).every(
+              (kind) => counts[kind] === previousCoverage.maintenance[kind],
+            ),
+          "non_contiguous_coverage",
+        );
+      }
       const bookPath = `/api/books/${bookId}`,
         filePath = `/api/files/${fileId}/access`;
       const send = (n, path, opts, reserved) =>
@@ -941,6 +954,7 @@ export async function runSampler(options) {
         bookId,
       });
       round.coverage = coverageProof(before, after, name);
+      previousCoverage = after;
       requireThat(pairStatusesValid, "cas_status_pair");
       round.ok = true;
       await save();
@@ -949,9 +963,13 @@ export async function runSampler(options) {
         "deployed_version_mismatch",
       );
     }
+    const maintenanceOrdinals = record.rounds.flatMap(
+      (round) => round.coverage.maintenanceOrdinals,
+    );
     requireThat(
-      record.rounds.some((round) => round.coverage.fullBatch),
-      "maintenance_not_triggered",
+      maintenanceOrdinals.length === 2 &&
+        new Set(maintenanceOrdinals).size === 2,
+      "maintenance_batches_incomplete",
     );
     // Close the business transport before waiting for eventually consistent CPU.
     await bounded(() => connection.close());

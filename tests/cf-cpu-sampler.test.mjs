@@ -69,7 +69,7 @@ async function fixture(t, tweaks = {}) {
     concurrent = 0,
     maxConcurrent = 0,
     connects = 0,
-    ordinal = 10;
+    ordinal = tweaks.initialOrdinal ?? 0;
   let maintenance = { admissions: 128, daily: 16, minute: 256, sessions: 64 };
   const calls = [],
     requests = [],
@@ -153,13 +153,20 @@ async function fixture(t, tweaks = {}) {
             Array.from({ length: 20 }, (_, i) => old + i + 1).some(
               (n) => n === 1 || n % 32 === 0,
             )
-          )
-            maintenance = {
-              admissions: maintenance.admissions - 64,
-              daily: maintenance.daily - 8,
-              minute: maintenance.minute - 128,
-              sessions: maintenance.sessions - 32,
+          ) {
+            const deleted = tweaks.maintenanceDeleted ?? {
+              admissions: 64,
+              daily: 8,
+              minute: 128,
+              sessions: 32,
             };
+            maintenance = Object.fromEntries(
+              Object.entries(maintenance).map(([kind, n]) => [
+                kind,
+                n - deleted[kind],
+              ]),
+            );
+          }
           data = {
             ordinal,
             metadataAdmissions: tweaks.casAdmissions ?? 2,
@@ -410,14 +417,19 @@ test("collects fixed 21+21, real proof contract, one connection and simultaneous
     result.rounds.map((r) => r.requests.length),
     [21, 21],
   );
-  assert.equal(result.rounds[0].coverage.fullBatch, false);
-  assert.equal(result.rounds[1].coverage.fullBatch, true);
-  assert.deepEqual(result.rounds[1].coverage.deleted, {
-    admissions: 64,
-    daily: 8,
-    minute: 128,
-    sessions: 32,
-  });
+  assert.deepEqual(
+    result.rounds.map((r) => r.coverage.maintenanceOrdinals),
+    [[1], [32]],
+  );
+  for (const round of result.rounds) {
+    assert.equal(round.coverage.fullBatch, true);
+    assert.deepEqual(round.coverage.deleted, {
+      admissions: 64,
+      daily: 8,
+      minute: 128,
+      sessions: 32,
+    });
+  }
   assert.equal(
     f.calls.indexOf("analytics") > f.calls.indexOf("http-2-21"),
     true,
@@ -571,7 +583,7 @@ test("maintenance requires actual before/after full bounds and ordinal proof", a
       command === "readCoverage"
         ? {
             data: {
-              ordinal: 30,
+              ordinal: 20,
               metadataAdmissions: 2,
               day: "2026-10-16",
               cutoff: Date.UTC(2026, 9, 16),
@@ -587,6 +599,116 @@ test("maintenance requires actual before/after full bounds and ordinal proof", a
   assert.equal(result.error, "invalid_maintenance_proof");
   assert.equal(result.cleanup.complete, true);
   assert.equal(result.rounds[0].requests.length, 21);
+});
+test("one actual full batch fails after all 42 HTTP requests despite two reserved and seeded batches", async (t) => {
+  const f = await fixture(t, { initialOrdinal: 10 });
+  const result = await runSampler(f.options);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "maintenance_batches_incomplete");
+  assert.equal(result.cpuGate, "unknown");
+  assert.equal(result.ledger.business, 42);
+  assert.equal(result.ledger.maintenanceBatchesReserved, 2);
+  assert.deepEqual(
+    result.rounds.map((r) => r.requests.length),
+    [21, 21],
+  );
+  assert.deepEqual(
+    result.rounds.map((r) => r.coverage.maintenanceOrdinals),
+    [[], [32]],
+  );
+  assert.deepEqual(
+    result.rounds.map((r) => [
+      r.coverage.ordinalBefore,
+      r.coverage.ordinalAfter,
+    ]),
+    [
+      [10, 30],
+      [30, 50],
+    ],
+  );
+  assert.equal(f.calls.includes("analytics"), false);
+  assert.equal(result.cleanup.complete, true);
+  assert.equal(result.cleanup.authClosed, true);
+  assert.equal(result.cleanup.entryClosed, true);
+  assert.equal(f.calls.filter((c) => c === "rotateGeneration").length, 2);
+  const receipt = JSON.parse(await fs.readFile(f.receipt.file, "utf8"));
+  assert.deepEqual(
+    receipt.rounds.map((r) => r.requests.length),
+    [21, 21],
+  );
+  assert.equal(receipt.error, "maintenance_batches_incomplete");
+});
+test("zero executed and partially executed maintenance batches never count as full proofs", async (t) => {
+  for (const [label, maintenanceDeleted] of [
+    ["zero", { admissions: 0, daily: 0, minute: 0, sessions: 0 }],
+    ["partial", { admissions: 64, daily: 8, minute: 127, sessions: 32 }],
+  ]) {
+    await t.test(label, async (t) => {
+      const f = await fixture(t, { initialOrdinal: 10, maintenanceDeleted });
+      const result = await runSampler(f.options);
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "maintenance_batch_not_full");
+      assert.equal(result.cpuGate, "unknown");
+      assert.equal(result.ledger.business, 42);
+      assert.equal(result.ledger.maintenanceBatchesReserved, 2);
+      assert.deepEqual(
+        result.rounds.map((r) => r.requests.length),
+        [21, 21],
+      );
+      assert.deepEqual(result.rounds[0].coverage.maintenanceOrdinals, []);
+      assert.equal(result.rounds[1].coverage, null);
+      assert.equal(f.calls.includes("analytics"), false);
+      assert.equal(result.cleanup.complete, true);
+    });
+  }
+});
+test("round boundaries reject reused ordinal, changed cutoff and replenished maintenance fixtures", async (t) => {
+  for (const [label, change] of [
+    ["ordinal replay", { ordinal: 0 }],
+    ["ordinal gap", { ordinal: 32 }],
+    ["changed cutoff", { cutoff: Date.UTC(2026, 9, 15) }],
+    [
+      "fixture replenished",
+      {
+        maintenance: { admissions: 128, daily: 16, minute: 256, sessions: 64 },
+      },
+    ],
+  ]) {
+    await t.test(label, async (t) => {
+      let rounds = 0;
+      const f = await fixture(t, {
+        manage: (command) => {
+          if (command !== "prepareRound" || ++rounds !== 2) return;
+          return {
+            data: {
+              fixtureInserted: 1,
+              metadataVersion: 0,
+              ordinal: 20,
+              metadataAdmissions: 0,
+              day: "2026-10-16",
+              cutoff: Date.UTC(2026, 9, 16),
+              maintenance: {
+                admissions: 64,
+                daily: 8,
+                minute: 128,
+                sessions: 32,
+              },
+              ...change,
+            },
+            meta: { rowsRead: 1, rowsWritten: 0 },
+          };
+        },
+      });
+      const result = await runSampler(f.options);
+      assert.equal(result.error, "non_contiguous_coverage");
+      assert.deepEqual(
+        result.rounds.map((r) => r.requests.length),
+        [21, 0],
+      );
+      assert.equal(f.calls.includes("analytics"), false);
+      assert.equal(result.cleanup.complete, true);
+    });
+  }
 });
 test("private outputs reject symlink target and symlink parent before external calls", async (t) => {
   const f = await fixture(t);
