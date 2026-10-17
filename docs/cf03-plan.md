@@ -1,8 +1,8 @@
 # CF-03：Workers + D1 登录与私人阅读实施计划
 
-更新日期：2026 年 10 月 16 日。状态：CF-03 P1 进行中、未验收；CPU生产门槛未通过，不发布API。代码及CLI修复均已推送并通过CI；默认disabled静态改进已部署并通过线上验收，以receipt为准。本文不是上线验收记录。
+更新日期：2026 年 10 月 17 日。状态：CF-03 P1 进行中、未验收；CPU生产门槛未通过，不发布API。代码及CLI修复均已推送并通过CI；默认disabled静态改进已部署并通过线上验收，以receipt为准。本文不是上线验收记录。
 
-10月16日：第11节sampler及第12节固定Cloudflare管理adapter已实现并通过主Agent review和本地验证；12.3兼容修正后共192项Node、8项Python通过。云轮目前仅一次settings只读、业务0/D1=0，按12.3计划核验接续；不能把本地集成通过当CPU通过。
+10月16–17日：第11节sampler及第12节固定Cloudflare管理adapter已实现并通过主Agent review；12.3兼容修正后共192项Node、8项Python通过，两CI成功。只读云预检因admissions实际276超过计划上界256而停止，业务0、写入0；本轮不再接续采样，关闭核验及实际消耗见12.4。不能把本地集成通过当CPU通过。
 
 静态改进发布时本地验证为138项Node、8项Python通过；metadata真实DOM 11项与account真实DOM 9项断言通过。check/production D1已独立建立，check schema与002保守预算迁移已应用并回读，production库仍空。production secrets仅在本地生成，未安装Worker或写入auth；check Worker有四个secrets；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。多轮云HTTP安全/CAS/撤销及合成导入、snapshot保留override通过，原子20并发争用最后1额度仅1个成功。CPU结果、账号共享R2证据、生产登录/文件与reader闭环仍未达门槛。源码提交 `0ae8825` 已推送；Cloudflare CI `38724875134` 构建 artifact 成功，Pages CI `38724875089` 成功。首次真实静态 CLI 在任何 Cloudflare 写入前遇到入口循环并停止；CLI修复已通过主 Agent review，新增两项真实独立进程 static/API CLI smoke后总计138项Node与8项Python全通过。CLI修复提交 `3e1aa89` 已推送；Cloudflare CI `38725881041` 构建成功、部署按预期跳过，Pages CI `38725881116` 成功。默认disabled的静态改进已通过本机受控发布及线上验收：首次网络检查完成1248项后中断，随后仅恢复剩余56项，合计1304项HEAD均为200；32项GET与本地字节及MIME一致，缺失页、`/api/health` 与 `/api` 均返回404，runtime保持disabled；线上账号页经真实Chrome DOM验证，凭证控件为disabled。
 
@@ -10,7 +10,7 @@
 
 最后一次同窗只读取得平台aggregate requests=21、errors=0，CPU P50/P95/P99/max=2.090/4.387/4.835/4.835ms，sampleInterval=1、同一version；分析器仍判 `unknown/incomplete_evidence`，保留 `group_aggregate_count_mismatch`、`ambiguous_attribution`、`missing_request_traffic`，不能凭aggregate低值判通过。平台max现已可取，原始逐请求CPU序列仍缺；HTTP/1与HTTP/2负载不可直接用于优化性能因果比较。本轮云分支结束，不加预算或采样；最终账本business48/100、explicitManagement84/90、D1management38/40，另有1次受控helper部署（内部HTTP未精确计数）。关闭证据确认check auth=0、active=0、入口disabled；最终只读不改变状态，生产API未启用、主站静态不变。
 
-下一优先级先固化并测试受控sampler，完整收集两轮业务请求后再等待analytics，核验真实CAS及满批维护覆盖；形成新计划后再考虑下一云轮，不直接追加采样或优化。 CPU/CF-03仍未验收通过；R2条件汇总授权已执行，但新鲜完整证据仍不足，无原文件上传。
+下一优先级是以新鲜表基数另立有界验收计划，再完整收集两轮业务请求、等待analytics并核验真实CAS与满批维护；sampler和固定manager已完成本地验收，不直接接续已停止轮或现场扩大上界。 CPU/CF-03仍未验收通过；R2条件汇总授权已执行，但新鲜完整证据仍不足，无原文件上传。
 
 本文只保存在仓库，不加入 `scripts/export-docs.mjs` 的公开文档白名单。实际账号 ID、数据库 ID、对象 key、选中文件 ID、密钥和原始验收记录只保存在被忽略的 `.local/`。本文不读取或复制真实 `.env` / `.local` 数据。
 
@@ -531,3 +531,15 @@ Sol/high交付固定manager与14项专项测试；主Agent复审关闭后禁止�
 helper review、全套验证及CI通过后，允许一次有界的只读前置接续：仅当原receipt证明business0/D1=0/management1且未进入sampler时，独占创建continuation记录并沿用已有管理计数及原始证据，再核查settings/tails。run-start与首次失败原样保留，不加42业务、44管理/20D1总预算，不重放已发送业务或mutation。若仍有未知状态立即停止，不再续接。后续实际采集与关闭完全沿12.2。
 
 Sol/high交付纯解析helper及5项测试；主Agent审阅通过，192项Node与8项Python全部通过。明确区分属性缺省与null/畸形/显式开启，测试同时检查package-lock、实际安装版本及SDK远端归一化源码，升级不能静默沿用旧契约。私有operator接续由Sol复审：原始run-start/第一次停止/evidence保留、continuation独占，计划与表上界完全相同，旧rawBytes须为安全整数并与原始证据字节数相符；管理账本从1继续，不归零。构建、隐私检查及远端CI通过后才执行接续。
+
+### 12.4 本轮只读停止与关闭核验（2026-10-17）
+
+`2b96e40`及`1beed5a`已推送；最新Cloudflare CI `38845522076`成功、部署跳过，Pages CI `38845521906`成功。12.3的单次接续通过settings/tails前置后，在只读数据库预检停止：44个schema对象及002 SQL均匹配，10月16日预检记录auth=0、active sessions=0，但admissions=276超过固定上界256，其余表未越界。按12.2不扩大上界、不写fixture、不恢复auth/entry、不再接续本轮；没有业务HTTP或analytics样本，CPU仍unknown。
+
+截至停止及settings/tails后置核对，累计management=8、D1 management=2、business=0；16项数据库查询全部成功，原始meta合计670行读、0行写。sampler中的actual管理meta为0是投影在基数校验失败前未返回，不能解释为平台零消耗；原始证据保留在私有目录。未进入任何mutation，因此不执行无必要的关闭写入。
+
+收尾计划及结果：Sol/high实现私有一次性核验脚本，主Agent完成review及无网络dry-run后执行一次固定check的subdomain GET，确认workers.dev与preview均关闭。请求前独占、fsync保存management=9预留，30秒超时、无重试、共享20MiB证据上限；最终累计management=9/44、D1 management=2/20、business=0/42，670行读、0行写。原operator停止证据原样保留，最终账本追加在 `final-verify-start.json` / `final-verify-result.json`；没有重启采样或修改云配置。auth=0/active=0来自10月16日预检记录，本次仅新鲜核验入口，证据时间分别保存，不将旧auth读伪称本次D1回读。
+
+本次主站只读复核：runtime返回200且apiMode=disabled，`/api/health`返回404，Pages回退首页返回200。
+
+交付只更新仓库计划，按commit→push→既有CI验证；不改变公开文档白名单或主站部署。代码已通过192项Node、8项Python、disabled构建、公开产物/真实secret检查和1304项静态检查；本次仅修改本计划，复用同源完整验证；再次执行verify:public通过（1318项产物），diff检查通过，远端CI结果以交付报告为准。失败保留当前可用静态部署，记录可revert；生产API仍关闭，无R2上传、AI调用或资源配置写入。下一轮必须先读取新鲜基数并重新审阅成本与预算，不把当前已停止轮改成更大上界后续跑。
