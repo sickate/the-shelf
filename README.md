@@ -1,6 +1,6 @@
 # The Shelf 电子书架
 
-The Shelf 是公开展示个人电子书收藏、按权限提供下载和在线阅读、并支持按需 AI 问答的书库。第一版以不增加现金支出为约束：静态网页现由 Cloudflare Workers Static Assets 托管，GitHub Pages 保留回退；电子书使用免费存储额度，AI 接入已有服务。业务后端的生产部署位置尚未选定；paw 用于开发。
+The Shelf 是公开展示个人电子书收藏、按权限提供下载和在线阅读、并支持按需 AI 问答的书库。优先使用免费资源；用户已接受确有必要时承担 The Shelf 合理超额费用。静态网页现由 Cloudflare Workers Static Assets 托管，GitHub Pages 保留回退；AI 接入已有服务。业务后端的生产部署位置尚未选定；paw 用于开发。
 
 CF-02 静态迁移已上线到 https://the-shelf.iamzhutuo.workers.dev/。Cloudflare Workers 上只有公开静态资源，没有 API bindings；静态资源与所有书籍、文档入口已完成线上验收。GitHub Pages 工作流和站点保留为回退。Cloudflare CI 已构建并上传 artifact，但因单 Worker 专用 token 尚未配置，自动部署默认关闭；本机受控发布可用。CF-03 登录、私人阅读及业务 API 仍未上线。优先级与验收见[开发计划](docs/development-plan.md)。
 
