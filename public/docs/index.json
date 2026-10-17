@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-17T09:59:13.376Z",
-  "version": "f06ff7750eb9355ef87db37d36e0ad2537efa499bf65bf9baa22e8c7b06a8c18",
+  "generatedAt": "2026-10-17T10:12:31.190Z",
+  "version": "4f75b7b1ecb2643fa1a92f52a2ba378504e98dd05d85aa0dadab21477045bd6c",
   "basePath": "/",
   "documents": [
     {
@@ -62,8 +62,8 @@
       "id": "ai",
       "title": "The Shelf AI 问答与总结",
       "description": "AI 按所有者请求执行。导入只准备文件和检索数据，打开页面只读取已有结果。书内问答、全书总结和作者资料使用不同的材料来源。",
-      "updatedAt": "2026-10-13",
-      "version": "2d00b82a3735111eb6de780997dd7ee26975ac463fc1c79fe1cc7eada7651547",
+      "updatedAt": "2026-10-17",
+      "version": "2f526a2ce88f69e8cba5c0243978b96c7f4beb15d5b6c82f69aeb6c6b0ced01c",
       "htmlPath": "/docs/ai/",
       "rawPath": "/docs/raw/ai.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/ai/",
@@ -107,7 +107,7 @@
       "title": "The Shelf 开发计划",
       "description": "第一版已交付真实收藏书架、公开文档，以及可在本机运行的私人阅读与按需 AI 后端。CF-02 已将静态网站迁到 Cloudflare Workers Static Assets；GitHub 保存代码，GitHub Pages 保留为回退站点。业务 API、登录和私人阅读仍未迁移。",
       "updatedAt": "2026-10-17",
-      "version": "a2ed64f364e63afac28aea1f3bf99ad200a96108cd34cb8de9c7eccd02d385ed",
+      "version": "303ebcbd3d2142518ea2a7c729dc4f1f57111a06966ba4f0ac3df2a488725162",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",
@@ -118,7 +118,7 @@
       "title": "The Shelf 数据与接口契约",
       "description": "静态网站只消费经过筛选的公开目录和文档数据，后端单独读取私人文件映射。此契约统一导入、网页与后台实现，字段变更要同步消费方和验证。",
       "updatedAt": "2026-10-14",
-      "version": "f50f646ef34e33097897fbf2e9c5e321d2ef33a5cffd0c737dc9b1a69f1223f9",
+      "version": "b14c5c39ada86141401dafdf1537cf8aca130eb62d58ff278c1261581f651c57",
       "htmlPath": "/docs/contracts/",
       "rawPath": "/docs/raw/contracts.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/contracts/",

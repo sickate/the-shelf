@@ -34,6 +34,28 @@ Object.assign(messages, {
   pdf_extraction_unavailable: "PDF 正文提取工具尚未准备。",
   file_changed: "源文件与登记信息不一致，请重新导入后再试。",
   file_unavailable: "源文件当前不可用。",
+  prepared_pin_invalid: "尚未准备并选定可用正文版本，请先准备并选择正文。",
+  prepared_source_mismatch: "来源记录已变化，请重新准备正文。",
+  prepared_selection_conflict: "正文选择刚刚发生变化，请刷新后重新选择。",
+  prepared_replace_required: "已有正文版本需要明确替换后才能继续。",
+  prepared_package_unavailable:
+    "已选正文版本不可用或校验失败，请重新准备并选择。",
+  prepared_permissions:
+    "无法安全读取已选正文版本，请检查本机权限后重新准备并选择。",
+  prepared_unsafe_path:
+    "正文文件位置不安全，已停止读取；请重新准备并选择正文。",
+  prepared_changed: "正文版本在读取时发生变化，请重新准备并选择。",
+  prepared_io_failed: "读取正文版本时遇到本机错误，请稍后重新准备并选择。",
+  prepared_text_invalid: "正文版本校验失败，请重新准备并选择。",
+  prepared_text_invalid_bytes: "正文版本校验失败，请重新准备并选择。",
+  prepared_text_size_limit: "正文版本超过可读取大小，请重新准备并选择。",
+  prepared_text_invalid_expected:
+    "尚未准备并选定可用正文版本，请先准备并选择正文。",
+  prepared_text_invalid_encoding: "正文版本校验失败，请重新准备并选择。",
+  prepared_text_source_mismatch: "来源记录已变化，请重新准备正文。",
+  prepared_text_hash_mismatch: "已选正文版本校验失败，请重新准备并选择。",
+  prepared_text_noncanonical: "已选正文版本校验失败，请重新准备并选择。",
+  invalid_text_retrieval: "正文检索请求无效，请刷新后重试。",
 });
 export const explainCode = (code: string) => messages[code] || code;
 const configured = import.meta.env.PUBLIC_SHELF_API_URL;

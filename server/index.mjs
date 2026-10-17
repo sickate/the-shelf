@@ -13,6 +13,7 @@ import {
   publicBook,
 } from "./storage.mjs";
 import { JobQueue, publishedJob } from "./jobs.mjs";
+import { overlayPreparedPins } from "./prepared-text.mjs";
 const mime = {
   PDF: "application/pdf",
   EPUB: "application/epub+zip",
@@ -36,11 +37,13 @@ async function body(req) {
 }
 export async function createServer(config = getConfig(), options = {}) {
   await fs.mkdir(config.stateDir, { recursive: true, mode: 0o700 });
-  await fs.chmod(config.stateDir, 0o700);
   const catalog =
       options.catalog || (await loadJson(config.catalogPath, { books: [] })),
-    manifest =
-      options.manifest || (await loadJson(config.manifestPath, { files: {} }));
+    manifest = await overlayPreparedPins(
+      options.manifest || (await loadJson(config.manifestPath, { files: {} })),
+      config.stateDir,
+    );
+  await fs.chmod(config.stateDir, 0o700);
   const overridePath = path.join(config.stateDir, "overrides.json");
   let overrides = await loadJson(overridePath, { schemaVersion: 1, books: {} });
   for (const book of catalog.books) {

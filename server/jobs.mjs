@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import { ApiError, validateFile, presign } from "./storage.mjs";
 import { aiConfigured, r2Configured } from "./config.mjs";
+import { preparedChunks, snapshotPreparedSource } from "./prepared-text.mjs";
+import { rankTextChunks } from "../shared/text-retrieval.mjs";
 const exec = promisify(execFile),
   digest = (s) => createHash("sha256").update(s).digest("hex");
 const privateJob = (row) => {
@@ -14,7 +16,48 @@ const privateJob = (row) => {
   const j = JSON.parse(row.data);
   delete j.input;
   delete j.fingerprint;
+  delete j.preparedSource;
+  j.sources = (j.sources || []).map(sourceReference);
   return j;
+};
+const sourceReference = (source) => {
+  const result = Object.fromEntries(
+    [
+      "label",
+      "locator",
+      "fileId",
+      "versionHash",
+      "url",
+      "retrievedAt",
+      "license",
+    ]
+      .filter((key) => typeof source[key] === "string")
+      .map((key) => [key, source[key]]),
+  );
+  if (Number.isSafeInteger(source.chunkIndex) && source.chunkIndex >= 0)
+    result.chunkIndex = source.chunkIndex;
+  const loc = source.sourceLocator;
+  if (
+    loc &&
+    ["pdf-page", "epub-spine"].includes(loc.type) &&
+    Number.isSafeInteger(loc.start) &&
+    loc.start >= 0 &&
+    Number.isSafeInteger(loc.end) &&
+    loc.end > loc.start &&
+    (loc.type === "pdf-page"
+      ? Number.isSafeInteger(loc.page) && loc.page >= 1
+      : Number.isSafeInteger(loc.spineIndex) && loc.spineIndex >= 0)
+  ) {
+    result.sourceLocator = {
+      type: loc.type,
+      ...(loc.type === "pdf-page"
+        ? { page: loc.page }
+        : { spineIndex: loc.spineIndex }),
+      start: loc.start,
+      end: loc.end,
+    };
+  }
+  return result;
 };
 export const publishedJob = (j) => ({
   id: j.id,
@@ -25,7 +68,7 @@ export const publishedJob = (j) => ({
   updatedAt: j.updatedAt,
   content: j.content,
   error: null,
-  sources: j.sources,
+  sources: (j.sources || []).map(sourceReference),
   published: true,
   coverage: j.coverage,
 });
@@ -106,7 +149,13 @@ export async function getChunks(
   config,
   fetchImpl = fetch,
   consumeR2 = () => {},
+  frozenSource = undefined,
 ) {
+  const pin =
+    frozenSource === undefined
+      ? snapshotPreparedSource(book, manifest)
+      : frozenSource;
+  if (pin !== null) return preparedChunks(config.stateDir, pin);
   const candidates = (book.files || []).filter(
     (f) => manifest.files?.[f.id]?.eligibility === "candidate",
   );
@@ -334,11 +383,17 @@ export class JobQueue {
       question: input.operation === "question" ? input.question.trim() : null,
       chapter: input.operation === "chapter_summary" ? input.chapter : null,
     };
+    const preparedSource =
+      clean.operation === "author"
+        ? null
+        : snapshotPreparedSource(book, this.manifest);
     const versions = (book.files || []).map((f) => {
       const e = this.manifest.files?.[f.id];
       return [f.id, e?.sizeBytes, e?.mtimeNs, e?.textPath];
     });
-    const fingerprint = digest(JSON.stringify([book.id, versions, clean]));
+    const fingerprint = digest(
+      JSON.stringify([book.id, preparedSource || versions, clean]),
+    );
     const existing = this.db
       .prepare(
         "SELECT * FROM jobs WHERE fingerprint=? AND status IN ('queued','running')",
@@ -365,6 +420,7 @@ export class JobQueue {
       published: false,
       usage: { calls: 0, tokens: [] },
       input: clean,
+      preparedSource,
       fingerprint,
     };
     this.save(j);
@@ -495,26 +551,11 @@ export class JobQueue {
       this.config,
       this.fetch,
       () => this.r2Access(),
+      j.preparedSource ?? null,
     );
     let chosen = chunks;
     if (j.operation === "question") {
-      const terms = [
-        ...new Set(j.input.question.match(/[\p{L}\p{N}]{2,}/gu) || []),
-      ];
-      const chinese = j.input.question.match(/[\p{Script=Han}]+/gu) || [];
-      for (const s of chinese)
-        for (let i = 0; i < s.length - 1; i++) terms.push(s.slice(i, i + 2));
-      chosen = chunks
-        .map((c) => ({
-          ...c,
-          score: terms.reduce(
-            (n, t) => n + (c.text.includes(t) ? t.length : 0),
-            0,
-          ),
-        }))
-        .sort((a, b) => b.score - a.score)
-        .filter((c) => c.score > 0)
-        .slice(0, 5);
+      chosen = rankTextChunks(chunks, j.input.question);
       if (!chosen.length) throw new ApiError("no_relevant_source", 409);
     }
     if (j.operation === "chapter_summary") {
@@ -523,11 +564,7 @@ export class JobQueue {
       chosen = chunks.filter((c) => c.label === label);
       if (!chosen.length) throw new ApiError("chapter_not_found", 404);
     }
-    j.sources = chosen.map(({ label, locator, fileId }) => ({
-      label,
-      locator,
-      fileId,
-    }));
+    j.sources = chosen.map(sourceReference);
     j.coverage = {
       totalChunks: chunks.length,
       selectedChunks: chosen.length,
@@ -545,6 +582,16 @@ export class JobQueue {
             .filter(
               (x) => x.operation === "question" && x.status === "completed",
             )
+            .filter(
+              (x) =>
+                !j.preparedSource ||
+                (x.sources?.length > 0 &&
+                  x.sources.every(
+                    (source) =>
+                      source.fileId === j.preparedSource.fileId &&
+                      source.versionHash === j.preparedSource.versionHash,
+                  )),
+            )
             .slice(0, 3)
             .map((x) => ({ answer: x.content.slice(0, 2000) })),
           materials: chosen,
@@ -557,10 +604,11 @@ export class JobQueue {
     for (const chunk of chosen) {
       let group = groups.at(-1);
       if (!group || group.text.length + chunk.text.length > 30000) {
-        group = { text: "", label: chunk.label, chunks: 0 };
+        group = { text: "", label: chunk.label, chunks: 0, sources: [] };
         groups.push(group);
       }
       group.text += `\n[${chunk.label} / ${chunk.locator}]\n${chunk.text}`;
+      group.sources.push(sourceReference(chunk));
       group.chunks++;
     }
     const required = groups.length + (groups.length > 1 ? 1 : 0);
@@ -595,7 +643,11 @@ export class JobQueue {
         this.db
           .prepare("INSERT INTO partials VALUES(?,?,?)")
           .run(j.id, i, content);
-      summaries.push({ label: groups[i].label, content });
+      summaries.push({
+        label: groups[i].label,
+        content,
+        sources: groups[i].sources,
+      });
       covered += groups[i].chunks;
       j.coverage.completedChunks = covered;
       this.save(j);

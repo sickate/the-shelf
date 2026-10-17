@@ -25,7 +25,8 @@
     "cf:library": "node scripts/cf-library.mjs",
     "build:cloudflare:api": "SHELF_CF_API_MODE=same-origin node scripts/build-cloudflare.mjs",
     "test:metadata:browser": "node scripts/metadata-browser-fixture.mjs",
-    "prepare:text": "node scripts/prepare-text.mjs"
+    "prepare:text": "node scripts/prepare-text.mjs",
+    "text:select": "node scripts/select-text.mjs"
   },
   "dependencies": {
     "astro": "^7.3.8",

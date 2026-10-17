@@ -1,6 +1,6 @@
 # CF-04 本机正文准备
 
-此工具是 CF-04 的离线首步。它从现有私人 manifest 中显式选择一个 PDF 或 EPUB，在本项目的 `.local/prepared-text` 生成私有、版本化正文包。它不接入现有阅读或 AI 服务，不上传 R2，不创建 D1 索引，不访问网络，不读取 `.env`；云端同步与业务集成仍待独立实现和验收。
+此工具是 CF-04 的离线首步。它从现有私人 manifest 中显式选择一个 PDF 或 EPUB，在本项目的 `.local/prepared-text` 生成私有、版本化正文包。包现已接入本机 Node 问答、章节和全书总结任务，须通过下述独立命令明确选择版本。准备与选择命令不上传 R2、不创建 D1 索引、不访问网络、不读取 `.env`；云端同步和线上业务 API 仍待独立实现和验收。
 
 ## 使用
 
@@ -20,6 +20,31 @@ npm run prepare:text -- --file file_0123456789abcdef --manifest /absolute/privat
 示例 ID 是占位符；从已有私人 manifest 中选择 ID，不要把私人映射复制到公开 catalog。命令不遍历收藏、不自动选择下一本书。dry-run 不读取书籍内容、不运行正文提取器、不创建输出目录；它会启动本机 Python 文件检查 helper。损坏书籍可以通过 dry-run，真实格式与正文有效性只在 execute 时验证。
 
 成功 stdout 为单行 JSON，包含状态 `dry-run`、`prepared` 或 `reused`，以及选中 ID 和格式；execute 另返回版本、内容 hash、chunk 数、正文/包字节数和项目内相对 artifact 名。stdout 不返回源路径或正文。失败 exit 1，stderr 仅包含 `{"code":"…"}`，不会透传 Python/Poppler 的 stderr、异常、路径或正文。正文包属于私人数据，禁止提交 Git 或放入 public/dist/公开日志。
+
+## 选择供本机 AI 任务使用的版本
+
+`prepare:text --execute` 只生成包，不自动选择。取其 JSON 输出中的 `versionHash`，再显式指定同一个 file ID：
+
+```sh
+# 只验证包和原书来源、预览选择；不写选择文件。
+npm run text:select -- --file file_0123456789abcdef --version <versionHash>
+
+# 明确执行才记录选择。重启本机后端后，新任务使用这个版本。
+npm run text:select -- --file file_0123456789abcdef --version <versionHash> --execute
+
+# 更换已有选择须同时提供原版本，防止误覆盖或并发丢失其他选择。
+npm run text:select -- --file file_0123456789abcdef --version <newHash> --replace-version <oldHash> --execute
+```
+
+选择命令同样支持 `--manifest /absolute/private/manifest.json`，但不开放任意输出根目录。它会读取原书，核对 stat 与完整 SHA-256，并严格校验包契约、每块内容和版本；dry-run 也执行这些只读核验。源书不可用或与包不一致时拒绝选择。它不写原 manifest，只在 `.local/prepared-text/pins.json` 保存选中来源描述，不保存路径。目录须为 `0700`、文件为 `0600`；执行使用锁、整个选择文件的并发比较及原子替换，保留其他文件的选择。已有不同版本必须提供匹配的 `--replace-version`；并发变动返回冲突，应重新预览。
+
+同一本书有多个格式被选择时，任务按公开目录 `book.files` 顺序使用第一个有选择的文件；最后执行选择不会改变格式顺序。该书任一已声明的选择不合法都会阻断，不能靠另一个有效格式绕过。命令只选择指定文件的版本。
+
+本机后端启动时读取选择文件；修改后须重启，已排队任务的版本快照不会改变。任务运行只读取指定的包，无须再次访问原书，也不依赖启用本机原文件阅读。缺包、篡改或来源校验失败时在调用模型前停止，不扫描“最新包”，不回退其他格式或旧正文。没有版本选择的书仍使用原有正文路径。此功能不使包成为原书阅读器的输入，也不自动调用 AI；任务仍需登录、CSRF 和有效服务配置。
+
+问答引用及总结材料同时保留字符串定位、版本和结构化 PDF 页码或 EPUB spine 位置。章节总结按非空页/章节的顺序选择，引用仍显示真实页码/位置。私人任务 API 及主动发布结果不返回原文件 SHA-256、内部来源快照、源路径或包全文。发布的模型结果仍需所有者检查。
+
+选择失败以安全错误码返回；常见为 `prepared_source_mismatch`、`prepared_package_unavailable`、`prepared_replace_required`、`prepared_selection_conflict`、`prepared_permissions`、`prepared_unsafe_path` 和 `prepared_text_*` 校验错误。不要把私人参数或文件内容追加到日志。
 
 ## 包契约（schemaVersion 1）
 

@@ -50,8 +50,10 @@ POST /api/books/id/jobs 需要登录及 CSRF，接收 operation（question、cha
 
 GET /api/jobs/id 返回私人任务状态；GET /api/books/id/history 返回个人结果；POST /api/jobs/id/publish 接收 published 布尔值，返回更新结果。GET /api/books/id/published 匿名可读主动发布的结果。
 
-job 包含 id、bookId、operation、status（queued、running、completed、failed、uncertain）、createdAt、updatedAt、content、error、sources、published。输入保存在私人数据库，不返回日志。相同在途操作和输入去重。
+job 包含 id、bookId、operation、status（queued、running、completed、failed、uncertain）、createdAt、updatedAt、content、error、sources、published。输入保存在私人数据库，不返回日志。相同在途操作、输入和来源版本去重。
 
-服务端正文来自私人 textPath 或按需提取。PDF 使用 pdftotext，EPUB 按 spine 顺序读取 XML/HTML，MOBI 和 AZW3 需要先准备可用文本。未上传的大文件不会自动提取。长书全书总结分块逐段保存，按任务调用上限暂停；书内问答附来源。作者资料由独立允许的资料源获取，失败时不以模型猜测代替来源。
+服务端优先消费明确选定的私有正文包；启动时读取独立选择文件，创建任务时将来源与版本快照固化到私人数据库。同书多个格式均有选择时，以目录文件顺序中第一个选中格式为准。改选版本需重启后端，已排队任务继续原版本。包缺失、来源不符或校验失败时停止，不切换来源。未选择正文包时，保持私人 textPath 或按需提取的既有路径。PDF 使用 pdftotext，EPUB 按 spine 顺序读取 XML/HTML，MOBI 和 AZW3 需要先准备可用文本。未上传的大文件不会自动提取。长书全书总结分块逐段保存，按任务调用上限暂停；书内问答附来源。作者资料由独立允许的资料源获取，失败时不以模型猜测代替来源。
+
+正文包引用在原有字符串 `locator` 外增加 `sourceLocator`、`versionHash`、`chunkIndex`。PDF 使用真实页码，EPUB 使用从零开始的 spine 位置；`start`/`end` 是规范化章节正文的 Unicode code point 半开区间，不是源文件字节或 EPUB CFI。任务内来源快照、原文件 hash、源路径和包全文不进入任务 API；主动发布时来源字段经白名单筛选。此契约已接入本机 Node 后端，云端正文注册、同步和索引尚未实现。
 
 AI 调用只通过 /v1/tasks，使用 research_summary 或 topic_analysis，不使用旧聊天接口。请求 key、源文件路径和全文不返回公共网页。GET /api/books/id/published 输出专门筛选的公开字段。
