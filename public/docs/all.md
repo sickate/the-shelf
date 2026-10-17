@@ -519,6 +519,8 @@ CF-02 已验收：新站点全部 1,303 个静态资源与 1,264 个书籍详情
 
 本次收工检查点（10月17日）：受控sampler与固定Cloudflare管理adapter已完成并通过192项Node、8项Python测试。新云轮因表基数超过预设上界在只读预检停止，没有业务请求或数据写入，CPU仍未验收。下次先从[CF-03实施计划第12.5节](https://github.com/sickate/the-shelf/blob/main/docs/cf03-plan.md#125-下次从这里接续2026-10-17收工检查点)读取交接，再按新鲜基数另立有界验收计划；不重跑已停止轮。该计划仅在仓库维护，不加入网站文档白名单。
 
+10月17日接续：已先制定CF-03计划第13节的独立只读预检，Sol/high负责固定工具与私有operator，主Agent负责review、验证与执行。先取得固定check的新鲜schema、表基数与关闭/观测状态，预检预算计入后续采样总门槛；没有完成成本与免费余量复核前不启动业务采样，不启用生产API。
+
 ## 技术与边界
 
 当前静态网站采用 Astro 和 TypeScript，后端采用 Node.js 内置 HTTP 与 SQLite，导入使用 Python 标准库。运行需要 Node.js 24 及以上、Python 3.9 及以上；本机 PDF 文本准备可使用 pdftotext，MOBI 转换需可选的 Calibre。

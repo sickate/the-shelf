@@ -558,3 +558,25 @@ Sol/high交付纯解析helper及5项测试；主Agent审阅通过，192项Node�
 **下次第一件事：**先写新的有界预检计划及只读预算，读取固定check的新鲜schema、全表基数、auth/active、版本及entry状态，再按新鲜基数审阅成本公式、固定上界与收尾预留。不要现场放大256后继续已停止轮，也不要清理旧admissions来迎合上界；若新鲜观测不满足新计划仍停止。新云轮须独立目录/ledger、防重放，保持原100k读/15k写及费用边界，前置settings/tails与观测任务核查照旧。计划与工具review、适用测试/构建/隐私检查及CI通过后，再在既有授权内执行，不重复索要同一项目授权。
 
 **待验收与可选改进：**CPU gate仍unknown，下一轮需完整21×2真实HTTP、CAS双mutation、40次API准入、两批满额维护和完整analytics证据；不能挑旧低aggregate或用本地模拟判通过。manager在投影拒绝时丢失安全错误码及已知meta的传递可另立离线小任务，主Agent审阅后再交Sol实现；它不改变本轮670/0事实，也不是放宽基数的理由。CF-03生产登录/私人阅读仍未上线，R2仍须新鲜完整用量证据且逐文件上传；CF-04和真实AI继续等待，不新增现金支出、不把paw改为生产服务器。
+
+## 13. 新鲜状态只读预检（2026-10-17，本地验收完成，待独立云端执行）
+
+目标：接续12.5，以独立证据取得固定check环境的新鲜schema、全表有界基数、auth/active、部署版本、绑定、入口及观测配置。当前sampler和manager已完成；本节不代表CPU或CF-03验收通过。复杂度高，固定只读工具及私有operator由gpt-6.1-sol / high实现，主Agent负责计划、逐项review、集成测试、云端执行与交付。
+
+范围与方案：沿用明确的项目环境、deploy allowlist和candidate源码hash证据，不读取所有者access key。新增独立、防重放的私有目录/ledger，任何HTTP前先持久化预留；默认dry-run无网络。只允许固定check的settings、tails、deployments、D1 identity、固定只读SQL batch和subdomain；settings/tails可在结束时各独立读一次，共最多8次管理HTTP、其中2次D1管理，超时30秒、无重试、redirect:error、单响应最多1MiB、原始证据总计8MiB。只读POST /query不代表允许任意SQL：SQL从当前schema生成固定表名及字段，只读聚合，禁止接收SQL/URL参数，保留每项provider meta及错误状态。
+
+读写预算：预检保守预留最多20,000行读、0行写；每张项目表最多探测1,024行并返回有界计数，达到截断上限即unknown并停止，不将截断值当真实全表基数。schema/认证聚合也须有界且不得返回私人行内容或凭证。预留不等于平台已计费行数，实测meta独立汇总，超出预留或未知立即停止，不隐瞒已发生消耗。未来采样轮须把本次实际/保守消耗纳入累计100,000读/15,000写总门槛，不能以拆分预检重复获取额度。
+
+依赖与验收：先由Sol核对既有schema、固定manager及平台官方只读契约，实现无网络测试，覆盖schema漂移、截断、错误meta、目标/版本/绑定不符、重定向/超时/大小限制、CI拒绝、符号链接、防重放和写盘失败。主Agent审阅全部请求与SQL后运行适用专项及全套Node/Python、disabled构建、verify:public、真实secret扫描和verify:static；工具commit→push→既有CI通过后在既有授权内执行一次预检。结果只公开安全聚合及状态，原始证据0700/0600留.local，不扩大文档发布白名单。
+
+明确不做：不接续/修改12.2旧轮、清理旧admissions、启用auth/入口、业务HTTP、analytics/profile/tail创建、重部署、production/R2/AI/Workflows操作，不改变业务Worker/schema或免费套餐。只读状态不符仍保留证据并停止；不凭旧auth状态宣称新鲜关闭，也不进行未预算的补救写入。
+
+下一依赖：预检成功后，主Agent按新鲜完整基数重新审阅采样成本、固定上界、关闭预留及账号免费余量证据，再另写独立采样计划。未完成这些条件不能自动发送业务样本。失败保留现有静态站及check状态，工具代码可revert；不回滚私人数据或真实计数。Cloudflare CI部署继续关闭，Pages按现有回退流程发布；本次不发布业务API。
+
+### 13.1 工具交付与本地验收
+
+Sol/high完成固定只读模块 `scripts/cf-cpu-preflight.mjs`、私有 `.local/cf03/preflight-20261017/operator.mjs` 与API/成本说明，另一Sol/high并行交付14项无网络专项测试。主Agent逐项review并要求修正迟到响应继续写盘、schema平台内部对象误判、非boolean execute误启用、错误响应基数完整性、声明响应大小及私有manifest目标可审计性；修正后复审通过。schema使用128行有界MATERIALIZED来源，只返回项目表关联SQL；13表计数与auth/session/marker合计17条固定SQL，不返回verifier或session hash。
+
+本地完整206项Node、8项Python通过；首跑因沙箱禁止127.0.0.1监听失败，在项目授权内允许临时本机端口后同套全过。默认disabled的Cloudflare构建1280页、verify:public 1318项产物、verify:static 1304项资源通过；独立真实secret扫描覆盖1435文件零命中，格式/diff检查通过。私有operator dry-run核验candidate三份源码hash及历史profile结束，未读取.env/owner key、未联网或创建执行账本。隐私扫描另行按固定路径读取凭证，仅用于离线匹配，不属于预检operator。
+
+工具提交前只读核对原交接提交3157562：Cloudflare CI 39002764865成功且部署跳过、Pages CI 39002764963成功；主站 `/data/runtime.json` 为disabled，`/api/health`为404。以上不是本次新工具远端CI或check新鲜预检结论。新工具commit→push→两CI成功后才执行第13节一次固定只读预检；结果及新鲜时间另记13.2。CPU仍unknown，无业务HTTP、R2上传、AI调用或云配置写入。

@@ -440,3 +440,74 @@ or by itself prove cloud CPU acceptance. Synthetic tests cover allowed omissions
 explicit disabled metadata, wrong versions, null/types, enabled flags, logpush
 and consumer failures; original private settings evidence remains the authority
 for a separately reviewed, budget-preserving continuation.
+
+## Independent read-only fresh-state preflight
+
+`scripts/cf-cpu-preflight.mjs` exports `preflightPreview()`,
+`runReadonlyPreflight(options)` and `createPreflightJournal(...)`. Only literal
+`execute:true` permits requests. Dry-run reads no credentials and sends no HTTP.
+The private local operator is a separate reviewed file under `.local`; it checks
+candidate source hashes, the explicit deploy allowlist and historical profile
+completion. It never opens an owner access key. Historical receipts establish
+candidate/history only; they do not establish fresh auth, entry or CPU evidence.
+
+The fixed order is settings, tails, deployments, D1 identity, one read-only SQL
+batch, subdomain, settings, tails: at most eight management HTTP requests including
+two D1 calls. Only the SQL batch uses POST. There is no arbitrary URL, SQL,
+resource-listing, business request, mutation, retry or cleanup-write interface.
+Settings use the existing binding validator and pinned Wrangler observation
+contract above. Both tails reads must return an empty list; the deployed candidate
+must have exactly one version at 100%; identity must match the distinct check DB.
+Entry and previews must already be disabled. A mismatch preserves available
+private evidence and stops; it does not repair cloud state.
+
+The batch contains 17 statements. Each of 13 fixed project tables is counted
+through an inner `LIMIT 1024`; auth and sessions independently use the same
+bounded source before aggregation/filtering, and return only counts, booleans and
+a generation. No verifier, session hash, key, row contents or other credential is
+selected. The schema marker is also bounded. A count of exactly 1024 is
+**unknown**, never a complete table cardinality. Schema uses a materialized source
+of at most 128 `sqlite_master` rows, then returns only objects associated with
+project tables, including extra indexes and triggers. Every returned object
+reports the bounded source count; source saturation stops. This permits platform
+internal objects without returning their SQL or overlooking project schema drift.
+The actual normalized project SQL must match current schema plus migration 002.
+
+The 20,000-read reservation covers 13 × 1024 table probes, 2 × 1024 auth/session
+aggregation probes, 1024 marker rows, and a conservative allowance for materialized
+schema/source/projection work and indexed metadata operations. The direct bounded
+row terms total 16,384 before schema/slack. Zero writes are permitted. These are
+conservative review estimates, **not a formal SQLite planner or Cloudflare billing
+upper-bound theorem**. Limits bound probes and returned data; actual platform meta
+remains authoritative. Every available query meta is saved even if another item
+fails, is malformed, or later projection rejects schema/auth/cardinality. Missing
+meta marks completeness false; unknown consumption is never a measured zero.
+Read overflow or any reported write stops. Future sampling must include this
+preflight's consumed/reserved cost within the existing cumulative 100k/15k gate.
+
+Before every HTTP, the operator journal exclusively creates and fsyncs a private
+ledger reservation; `run-start.json` blocks replay permanently. Files are 0600
+under validated 0700 `.local` parents, opened with exclusive creation and
+`O_NOFOLLOW`; symlinks and unsafe modes fail closed. The private start manifest
+records actual account/check DB/Worker targets, candidate and local module hashes.
+Raw response bodies are saved before provider/JSON/projection validation, with
+at most 1 MiB per response and 8 MiB total. HTTP uses `redirect:error`, a maximum
+30-second timeout and no retries. Late fetch/stream results after abort cannot
+start further evidence writes or requests. A persistence failure is terminal;
+there are no subsequent read requests or cleanup writes. A write already in
+progress when a deadline fires cannot be cancelled by JavaScript.
+
+The endpoint contracts reuse the reviewed fixed manager's
+[official D1 query contract](https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/query/),
+[deployments API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/)
+and [subdomain API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/subdomain/).
+The installed official Cloudflare SDK bundled in pinned Wrangler 4.151.0 also
+implements D1 query as POST at `cli.js:90460`, and tails listing as GET at
+`cli.js:117862`; no bundled code is executed to discover an endpoint. The browser
+lookup tool was unavailable during this implementation; that tool failure is not
+an API 404. Analytics freshness and sampling remain governed by the separate
+[Workers metrics documentation](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/);
+this preflight makes no analytics request and cannot pass the CPU gate.
+
+Run `node --test tests/cf-cpu-preflight.test.mjs` for offline tests. SQLite fixture
+meta is synthetic and supplies no actual cloud usage or acceptance evidence.
