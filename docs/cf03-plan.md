@@ -559,7 +559,7 @@ Sol/high交付纯解析helper及5项测试；主Agent审阅通过，192项Node�
 
 **待验收与可选改进：**CPU gate仍unknown，下一轮需完整21×2真实HTTP、CAS双mutation、40次API准入、两批满额维护和完整analytics证据；不能挑旧低aggregate或用本地模拟判通过。manager在投影拒绝时丢失安全错误码及已知meta的传递可另立离线小任务，主Agent审阅后再交Sol实现；它不改变本轮670/0事实，也不是放宽基数的理由。CF-03生产登录/私人阅读仍未上线，R2仍须新鲜完整用量证据且逐文件上传；CF-04和真实AI继续等待，不新增现金支出、不把paw改为生产服务器。
 
-## 13. 新鲜状态只读预检（2026-10-17，本地验收完成，待独立云端执行）
+## 13. 新鲜状态只读预检（2026-10-17，已完成）
 
 目标：接续12.5，以独立证据取得固定check环境的新鲜schema、全表有界基数、auth/active、部署版本、绑定、入口及观测配置。当前sampler和manager已完成；本节不代表CPU或CF-03验收通过。复杂度高，固定只读工具及私有operator由gpt-6.1-sol / high实现，主Agent负责计划、逐项review、集成测试、云端执行与交付。
 
@@ -580,3 +580,29 @@ Sol/high完成固定只读模块 `scripts/cf-cpu-preflight.mjs`、私有 `.local
 本地完整206项Node、8项Python通过；首跑因沙箱禁止127.0.0.1监听失败，在项目授权内允许临时本机端口后同套全过。默认disabled的Cloudflare构建1280页、verify:public 1318项产物、verify:static 1304项资源通过；独立真实secret扫描覆盖1435文件零命中，格式/diff检查通过。私有operator dry-run核验candidate三份源码hash及历史profile结束，未读取.env/owner key、未联网或创建执行账本。隐私扫描另行按固定路径读取凭证，仅用于离线匹配，不属于预检operator。
 
 工具提交前只读核对原交接提交3157562：Cloudflare CI 39002764865成功且部署跳过、Pages CI 39002764963成功；主站 `/data/runtime.json` 为disabled，`/api/health`为404。以上不是本次新工具远端CI或check新鲜预检结论。新工具commit→push→两CI成功后才执行第13节一次固定只读预检；结果及新鲜时间另记13.2。CPU仍unknown，无业务HTTP、R2上传、AI调用或云配置写入。
+
+### 13.2 新鲜只读结果
+
+工具5f2c4b5已推送，Cloudflare CI 39015577802与Pages CI 39015577777均成功。2026-10-17 07:59:12–07:59:16 UTC仅执行一次第13节预检，8/8管理HTTP成功，其中2次D1；17项SQL的原始meta完整，实际837行读、0行写。独立账本和原始证据位于 `.local/cf03/preflight-20261017/`，最终状态 `ledger-17.json`；不得重新执行该operator或删除run-start。
+
+固定候选版本、DB身份、schema/002匹配；auth关闭、generation24、active sessions0；workers.dev与preview均关闭，前后settings观测关闭且tails为空。新鲜表基数：admissions276、counters218、sessions48、catalog_books9、metadata_overrides9；auth_config/library_schema/catalog_imports/catalog_import_rows各1，public_state2，file_registry/storage_state/upload_reservations各0。计数均未截断；预检没有业务HTTP、配置写入、上传或analytics，因此CPU仍unknown。
+
+## 14. 基于新鲜基数的独立CPU采样（预算复核通过，共享额度证据未过，未执行）
+
+目标：在第13节新鲜状态上审阅独立21×2采样轮。旧12.2轮永久封存，绝不接续或清理旧admissions。仅复用同一已部署candidate和已完成的sampler/manager，不改业务Worker/schema，不增加候选/profile/真实书籍/模型调用或付费计划。复杂度高，由Sol/high实现新的私有operator并作独立成本/安全审阅，主Agent集成review、预算复核与实际执行。
+
+拟定独立上界：沿12.2其他表上界，admissions改为384（新鲜276）；counters512、sessions128、catalog_books/metadata_overrides各32、catalog_import_rows16、file_registry4、upload_reservations8，其余各4。采用原schema成本公式与增长180/400/68/2/2，不改变SQL、维护规模、20次连续准入/轮或CPU门槛。离线dry-run为42业务、28管理（含最多9 analytics）、12 D1，保守71,292读/10,516写；加第13节完整20,000读预留，合并91,292读/10,516写，仍低于100,000/15,000，不能拆分重复使用预算。业务预留与平台实测meta继续分列。
+
+新轮拟 `.local/cf03/sampler-round-20261017/`，独立run-start/nonce/ledger、防重放，无continue入口。采样子预算business42、explicitManagement44、D1 management20、原始证据20MiB；含前置只读轮后累计最多52管理/22 D1，读写总门槛不变。正常最多40管理/18 D1，另4/2仅受review收尾补救，不自动重试mutation。sampler预留28管理/12D1，额外settings/tails前后四次只读；每次真实HTTP先持久预留，失败也计数。首mutation前完整预留两批维护及四次关闭/回读。执行前再次核验candidate/source hash、schema/表上界、auth/active与entry、前置settings/tails及历史profile已结束；任一不符停止，不现场放大上界。
+
+费用与证据门槛：先独立审阅第13节证据与成本，并复核既有Free环境/项目免费额度记录及共享账号用量未知的影响。仅有91,292/10,516计划值不能证明账号整体剩余额度；不得读取未授权Volt或账号其他资源来补证，不能把unknown改成保证免费。若现有证据不足以满足不增加现金支出和计划额度门槛，停在离线准备，不启用auth/entry。该结论须在本节记录后才决定是否执行，不能仅凭生成operator越过门槛。
+
+通过前置门槛后的验收步骤：固定H2完整两轮，各含真实CAS双mutation，40 API准入及两批满额维护；42 HTTP结束后有界分片等300000ms，首轮/后轮/合并三个固定窗口各最多3读，不补业务、不扩大窗口。P95<=5ms、max<10ms、errors=0，完整证据才pass，缺失仍unknown。每个已进入mutation分支有界finally关闭auth、增加generation撤销会话、关闭entry/preview并独立回读；关闭失败按补救预算review处理，不隐瞒未核验项。生产API保持disabled。新工具/计划先本地验证及commit→push→既有CI成功再执行；失败保留静态站，代码可revert，不回滚私人数据或真实计数。
+
+### 14.1 独立复核结论与接续门槛
+
+Sol/high独立复算与主Agent复核一致：全部13表新鲜基数在新独立上界内，累计保守91,292读/10,516写通过原100,000/15,000门槛。但第13节receipt仅证明check库837读/0写，没有共享账号当天Workers请求、D1读写的已用/剩余量；旧12.2明确unknown，不能改作新鲜余量证明。现有条件性账号纯汇总授权仅覆盖R2，不能默认为Workers/D1授权。按第13/14节门槛，停在离线计划，不创建新采样执行账本、不读取owner key、不启用auth/entry。
+
+最小待补范围是目标账号当前Free计费状态、UTC计费日与观测时间，以及Workers当日请求、D1当日rows_read/rows_written的纯数字已用/免费上限/剩余，包含共享项目及管理面消耗的完整性和滞后说明。只读纯汇总，不列Worker/DB/项目名或ID、不读Volt配置、SQL、日志、请求/IP、对象、正文或其他业务数据，不创建通用凭证/订阅。该范围超出现有R2条件授权，须另获明确授权后才能读取；字段不可得、采样/滞后或覆盖不完整仍为unknown，不用已知部分抵作完整余量。
+
+另发现验收与现有工具的差别：现有sampler最终只要求至少一轮 `coverage.fullBatch`，不是两批实际执行；预留两批/种入两批不能替代执行证据。继续实现新私有operator时须核验两轮 `maintenanceOrdinals` 合计恰为2，且沿用每批64/8/128/32真实减少证明；不足则标未验收，不追加业务或清理旧记录。本次仅记录该前置要求，不改变已交付sampler契约，不伪称已修复或完成新采样。
