@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-17T08:31:54.406Z",
+  "generatedAt": "2026-10-17T08:32:38.986Z",
   "version": "486981101060d6d230547c15091d9354101add4bc3d241a25316b6c6c4b8c38c",
   "basePath": "/",
   "documents": [
@@ -11,8 +11,8 @@
       "version": "a5c4f06c54fe7523a62b4a8867c1210df6b22b46ca8da55362e9235a5ffcd835",
       "htmlPath": "/docs/",
       "rawPath": "/docs/raw/overview.md",
-      "htmlUrl": "http://localhost:4321/docs/",
-      "rawUrl": "http://localhost:4321/docs/raw/overview.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/overview.md"
     },
     {
       "id": "product",
@@ -22,8 +22,8 @@
       "version": "99e033535b7614ac8ad42da5b6d31800dcd54b75711652b1f43375e4dfb01cae",
       "htmlPath": "/docs/product/",
       "rawPath": "/docs/raw/product.md",
-      "htmlUrl": "http://localhost:4321/docs/product/",
-      "rawUrl": "http://localhost:4321/docs/raw/product.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/product/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/product.md"
     },
     {
       "id": "architecture",
@@ -33,8 +33,8 @@
       "version": "d1ff21ccd5872eb0a0511fee77cac15b982ad4e2e9619f1508d45f01bb4e61e5",
       "htmlPath": "/docs/architecture/",
       "rawPath": "/docs/raw/architecture.md",
-      "htmlUrl": "http://localhost:4321/docs/architecture/",
-      "rawUrl": "http://localhost:4321/docs/raw/architecture.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/architecture/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/architecture.md"
     },
     {
       "id": "import-policy",
@@ -44,8 +44,8 @@
       "version": "37fb857e1b6e49c1aa7310291212913e6d7200104849fdf82087093309bd4bd3",
       "htmlPath": "/docs/import-policy/",
       "rawPath": "/docs/raw/import-policy.md",
-      "htmlUrl": "http://localhost:4321/docs/import-policy/",
-      "rawUrl": "http://localhost:4321/docs/raw/import-policy.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/import-policy/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/import-policy.md"
     },
     {
       "id": "inventory",
@@ -55,8 +55,8 @@
       "version": "fac979cd232bc83b3b5a6cdde69481f32c3eb6a7667c5bfeb70d80b684c37950",
       "htmlPath": "/docs/inventory/",
       "rawPath": "/docs/raw/inventory.md",
-      "htmlUrl": "http://localhost:4321/docs/inventory/",
-      "rawUrl": "http://localhost:4321/docs/raw/inventory.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/inventory/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/inventory.md"
     },
     {
       "id": "ai",
@@ -66,8 +66,8 @@
       "version": "2d00b82a3735111eb6de780997dd7ee26975ac463fc1c79fe1cc7eada7651547",
       "htmlPath": "/docs/ai/",
       "rawPath": "/docs/raw/ai.md",
-      "htmlUrl": "http://localhost:4321/docs/ai/",
-      "rawUrl": "http://localhost:4321/docs/raw/ai.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/ai/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/ai.md"
     },
     {
       "id": "public-docs",
@@ -77,8 +77,8 @@
       "version": "5b5feb6717e4948af2b8e82425ebf86e7fd3244f9da0a9f0ce968ea2037e7126",
       "htmlPath": "/docs/public-docs/",
       "rawPath": "/docs/raw/public-docs.md",
-      "htmlUrl": "http://localhost:4321/docs/public-docs/",
-      "rawUrl": "http://localhost:4321/docs/raw/public-docs.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/public-docs/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/public-docs.md"
     },
     {
       "id": "implementation-plan",
@@ -88,8 +88,8 @@
       "version": "5a1e3cfb226121ee769dae0471dc1129ca72181d896990f2e1a169c51cac52c2",
       "htmlPath": "/docs/implementation-plan/",
       "rawPath": "/docs/raw/implementation-plan.md",
-      "htmlUrl": "http://localhost:4321/docs/implementation-plan/",
-      "rawUrl": "http://localhost:4321/docs/raw/implementation-plan.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/implementation-plan/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/implementation-plan.md"
     },
     {
       "id": "decisions",
@@ -99,8 +99,8 @@
       "version": "de2d82ca3e00cba8e9a6094d06a996d0a9059f3bb45078f78a3ae47ba06e3e01",
       "htmlPath": "/docs/decisions/",
       "rawPath": "/docs/raw/decisions.md",
-      "htmlUrl": "http://localhost:4321/docs/decisions/",
-      "rawUrl": "http://localhost:4321/docs/raw/decisions.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/decisions/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/decisions.md"
     },
     {
       "id": "development-plan",
@@ -110,8 +110,8 @@
       "version": "a335adc49fe9e39ce0a94b9041833d1e102c62a21623ed2931cde0f83aba3415",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
-      "htmlUrl": "http://localhost:4321/docs/development-plan/",
-      "rawUrl": "http://localhost:4321/docs/raw/development-plan.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/development-plan.md"
     },
     {
       "id": "contracts",
@@ -121,8 +121,8 @@
       "version": "f50f646ef34e33097897fbf2e9c5e321d2ef33a5cffd0c737dc9b1a69f1223f9",
       "htmlPath": "/docs/contracts/",
       "rawPath": "/docs/raw/contracts.md",
-      "htmlUrl": "http://localhost:4321/docs/contracts/",
-      "rawUrl": "http://localhost:4321/docs/raw/contracts.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/contracts/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/contracts.md"
     },
     {
       "id": "runbook",
@@ -132,8 +132,8 @@
       "version": "3eb5b5554b14c746e92139c8fb79feeb141d23ca6e57f411532e275e6168d70c",
       "htmlPath": "/docs/runbook/",
       "rawPath": "/docs/raw/runbook.md",
-      "htmlUrl": "http://localhost:4321/docs/runbook/",
-      "rawUrl": "http://localhost:4321/docs/raw/runbook.md"
+      "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/runbook/",
+      "rawUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/raw/runbook.md"
     }
   ]
 }
