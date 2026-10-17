@@ -2,9 +2,11 @@
 
 第一版已交付真实收藏书架、公开文档，以及可在本机运行的私人阅读与按需 AI 后端。CF-02 已将静态网站迁到 Cloudflare Workers Static Assets；GitHub 保存代码，GitHub Pages 保留为回退站点。业务 API、登录和私人阅读仍未迁移。
 
-更新日期：2026 年 10 月 15 日。阶段：首版已验证；CF-01 评估完成、鉴权需适配；CF-02 静态迁移完成；CF-03 实现与主要安全测试完成，生产 CPU 门槛未通过，API 未发布。
+更新日期：2026 年 10 月 17 日。阶段：首版已验证；CF-01 评估完成、鉴权需适配；CF-02 静态迁移完成；CF-03 实现与主要安全测试完成，生产 CPU 门槛未通过，API 未发布。
 
 实施按仓库根目录 `AGENTS.md` 的计划、分工、review、修正、验证与发布流程执行。主 Agent 负责规划、集成和最终验收；具体任务由主 Agent 评估难度后分配模型。下表模型与 effort 是建议起点，鉴权、安全、数据和 AI 的具体实现必须分配给 Sol；简单文档等任务可由 Luna 处理并经主 Agent review。实现完成、主 Agent review 通过、全部适用测试/构建/隐私检查通过后，达到本文迁移门槛的变更在既有授权内按提交、推送、现有 CI 部署、线上验证的顺序发布。
+
+本次收工检查点（10月17日）：受控sampler与固定Cloudflare管理adapter已完成并通过192项Node、8项Python测试。新云轮因表基数超过预设上界在只读预检停止，没有业务请求或数据写入，CPU仍未验收。下次先从[CF-03实施计划第12.5节](https://github.com/sickate/the-shelf/blob/main/docs/cf03-plan.md#125-下次从这里接续2026-10-17收工检查点)读取交接，再按新鲜基数另立有界验收计划；不重跑已停止轮。该计划仅在仓库维护，不加入网站文档白名单。
 
 ## 技术与边界
 
@@ -32,7 +34,7 @@
 | --- | --- | --- | --- | --- | --- |
 | CF-01 | P0，评估完成 | Cloudflare 免费后端最小验证 | 无 | gpt-6.1-sol / high | 记录 Workers 登录计算、D1 持久化、私有 R2 绑定与模拟 Workflow 长任务结果，给出继续或调整结论；结论不代表生产登录已通过 |
 | CF-02 | P1，完成 | 静态网站迁到 Workers Static Assets | CF-01 的静态部署与权限检查通过 | gpt-6-luna / medium（静态、CI 与 URL 验证）；gpt-6.1-sol / high（受控部署辅助工具） | Astro 静态站已发布至项目 Workers Static Assets；1303 项资源 HTTP/2 全部 200，页面、文档、内容、MIME 与 404 检查通过；GitHub Pages 保留回退 |
-| CF-03 | P1，进行中，未验收 | Workers + D1 登录与私人阅读 | CF-01、CF-02 | gpt-6.1-sol / high | 实现和本地安全测试已完成；独立 check/production D1 已建立，生产库仍空；云端安全、CAS、撤销和合成导入/快照主要检查通过。旧候选CPU失败；本候选aggregate低于阈值但证据不完整、整体unknown，warm与满批维护未验收；先固化并测试sampler。R2条件授权已执行但freshness不满足；API与真实文件能力不得发布或标为验收通过 |
+| CF-03 | P1，进行中，未验收 | Workers + D1 登录与私人阅读 | CF-01、CF-02 | gpt-6.1-sol / high | 实现和本地安全测试已完成；独立 check/production D1 已建立，生产库仍空；云端安全、CAS、撤销和合成导入/快照主要检查通过。旧候选CPU失败；本候选aggregate低于阈值但证据不完整、整体unknown，warm与满批维护未验收；sampler及固定manager已完成本地验收，新云轮因基数超界只读停止，下一步按新鲜基数另立计划。R2条件授权已执行但freshness不满足；API与真实文件能力不得发布或标为验收通过 |
 | CF-04 | P2，待开始 | 本机正文准备与云端检索数据 | CF-03 | gpt-6.1-sol / high | 在 paw 准备带页码或章节定位的正文，按文件同步到私有 R2；D1 保存必要索引与版本；缺少正文明确停用书内 AI，正文和索引不得进入静态产物 |
 | CF-05 | P2，待开始 | Workflows 持久任务与真实 AI 接入 | CF-01 的长任务验证、CF-04、独立配置的有效任务 Key | gpt-6.1-sol / high | 迁移任务状态、去重、预算和中间结果；保留全局串行与调用上限；验证问答、章节和全书总结、有来源的作者资料及主动发布，浏览器关闭后任务继续 |
 | CF-06 | P3，待开始 | 可靠性与后续体验 | 阅读和 AI 主流程验收 | gpt-6.1-sol / medium；涉及数据恢复或架构时 high | 优先完善上传结果核对、任务待确认处理和数据备份恢复；再按实际问题推进中文检索改进、跨设备阅读进度和网页上传管理 |
@@ -55,13 +57,13 @@ CF-01 评估结论支持继续 CF-02。静态部署配置、CI 与 URL 验证由
 
 最后一次同窗只读取得平台aggregate requests=21、errors=0，CPU P50/P95/P99/max=2.090/4.387/4.835/4.835ms，sampleInterval=1、同一version；分析器仍判 `unknown/incomplete_evidence`，保留 `group_aggregate_count_mismatch`、`ambiguous_attribution`、`missing_request_traffic`，不能凭aggregate低值判通过。平台max现已可取，原始逐请求CPU序列仍缺；HTTP/1与HTTP/2负载不可直接用于优化性能因果比较。本轮云分支结束，不加预算或采样；最终账本business48/100、explicitManagement84/90、D1management38/40，另有1次受控helper部署（内部HTTP未精确计数）。关闭证据确认check auth=0、active=0、入口disabled；最终只读不改变状态，生产API未启用、主站静态不变。
 
-下一优先级先固化并测试受控sampler，完整收集两轮业务请求后再等待analytics，核验真实CAS及满批维护覆盖；形成新计划后再考虑下一云轮，不直接追加采样或优化。 CPU/CF-03仍未验收通过，CF-04与AI继续等待。
+下一优先级是按新鲜表基数另立有界验收计划，再用已固化sampler完整收集两轮业务请求、等待analytics并核验真实CAS及满批维护；不接续已停止轮，不现场扩大上界。 CPU/CF-03仍未验收通过，CF-04与AI继续等待。
 
 静态改进发布时CF-03记录（2026年10月15日）：当时本地完整验证为138项Node与8项Python通过；metadata和account真实DOM分别通过11与9项断言。独立check D1已用官方Wrangler应用schema并完成002保守预算迁移回读；check与production D1独立建立，production库仍为空。production secrets仅本地生成，尚未安装到Worker或写入auth；check Worker已配置四个secret；check已关闭 `auth_config.enabled`、递增generation并撤销所有会话，workers.dev与preview URLs已禁用，D1和secrets保留未删除。应用使用现有同桶专用R2读写凭证。多轮云端每轮21个HTTP请求的安全、CAS和撤销检查通过；原子20并发争用最后一个额度仅1个成功；真实合成导入与snapshot保留override通过。源码提交 `0ae8825` 已推送；Cloudflare CI `38724875134` 构建 artifact 成功，Pages CI `38724875089` 成功。首次真实静态 CLI 在任何 Cloudflare 写入前遇到入口循环并停止；CLI修复已通过主 Agent review，新增两项真实独立进程 static/API CLI smoke后总计138项Node与8项Python全通过。CLI修复提交 `3e1aa89` 已推送；Cloudflare CI `38725881041` 构建成功、部署按预期跳过，Pages CI `38725881116` 成功。默认disabled的静态改进已通过本机受控发布及线上验收：首次网络检查完成1248项后中断，随后仅恢复剩余56项，合计1304项HEAD均为200；32项GET与本地字节及MIME一致，缺失页、`/api/health` 与 `/api` 均返回404，runtime保持disabled；线上账号页经真实Chrome DOM验证，凭证控件为disabled。
 
-上一轮CPU记录（当时门槛未通过）：历史首轮P95/P99为5.634/13.184ms；SQL优化版本冷启动为5.313/10.873ms、热请求为4.236/5.830ms，合并42样本为5.313/10.873ms；最后小优化版本包含部署后首次访问的首轮21请求P50/P95/P99为2.512/6.554/10.981ms、同版本后续完整热轮21请求（不能保证复用同一isolate），HTTP/66断言通过，CPU P50/P95/P99为2.341/6.017/6.180ms，errors均为0；两轮P95都未达到5ms目标。六个版本/轮次共126请求，另有2次tail健康检查，共128次（低于150）；该最终候选版本首轮21次与同版本后续完整热轮21次，共42次。P99不是最大值，当时未取得平台max，tail连接后没有CPU events；本轮已补查平台max，原始逐请求CPU序列仍缺。保留每个版本全部结果，不挑较低样本。当前下一步改为先固化并测试sampler及完整采样流程，仍不改5ms目标。不得放宽5ms P95目标、降低凭证强度或付费绕过。
+上一轮CPU记录（当时门槛未通过）：历史首轮P95/P99为5.634/13.184ms；SQL优化版本冷启动为5.313/10.873ms、热请求为4.236/5.830ms，合并42样本为5.313/10.873ms；最后小优化版本包含部署后首次访问的首轮21请求P50/P95/P99为2.512/6.554/10.981ms、同版本后续完整热轮21请求（不能保证复用同一isolate），HTTP/66断言通过，CPU P50/P95/P99为2.341/6.017/6.180ms，errors均为0；两轮P95都未达到5ms目标。六个版本/轮次共126请求，另有2次tail健康检查，共128次（低于150）；该最终候选版本首轮21次与同版本后续完整热轮21次，共42次。P99不是最大值，当时未取得平台max，tail连接后没有CPU events；本轮已补查平台max，原始逐请求CPU序列仍缺。保留每个版本全部结果，不挑较低样本。sampler现已完成本地验收，下一步按新鲜基数另立有界云计划，仍不改5ms目标。不得放宽5ms P95目标、降低凭证强度或付费绕过。
 
-按当前保守API估算，每日D1写入上界为36,220行（CLI初始化诊断另计）；同账号Volt用量未知，因此不能保证账号免费额度。R2账号汇总只读条件授权已核查并执行；最新存储点不满足5分钟freshness，尚无合格上传证据。仅选择的EPUB（1,799,179 bytes）与PDF（2,588,862 bytes）dry-plan均因`account_storage_unknown`阻止；没有上传原书，也没有调用真实AI。The Shelf与Volt共享Cloudflare账号，Volt无R2（已有只读核查），Workers/D1额度共享。下一优先级先固化并测试受控sampler，完整收集两轮业务请求后再等待analytics，核验真实CAS及满批维护覆盖；形成新计划后再考虑下一云轮，不直接追加采样或优化。仍按计划、Sol实现、主Agent review及云端采样执行。CF-04和AI继续等待CF-03验收。代码及CLI修复已推送并通过CI，默认disabled静态改进已部署并通过线上验收，以receipt为准；API不发布，当前主站仍为CF-02静态站，CI Cloudflare仅生成artifact，Pages回退保持disabled。
+按当前保守API估算，每日D1写入上界为36,220行（CLI初始化诊断另计）；同账号Volt用量未知，因此不能保证账号免费额度。R2账号汇总只读条件授权已核查并执行；最新存储点不满足5分钟freshness，尚无合格上传证据。仅选择的EPUB（1,799,179 bytes）与PDF（2,588,862 bytes）dry-plan均因`account_storage_unknown`阻止；没有上传原书，也没有调用真实AI。The Shelf与Volt共享Cloudflare账号，Volt无R2（已有只读核查），Workers/D1额度共享。下一优先级是按新鲜表基数另立有界验收计划，再用已固化sampler完整收集两轮业务请求、等待analytics并核验真实CAS及满批维护；不接续已停止轮，不现场扩大上界。仍按计划、Sol实现、主Agent review及云端采样执行。CF-04和AI继续等待CF-03验收。代码及CLI修复已推送并通过CI，默认disabled静态改进已部署并通过线上验收，以receipt为准；API不发布，当前主站仍为CF-02静态站，CI Cloudflare仅生成artifact，Pages回退保持disabled。
 
 各阶段由主 Agent review，运行适用测试、构建、公开产物隐私检查及集成验收后按计划发布。凭证留在被忽略的私人配置；CI 只上传公开产物。保留 GitHub Pages 的回退发布方式，不开通付费计划。诊断对象与临时记录在验收后清理，仓库运维记录不纳入网站文档白名单，私有验收证据留在 `.local/`。
 

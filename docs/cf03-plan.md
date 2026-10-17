@@ -486,7 +486,7 @@ Sol/high交付 `scripts/cf-cpu-sampler.mjs`、固定check的 `cf-cpu-sampler-h2.
 
 此阶段只交付可测试的controller/HTTP2传输及管理适配器契约，没有真实Cloudflare管理adapter或可直接执行的云CLI。下一阶段须先由Sol实现固定管理adapter，明确每个真实HTTP、SQL batch、资源核验及保守读写成本，再由主Agent review、另立新云轮预算和观测任务前置核查。原10.10轮已关闭，不能重置或追加；CF-03、生产登录/阅读、R2新鲜证据与CF-04/AI门槛仍未通过。
 
-## 12. 固定check管理适配器与下一轮验收准备（2026-10-16，本地验收完成）
+## 12. 固定check管理适配器与新云轮（2026-10-16–17，本地验收完成、云轮只读停止）
 
 目标：补齐第11节未实现的真实Cloudflare管理adapter，使固定sampler能通过明确的一次HTTP管理命令读取/修改独立check环境。当前controller及H2已通过172项Node、8项Python测试，提交 `26a6aa4` 已推送，Cloudflare CI `38837786472` 成功且部署跳过，Pages CI `38837786363` 成功；生产API仍关闭。复杂度高，鉴权/凭证、持久状态和管理边界由 `gpt-6.1-sol / high` 具体实现，主Agent负责方案、逐次review、集成、实际账号操作和发布。
 
@@ -508,7 +508,7 @@ Sol/high交付 `scripts/cf-cpu-sampler.mjs`、固定check的 `cf-cpu-sampler-h2.
 
 Sol/high交付固定manager与14项专项测试；主Agent复审关闭后禁止重新启用、按真实rowid核验CAS、schema/002逐对象SQL对照、全批meta求和、非法/缺失分组仍保留有效高aggregate，以及非事务部分提交后不重试/不回滚旧账本。计数增长按慢请求最坏跨分钟估算为400，成本公式及其隔离前提见[sampler操作说明](../scripts/cf-cpu-sampler.md)。完整187项Node、8项Python、格式检查、disabled构建、公开产物检查、真实secret扫描及1304项静态资源检查通过；远端CI以本轮交付报告为准。
 
-### 12.2 单次新云轮（计划，待工具CI及私有operator review通过）
+### 12.2 单次新云轮（已执行并停止，结果见12.4）
 
 本轮独立于已关闭第10轮，旧账本不重置。只使用收尾receipt固定的同一已部署candidate UUID，私有operator核对其worker/security/core三份源码hash未变；不重新部署，不换凭证。账号来自项目私有环境、DB来自既有deploy allowlist，所有标识与原始证据留 `.local/cf03/manager-round-20261016/`（0700/0600）。默认dry-run已完成无网络本地验证，真实execute独占创建run-start，拒绝重放/续跑。
 
@@ -543,3 +543,18 @@ Sol/high交付纯解析helper及5项测试；主Agent审阅通过，192项Node�
 本次主站只读复核：runtime返回200且apiMode=disabled，`/api/health`返回404，Pages回退首页返回200。
 
 交付只更新仓库计划，按commit→push→既有CI验证；不改变公开文档白名单或主站部署。代码已通过192项Node、8项Python、disabled构建、公开产物/真实secret检查和1304项静态检查；本次仅修改本计划，复用同源完整验证；再次执行verify:public通过（1318项产物），diff检查通过，远端CI结果以交付报告为准。失败保留当前可用静态部署，记录可revert；生产API仍关闭，无R2上传、AI调用或资源配置写入。下一轮必须先读取新鲜基数并重新审阅成本与预算，不把当前已停止轮改成更大上界后续跑。
+
+
+### 12.5 下次从这里接续（2026-10-17收工检查点）
+
+本次仅保存交接文档，不启动下一轮开发、采样或部署迁移。任务难度低，由主Agent维护既有记录并review；后续涉及管理工具、鉴权、持久状态和采样安全的实现仍须由Sol/high负责。验收是下次仅凭文档即可找到源码、最后账本、停止原因与下一步，不依赖聊天历史；文档检查及适用构建/隐私检查通过后commit→push→现有CI，Cloudflare自动部署继续关闭。若文档有误以修订或revert回退，不修改云端状态或私人数据。
+
+**阅读顺序与完成项：**先读根目录AGENTS.md、开发计划和本节，再读11–12.4及 `scripts/cf-cpu-sampler.md`。sampler/H2传输已固化（`26a6aa4`），固定管理adapter已完成（`2b96e40`），锁定Wrangler远端observability缺省语义的兼容修正已完成（`1beed5a`）。完整192项Node、8项Python、disabled构建及隐私/静态检查通过。收尾记录 `fba0df7` 已推送，Cloudflare CI `39000386135`成功且部署跳过，Pages CI `39000386094`部署成功；其后只读复核主站runtime disabled、API 404、Pages 200。无需重新实现sampler，不把这些结果当作CPU验收通过。
+
+**停止点与账本：**12.2轮已结束，不可重跑operator的 `--execute` / `--continue-preflight`，不可删除独占标记或重置账本。admissions=276超过原上界256；这是10月16日观测值，下次不能当新鲜基数。最终累计management9、D1 management2、business0、实际D1读670/写0；旧第10轮business48、management84、D1 management38、helper1另行保留，两个轮次不混算。auth=0/active=0为旧预检证据，最终只读GET确认entry/preview关闭；下次启用前须重新核验状态，不能沿用旧时间证明当前状态。
+
+**证据入口（均被忽略，不提交原始内容）：**本机 `.local/cf03/manager-round-20261016/` 内的 `run-start.json` 保存原计划及上界，`attempt-1.json` / `continuation-start.json`保留首次失败与唯一接续记录，`operator-state.json` / `sampler.json`保留基数拦截；`provider-3.json`是16项数据库只读结果及670/0原始meta，`final-verify-start.json` / `final-verify-provider.json` / `final-verify-result.json`是追加管理9的预留、入口证据与最终账本。既有deploy allowlist在 `.local/cf03/deploy.json`，同candidate的版本与源码hash基准在 `.local/cf03/cpu-round-q2yZiT/candidate-h2-result.json`。只按明确文件读取，不遍历或打印凭证；私有目录0700、文件0600。若下次换机器缺少这些证据，先恢复受授权的项目私有资料并校验权限，不从仓库推测真实标识或伪造旧receipt。
+
+**下次第一件事：**先写新的有界预检计划及只读预算，读取固定check的新鲜schema、全表基数、auth/active、版本及entry状态，再按新鲜基数审阅成本公式、固定上界与收尾预留。不要现场放大256后继续已停止轮，也不要清理旧admissions来迎合上界；若新鲜观测不满足新计划仍停止。新云轮须独立目录/ledger、防重放，保持原100k读/15k写及费用边界，前置settings/tails与观测任务核查照旧。计划与工具review、适用测试/构建/隐私检查及CI通过后，再在既有授权内执行，不重复索要同一项目授权。
+
+**待验收与可选改进：**CPU gate仍unknown，下一轮需完整21×2真实HTTP、CAS双mutation、40次API准入、两批满额维护和完整analytics证据；不能挑旧低aggregate或用本地模拟判通过。manager在投影拒绝时丢失安全错误码及已知meta的传递可另立离线小任务，主Agent审阅后再交Sol实现；它不改变本轮670/0事实，也不是放宽基数的理由。CF-03生产登录/私人阅读仍未上线，R2仍须新鲜完整用量证据且逐文件上传；CF-04和真实AI继续等待，不新增现金支出、不把paw改为生产服务器。
