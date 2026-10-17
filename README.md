@@ -27,6 +27,8 @@ npm run server
 
 复制和导入不会修改源文件。超过 20 MB 的文件仍被登记，零字节文件标为异常。源路径、SQLite、提取正文和密钥均不进入仓库或静态发布包。
 
+为后续检索和 AI 准备正文，可使用 `npm run prepare:text -- --file <fileId>` 预览单个 PDF/EPUB；加 `--execute` 才提取并生成带页码或章节定位、来源指纹的私有版本包。文件 ID 来自导入清单，输出仅保存在 `.local/prepared-text/`，不改原文件或现有清单。PDF 需要 pdftotext，EPUB 使用 Python 标准库；命令说明见 [正文准备工具](scripts/prepare-text.md)。云端同步和真实 AI 接入仍待后续验收。
+
 ## 检查与发布
 
 ```sh
