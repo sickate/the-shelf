@@ -222,6 +222,8 @@ test("task adapter uses named nonstream tasks and never retries ambiguous failur
     assert.equal(input.kind, "topic_analysis");
     assert.equal(input.model, "gpt-luna");
     return {
+      status: 200,
+      headers: new Headers({ "Content-Type": "application/json" }),
       ok: true,
       json: async () => ({
         content: "依据材料的答复",
@@ -243,6 +245,8 @@ test("task adapter uses named nonstream tasks and never retries ambiguous failur
   assert.equal(count, 2);
   await assert.rejects(
     callTask(config, "x", "question", "gpt-luna", async () => ({
+      status: 200,
+      headers: new Headers({ "Content-Type": "application/json" }),
       ok: true,
       json: async () => ({ content: null }),
     })),
@@ -422,7 +426,9 @@ test("full summary persists every packed partial and reports real total coverage
       worker: false,
       fetchImpl: async () => {
         calls++;
-        return { ok: true, json: async () => ({ content: "完整材料总结" }) };
+        return new Response(JSON.stringify({ content: "完整材料总结" }), {
+          headers: { "Content-Type": "application/json" },
+        });
       },
     },
   );
@@ -591,6 +597,8 @@ test("task adapter refuses oversized upstream JSON before unbounded accumulation
   });
   await assert.rejects(
     callTask(config, "材料", "question", "gpt-luna", async () => ({
+      status: 200,
+      headers: new Headers({ "Content-Type": "application/json" }),
       ok: true,
       body: (async function* () {
         yield Buffer.alloc(1_000_001);

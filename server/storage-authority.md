@@ -1,6 +1,6 @@
 # 私有对象同步与共享预算（离线参考实现）
 
-`storage-authority.mjs` / `.sql` 提供本机 SQLite 预算账本，`object-sync.mjs` 提供可恢复的单对象同步协议。原书与正文、check 与 production 必须使用**同一个数据库实例与身份**，在 `BEGIN IMMEDIATE` 事务中争用余额。这是后续云迁移的可验证基础；目前没有 Cloudflare 客户端、生产适配器、CLI、自动上传或新环境配置，现有原书上传入口尚未切换。
+`storage-authority.mjs` / `.sql` 提供本机 SQLite 预算账本，`object-sync.mjs` 提供可恢复的单对象同步协议，`r2-object-store.mjs` 提供固定目标的 R2 S3 客户端。原书与正文、check 与 production 必须使用**同一个数据库实例与身份**，在 `BEGIN IMMEDIATE` 事务中争用余额。这是后续云迁移的可验证基础；R2 客户端目前只通过离线合成验收，没有生产预算适配器、CLI、自动上传或新环境配置，现有原书上传入口尚未切换。
 
 本文件不在网站文档发布清单内。不要把真实身份、迁移快照、对象登记、正文或数据库复制到公开目录或日志。
 
@@ -72,12 +72,22 @@ try {
 
 `privateRoot` 必须已存在且为 `0700`；目标 DB 必须在其内，祖先不能为符号链接，根目录下的中间目录同样须为 `0700`。数据库及已有 `-journal/-wal/-shm` 必须是 `0600` 的普通、单链接文件；不替用户修正旧权限。SQLite 打开前检查路径，受信任的私人目录由当前用户独占；本模块不提供对恶意同 UID 进程并发更换路径的隔离保证。
 
-`store` 是可信 I/O 适配器，精确包含 `target={accountId,bucket}` 与 `head/get/put` 方法，绑定固定账号/桶后使用；GET 必须返回 `ReadableStream<Uint8Array>`。适配器负责真实服务鉴权、请求 deadline、取消、条件请求和目标约束，不能隐式重试 PUT。当前模块限制字节数与流块数，没有真实网络的 deadline/abort 客户端；接入前须独立实现并验证这些边界。闭包中的外部配置属于适配器信任边界，不能靠复制 `target` 自动证明实际远端目标。
+`store` 是可信 I/O 适配器，精确包含 `target={accountId,bucket}` 与 `head/get/put` 方法，绑定固定账号/桶后使用；GET 必须返回 `ReadableStream<Uint8Array>`。适配器负责真实服务鉴权、请求 deadline、取消、条件请求和目标约束，不能隐式重试 PUT。闭包中的外部配置属于适配器信任边界，不能靠复制 `target` 自动证明实际远端目标。
+
+## 固定目标 R2 客户端（2026-10-21，离线验证）
+
+`createR2ObjectStore` 只接受显式账号、固定 `the-shelf-books` 桶、桶专用 S3 凭证、descriptor 白名单及受信任 `fetchImpl`。不读取环境、发现资源或创建桶；不提供列举、删除、批量、端点覆盖或 PUT 重试。账号和 descriptor 在创建时复制固定，PUT 字节在首次 await 前复制并通过完整对象校验。生产接入应显式注入无重试的原生 fetch；测试注入仅使用合成 transport，不能由 `target` 字段证明自定义 transport 的真实目标。
+
+请求使用 HTTPS 固定账号 S3 端点、`auto/s3` SigV4 和请求体 SHA-256，签名包含实际使用的条件与元数据头。PUT 必须携带 `If-None-Match: *`、正确 MIME、长度及 `x-amz-meta-sha256`；GET 必须携带初次 HEAD 的强 ETag `If-Match`。客户端拒绝重定向、非预期 URL、非200响应（仅 HEAD 404 表示当前缺失）、错误元数据、Range/压缩、流超限、截断及实际 hash 不符。GET 在成功 EOF 前不能视为验证成功；authority 随后仍独立验证完整字节和正文包结构，并进行第二次 HEAD。
+
+每次请求的 deadline 为1至60,000毫秒，覆盖 fetch、GET 消费间隔和完整流读取；超时或消费者取消同时 abort 请求并尝试取消底层流，取消自身挂起不阻塞调用方。源流缓冲区复用和消费者修改已交付 chunk 不改变已计算的 hash。错误只保留固定错误码，不转发服务正文、URL、凭证明文或异常消息。超时/丢响应仍须依赖持久 authority 的唯一 PUT 资格；客户端本身没有替代预算账本或重启恢复机制。
+
+2026-10-21 核对的官方依据：[S3 API兼容性](https://developers.cloudflare.com/r2/api/s3/api/)（HEAD/GET条件请求、端点及auto区域）、[PutObject条件扩展](https://developers.cloudflare.com/r2/api/s3/extensions/#conditional-operations-in-putobject)和[一致性模型](https://developers.cloudflare.com/r2/reference/consistency/#conditional-writes)，页面均标注2026-10-14更新。条件PUT在提交时原子判断，竞争同一不存在key的请求至多一个成功，其余返回412。未知PUT之后的HEAD 404仅证明读取时缺失，先前在途写仍可能提交，因此不释放预留、不自动重传。
 
 ## 验证与后续接入
 
 ```sh
-node --test tests/storage-authority.test.mjs
+node --test tests/storage-authority.test.mjs tests/r2-object-store.test.mjs
 ```
 
-测试只使用临时合成文件、真实 SQLite 和内存对象存储，验证预算、迁移回读、崩溃恢复、内容校验和并发；真实 Cloudflare、R2 与 AI 均未访问。后续接入顺序为：唯一远端 authority 设计及真实旧入口停写 → D1/远端适配和身份绑定 → 新鲜资源证据 → 单对象生产安全验收。此离线实现不代表正文已经上传、云端索引可用或生产业务 API 上线。
+测试只使用临时合成文件、真实 SQLite 和内存对象存储/合成 HTTP transport，验证预算、迁移回读、崩溃恢复、内容校验和并发；R2签名由独立WebCrypto重建验证，覆盖丢响应、真实关闭/重新打开SQLite、流取消/deadline及失败不登记。上述两文件共99项测试通过；没有访问真实Cloudflare资源、R2或AI，仅只读获取公开官方文档。后续接入顺序为：唯一远端 authority 设计及真实旧入口停写 → D1/远端适配和身份绑定 → 新鲜资源证据 → 单对象生产安全验收。此离线实现不代表正文已经上传、云端索引可用或生产业务 API 上线。

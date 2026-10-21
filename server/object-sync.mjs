@@ -44,7 +44,7 @@ export async function syncObject({
         reservationId,
         pinnedStore,
       );
-    authority.claimPut(pinnedIdentity, reservationId);
+    await authority.claimPut(pinnedIdentity, reservationId);
     // The durable CAS precedes the only PUT. Losing this response never retries it.
     await pinnedStore.put(
       validated.descriptor.objectKey,
@@ -63,7 +63,7 @@ export async function syncObject({
   } catch (error) {
     if (reservation) {
       try {
-        authority.markUncertain(pinnedIdentity, reservationId);
+        await authority.markUncertain(pinnedIdentity, reservationId);
       } catch {
         /* Original durable state retains the full reservation. */
       }

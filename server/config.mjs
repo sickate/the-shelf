@@ -33,7 +33,7 @@ export function getConfig(env = process.env, cwd = process.cwd()) {
     dailyCalls: n("SHELF_AI_DAILY_CALL_LIMIT", 20, 1000),
     jobCalls: n("SHELF_AI_JOB_CALL_LIMIT", 12, 100),
     queueLimit: n("SHELF_QUEUE_LIMIT", 30, 1000),
-    aiTimeout: n("SHELF_AI_TIMEOUT_MS", 850000, 1800000),
+    aiTimeout: n("SHELF_AI_TIMEOUT_MS", 900000, 900000),
     r2Account: env.SHELF_R2_ACCOUNT_ID || "",
     r2Bucket: env.SHELF_R2_BUCKET || "",
     r2AccessKey: env.SHELF_R2_ACCESS_KEY_ID || "",
