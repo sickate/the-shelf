@@ -2,6 +2,14 @@
 
 更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
 
+## 2026-10-22 发布恢复：2c74cc9 已推送
+
+后续实现的主Agent验收通过：版本工具116项独立专项、history+旧close80项、CLI+core19项；完整723项Node/8项Python零失败/零跳过。顺序disabled构建1280页、公开1318文件、静态1304资源和1493文件实际凭证扫描通过，秘密命中/不安全文件均0。日志仅保存在本机 `/tmp/shelf-followup-full-20261022.log`、`/tmp/shelf-version-main-20261022.log`、`/tmp/shelf-followup-build-20261022.log`。新版本/历史工具仍未真实执行，待本轮提交与两CI通过后先记录有界真实计划；原PATCH unknown、六guard、imported、书籍0和业务关闭状态不变。
+
+用户要求继续后续任务。网络恢复后，主Agent只读确认远端main仍为6cebed0，再通过已有GitHub登录的HTTPS通道推送至 `2c74cc94ef0b291a31100400f9b05a4d01131b23`。Cloudflare CI `39739955059` 成功，部署步骤skipped；Pages CI `39739955068` 的build/deploy均成功。主站curl固定GET回读runtime为schemaVersion=1/apiMode=disabled，API health为404；Python urllib一度返回403，未据此改判应用状态，改用curl独立核对。先前网络失败记录保留为历史，本次恢复不执行CF01云写、账本变更、AI或对象上传。
+
+Pages公开开发计划已用curl下载并与2c74cc9源文档逐字比较一致。主Agent另对固定本机CF01 evidence执行0600/O_NOFOLLOW/1MB及前后inode/mtime检查的只读聚合：24请求、1个storage run、8条start，其中1条无run ID且未决；未决mutation合计1，storage正向completed回执1。仅为本机证据现状，不将模糊POST归为storage/Workflow、不覆盖unknown、不当完整调度或排空证明；readyEligible=false。独立设计复核说明在 `docs/legacy-writer-closure-design.md`，不在公开白名单。
+
 ## 2026-10-22 最新云端验收：账本已导入，CF01关闭部分完成
 
 实现提交 `6cebed05a52ed8a3c7bff3b2568c1d884e226d00` 已推送，Cloudflare工作流 `39726393168` 与Pages工作流 `39726393083` 均成功；前者明确部署step skipped，只保存artifact，后者为静态回退部署。主Agent完整590项Node/8项Python通过，顺序disabled构建1280页、公开产物1318文件、静态资源1304项及真实凭证扫描1484文件通过，零跳过/秘密命中/不安全文件。主站仍9963771，不代表业务后端上线。

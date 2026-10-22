@@ -515,6 +515,32 @@ CF-02 已验收：新站点全部 1,303 个静态资源与 1,264 个书籍详情
 
 更新日期：2026 年 10 月 22 日。阶段：首版已验证；CF-01 评估完成、鉴权需适配；CF-02 静态迁移完成；CF-03 实现与主要安全测试完成，API 未发布；远端存储冻结已验收、空源账本已导入 imported，旧写能力闭包待验收，尚未上传书籍。
 
+## 2026-10-22 后续任务：恢复发布与旧能力收回替代方案
+
+目标与范围：接续本地 `2c74cc9`，先恢复GitHub发布和独立静态验收；随后解决固定CF01 Worker收回R2绑定的受支持方案。历史PATCH继续unknown，六guard、本机空R2配置和全部私有收据保留；不重跑close、旧PATCH、freeze或import，不上传书籍、不调用AI、不启用业务API、不改计费。R2完整用量证据及真正排空依然是ready和上传的独立前置。
+
+方案与依赖：主Agent先只读核对远端HEAD及网络；只在远端无分叉时推送既有已验收提交，等待两CI并核对Pages文档/主站disabled。与此同时，Sol/high研究固定官方OpenAPI及现有部署/回读代码，判断受支持的版本创建/部署接口能否精确保留当前100%部署的代码、四个非R2绑定（包括secret）、metadata、annotations和入口，并为历史unknown提供独立闭合依据；不能使用latest、不能猜测HTTP400终态。先提交可审查设计及风险/请求预算，主Agent确认契约后再细化实现，未确认前不新增云写路径。若官方契约不足，保持固定拒绝并说明具体缺口，继续可独立完成的离线工作。
+
+分工：主Agent负责发布恢复、计划、官方契约复核、集成及最终验收；替代接口和持久恢复设计分配 `gpt-6.1-sol / high`，范围仅固定CF01与相关离线测试/操作文档，依赖已保存unknown及固定资源。简单进度文档按需分配 `gpt-6-luna / medium`，依赖最终事实；不让文档代替真实验收。指定模型不可用不静默替换。
+
+独立设计复核分配另一 `gpt-6.1-sol / high`：只读检查旧CF01源码/调度账本、既有transport和ready契约，确定能否形成可信历史终态/进程连接/排空证明；只研究公开契约及项目代码，不读取其他项目业务数据、不云调用、不启动/停止进程、不修改authority或私人状态。输出明确可实现的证据链与不可证明缺项，供主Agent决定后续实现，不能以布尔值或任意等待替代事实。
+
+主Agent代码盘点发现本机 `cf-probe` CLI 的 `start storage`/`smoke` 仍可能读取配置并发送旧storage POST，尽管当前源码reserve/storageProbe已拒绝、远端guard也已生效。由上述Sol/high在设计交付后修正CLI：这两个入口在配置/锁/文件/网络IO前固定拒绝，内部start再作防御检查；历史poll/cleanup与crypto/Workflow诊断保留，不改私人evidence、云端代码和guard。用隔离临时fixture测试真实CLI及导出main，覆盖零IO/零fetch和原证据不变，再经主Agent完整验收发布；不对真实Worker发送负向探针。
+
+验收与验证：新设计须明确逐请求durable intent、上传/部署未知不重试、独立版本/代码/绑定/入口回读、固定对象身份与请求上限、secret消除和默认零IO。实现后主Agent独立review、专项及完整Node/Python测试，再顺序disabled构建、公开/静态和实际凭证扫描。全部门槛及对应CI通过后才另记真实动作的固定有界计划；此阶段没有云写授权范围之外的试探调用，也不把新版本/绑定观察当作drain证明。
+
+部署和回退：按commit→push→既有CI→线上静态验收推进；CF自动部署保持关闭，Pages仅静态回退。网络失败保留本地提交并记录未验收状态；实现失败可revert代码，不能恢复旧R2能力、删除unknown、清预算或回滚永久guard。新云动作如产生未知结果立即停止，只读恢复，不自动部署回旧版本。
+
+先行发布恢复已验收：远端从6cebed0推送至 `2c74cc94ef0b291a31100400f9b05a4d01131b23`，两CI `39739955059` / `39739955068` 成功；Cloudflare部署skipped，Pages build/deploy成功，公开开发计划字节与2c74cc9一致。curl回读主站runtime仍disabled、API health404。未重跑任何CF01云写、迁移、AI或上传。
+
+替代方案已由主Agent对固定OpenAPI版本创建JSON、具体UUID inherit、部署force参数及字段schema复核，细节见仓库内 `docs/cf01-version-capability-plan.md`（不公开）。实施由Sol/high负责独立 `cf01-version-close` 工具的create/deploy/status、合成测试和操作说明；create固定最多18HTTP/1版本POST且deploy=false，独立验明后才由另一次deploy最多20HTTP/1部署POST（force=false）执行；status最多14HTTP/0云写。只从当前100%部署取源UUID，只从持久化成功create响应取候选UUID；未知创建不再创建、不自动解锁部署，候选UUID丢失不靠list猜认。未知部署不重放，只读独立能力观察。旧close仅允许新增冻结内部helper导出以复用私有文件/transport validator，不改变原运行行为、六guard/schema/hash或旧状态解释。
+
+实施门槛补充：固定四个非R2绑定从具体源版本inherit，原模块字节/入口、受支持typed metadata及可写annotations精确保留，secret不读取/记录/重设。未知字段或assets/exports/migrations/containers等生命周期项出现即拒绝。共享storage-close锁，逐请求durable intent和0700/0600输入pin；新状态与收据独立，旧unknown只读，五expected hash原算法逐项匹配。API无CAS，单operator窗口及CI自动部署关闭是可信运维前提，预后回读只检测漂移，不声称阻止外部有权用户并发。当前只授权实施离线代码；真实create/deploy各在review、全验收及CI后另记有界计划再自动执行。
+
+历史证据采集补充实施：CLI修正经主Agent专项19项通过后，同一Sol/high继续交付固定本机CF01历史检查器，仅以有界只读读取原evidence，保留全部请求序号与有限方法/路径/结果分类，不再丢掉无run ID的POST。默认preview零IO，execute也零网络，不读.env，不修改原证据，不推断缺失body的run归属；输出聚合及私有安全投影，显式标出unattributed/pending/unknown，readyEligible与drainProven始终false。复用已有私有pin/存储helper，原文本/secret/result_json不落输出；纯parser及临时fixture覆盖敏感哨兵、额外/缺失/畸形字段、文件/目录置换和证据不变。它解决采集缺陷，不实现positive-terminal新source、不接入authority或ready；完整回归/构建/隐私/CI及主Agent验收后才实际读取固定私有文件。
+
+本轮实现已由主Agent独立review与验收：版本工具专项116项、历史检查器与旧close联合80项、CLI与core联合19项通过；完整723项Node及8项Python通过，零失败/取消/跳过。六guard及BASE_SCHEMA与HEAD逐字一致，旧close仅新增冻结helper导出及可选有界读取参数，默认2MB不变。所有真实CLI preview为零请求；GitHub中CF自动部署变量未设置，既有工作流继续跳过部署。当前尚无新CF01云调用、候选版本或部署；构建、隐私、提交和CI结果另记，不把本机全绿当实际绑定收回。
+
 ## 2026-10-22 恢复开发：冻结续验、导入与旧能力收口
 
 目标：从已提交的 `de20e30` 接续，先完成真实冻结负向验收和唯一账本的空源导入/独立回读，再以实际CF01库存为依据实现关闭旧写能力的下一步骤。当前只有schema/marker已实际确认，两个历史unknown仍保留，authority未初始化；本计划不把代码完成视为云端验收。

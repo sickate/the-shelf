@@ -67,6 +67,7 @@ async function run(argv) {
   };
   const describe = data => console.log(JSON.stringify({ runId: data.run?.run_id, kind: data.run?.kind, state: data.run?.state, networkCalls: data.run?.network_calls, mockCalls: data.run?.mock_calls, result: data.run?.result_json ? JSON.parse(data.run.result_json) : undefined, workflow: data.workflow?.status, cleaned: data.cleaned }));
   const start = async label => {
+    if (label === "storage") throw new Error("legacy_storage_migration_required");
     if (!Object.hasOwn(LABELS, label)) throw new Error("Expected storage, scrypt, pbkdf2, short, long or uncertain");
     const previous = evidence.runs.findLast(run => run.label === label && !run.cleaned);
     if (previous) { console.log("Existing run retained; polling without resending."); describe(await call("GET", `/v1/runs/${previous.runId}`)); return; }
@@ -92,6 +93,9 @@ async function run(argv) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  const [action, target, ...extra] = argv;
+  if ((action === "start" && target === "storage") || (action === "smoke" && !target && extra.length === 0))
+    throw new Error("legacy_storage_migration_required");
   await mkdir(path.dirname(EVIDENCE), { recursive: true, mode: 0o700 });
   const lockPath = `${EVIDENCE}.lock`;
   let lock;

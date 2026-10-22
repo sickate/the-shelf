@@ -554,7 +554,17 @@ async function privateStore(root, checkDirectories) {
         fail("cf01_close_private_file_changed");
     }
   };
-  const read = async (relative, optional = false) => {
+  const read = async (
+    relative,
+    optional = false,
+    max = CF01_CLOSE_LIMITS.responseBytes,
+  ) => {
+    if (
+      !Number.isSafeInteger(max) ||
+      max < 1 ||
+      max > CF01_CLOSE_LIMITS.responseBytes
+    )
+      fail("cf01_close_options_invalid");
     await checkDirectories();
     let before;
     try {
@@ -564,7 +574,7 @@ async function privateStore(root, checkDirectories) {
       pins.set(relative, null);
       return null;
     }
-    const raw = await readPrivate(root, relative);
+    const raw = await readPrivate(root, relative, max);
     const after = await fs.lstat(path.join(root, relative));
     if (!sameFile(before, after)) fail("cf01_close_private_file_changed");
     pins.set(relative, after);
@@ -1318,6 +1328,22 @@ export async function runCf01StorageClose({
     }
   }
 }
+// Internal, read-only reuse by the separately journaled fixed-version operator.
+// Existing close behavior, permanent SQL and historical hash interpretation stay unchanged.
+export const CF01_CLOSE_INTERNALS = Object.freeze({
+  pinReceiptDirectories,
+  privateStore,
+  readPrivate,
+  loadFixed,
+  boundedJson,
+  d1Rows,
+  normalizeBindings,
+  settingsView,
+  validateVersion,
+  deploymentView,
+  validateSchema,
+  validateCounts,
+});
 export async function main(argv = process.argv.slice(2)) {
   if (
     argv.length > 2 ||

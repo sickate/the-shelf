@@ -33,7 +33,7 @@ private. Wrangler may load `.env`; use `--env-file` explicitly when appropriate.
 ## Validation commands
 
 ```sh
-npm run cf:probe -- smoke
+npm run cf:probe -- start short
 npm run cf:probe -- poll short
 npm run cf:probe -- start scrypt
 npm run cf:probe -- start pbkdf2
@@ -46,8 +46,14 @@ npm run cf:probe -- poll uncertain
 npm run cf:probe -- cleanup all
 ```
 
-`smoke` writes/reads a 72-byte neutral R2 object, including a 5-byte Range read,
-then starts a 65-second Workflow. Each start returns after Workflow creation;
+`start storage` and `smoke` are frozen and return
+`legacy_storage_migration_required` before configuration, directories, locks,
+private evidence, or network access. Historically, `smoke` wrote/read a 72-byte
+neutral R2 object, including a 5-byte Range read, then started a 65-second
+Workflow. Use `start short` for the independent 65-second Workflow diagnostic.
+Historical storage runs can still be polled with `poll storage` and cleaned
+with `cleanup storage` when terminal. Storage writes have no override or fallback.
+Each Workflow start returns after Workflow creation;
 close the client and poll in another process after the requested delay. Start
 `long` after the short run completes or is cleaned. It makes a real private
 service-binding HTTP fetch that waits 840 seconds before returning. No
@@ -66,7 +72,8 @@ confirm no client remains active before removing the stale lock; do not restart
 an ambiguous request with a new ID.
 Polling is one GET per command, without an automatic request loop. Each client
 evidence file allows at most 512 requests. Deployment runs allow at most 12
-lifetime reservations: 4 storage, 4 Workflows, 2 scrypt and 2 PBKDF2. Only one
+lifetime reservations: 4 historical storage, 4 Workflows, 2 scrypt and 2 PBKDF2;
+new storage admission is disabled. Only one
 reserved/running/uncertain Workflow can exist at once. Cleanup terminates a
 Workflow first, deletes only its exact R2 key under
 `diagnostics/cf01/<UUID>/neutral.txt`, verifies deletion, then removes the run
@@ -105,7 +112,7 @@ iterations, which does not establish that every deployed runtime accepts it.
 ## Local checks
 
 ```sh
-node --test tests/cf-probe.test.mjs
+node --test tests/cf-probe.test.mjs tests/cf-probe-cli-freeze.test.mjs
 npx wrangler deploy --dry-run --config cloudflare/probe/wrangler.example.json --env-file cloudflare/probe/local.env.example --outdir "$(pwd)/.local/cf01/build"
 npx wrangler deploy --dry-run --config cloudflare/probe/wrangler.mock.example.json --env-file cloudflare/probe/local.env.example --outdir "$(pwd)/.local/cf01/mock-build"
 node scripts/cf-probe-local.mjs
@@ -115,4 +122,4 @@ Use isolated Wrangler local persistence under `.local/cf01/local-state` for any
 local D1/Worker execution. Never point Wrangler at existing Shelf SQLite files.
 The local runtime script uses in-memory D1/R2, a synthetic service response, and
 does not load `.env`. It verifies real workerd storage and cross-request behavior;
-the cloud smoke/long commands separately validate the actual mock network wait.
+the cloud short/long Workflow commands separately validate the actual mock network wait.
