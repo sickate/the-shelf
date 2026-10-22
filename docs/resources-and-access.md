@@ -2,6 +2,20 @@
 
 更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
 
+## 2026-10-22 最新云端验收：账本已导入，CF01关闭部分完成
+
+实现提交 `6cebed05a52ed8a3c7bff3b2568c1d884e226d00` 已推送，Cloudflare工作流 `39726393168` 与Pages工作流 `39726393083` 均成功；前者明确部署step skipped，只保存artifact，后者为静态回退部署。主Agent完整590项Node/8项Python通过，顺序disabled构建1280页、公开产物1318文件、静态资源1304项及真实凭证扫描1484文件通过，零跳过/秘密命中/不安全文件。主站仍9963771，不代表业务后端上线。
+
+CF01新工具真实status用9HTTP通过，私有收据为 `.local/cf01/storage-close-b019aeaa-2603-428b-9928-b2e0fd128927.json`。随后close运行 `.local/cf01/storage-close-93c327fc-5e75-4a9c-9f6c-abaf313f29a2.json` 共25HTTP，六条永久storage-only guard已落地并逐条回读，新探针精确拒绝且双表独立读回零行；原7条budget/1条storage墓碑未变，storage run和orphan均0。本机私有Wrangler固定R2项已原子改为空数组，文件0600，其余配置保留。第25请求settings PATCH返回HTTP400，以unknown保留并停止，不重发、不恢复guard或本机R2项。
+
+独立status收据 `.local/cf01/storage-close-04e53f47-3e7c-48a3-be6e-a0b647fbecb2.json` 用7HTTP确认六guard、原库存和关闭的workers.dev/preview，但CF_BUCKET仍存在，按 `cf01_close_patch_resolution_required` 阻断。原unknown未补判；实际cloudWriteFreeze/drain/upload均未证明。后续核对固定官方OpenAPI revision `d3e86eec17211653ca9bc18c0d4bfcace2904148`，确认settings inherit具体UUID不受支持；这不能追溯证明当次400的provider code或事务结果。修正代码删除全部PATCH构造与派发，预算设为0；即使全新状态，仍有R2时也在创建PATCH intent前固定拒绝，不改成latest。六guard和schema定义与已落地版本逐字一致，历史unknown及expected独立回读规则保留。本修正未再调用云管理接口。
+
+CF03另以 `post-cf01-close-20261022-6cebed0` 独立15HTTP status回读，authority保持imported，committed/reserved均0，旧两库来源及历史unknown保留。R2观察 `rest-observation-20261022-6cebed0` 共3HTTP成功，先复核Volt无R2条件；私有证据位于 `.local/r2-account-audit/rest-observation-20261022-6cebed0/`。REST四个存储类/状态的payload/metadata观察均0但无源时间；不相加、不视为合格总量。GraphQL最新sample在读取时约32.5分钟前，操作计数的采样/覆盖/计费状态仍unknown，accountEvidence=null、uploadEligible=false。
+
+接续必须先读本节及开发计划顶部，不重复close/原PATCH，不运行已不适配关闭后私有配置的旧audit来恢复能力。保留全部收据、unknown、本机配置与六guard；只读status不会凭等待时间解锁。书籍上传0、API/auth/私人云端阅读关闭；绑定收回、可信在途排空和合格R2证据仍待独立方案与验收。
+
+契约保护的本地验收：Sol/high专项68项通过，主Agent review与独立完整588项Node/8项Python通过，零失败/跳过；顺序disabled构建1280页、公开1318文件、静态1304资源及真实凭证扫描1484文件均通过，零秘密命中/不安全文件。待提交推送后以对应CI结果核对静态回退发布，不据此重试云端PATCH或宣称业务上线。
+
 ## 2026-10-22 恢复开发：真实迁移验收记录
 
 本轮从提交 `de20e307e9caee1540bef8146d12ef19f4c2b414` 接续。对应 Cloudflare artifact 工作流 `39723864943` 与 Pages 工作流 `39723864972` 均成功；Cloudflare 自动部署关闭。`storage-migrate` 与 `cf01-storage-audit` 专项测试共 56 项通过，零跳过。

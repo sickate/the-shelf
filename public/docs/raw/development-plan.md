@@ -20,6 +20,14 @@ R2实施补充：官方固定 `GET /accounts/{account}/r2/metrics` 提供无桶�
 
 后续实际验收：兼容检查点 `5c0a25d` 完整516项Node/8项Python、disabled构建/公开/静态/真实凭证检查均通过并推送，两CI `39725030540` / `39725030531` 成功。新CF01只读audit14请求成功，取得两个固定历史版本、两轮库存一致，storage墓碑1/活动0/孤儿0，入口关闭；这仍不证明历史执行版本映射或在途排空。Sol/high下一工具固定最多32请求、6条storage-only guard DDL、1条新拒绝探针、1次仅移除固定R2绑定的settings PATCH；保留其他绑定/代码/metadata并独立回读。D1未知写按独立status恢复，Worker PATCH未知没有31秒终止推断，只有无R2且与预登记安全hash全部匹配的独立status才可零PATCH继续；原unknown保留。主Agentreview要求修正未知PATCH恢复、完整identity guard和矛盾envelope矩阵后再验收。ready/routes完整性/drain继续不授予。
 
+最新真实状态（`6cebed0`）：关闭工具及R2观察补充经主Agent独立590项Node/8项Python、顺序disabled构建/公开/静态及1484文件真实凭证扫描通过，两CI `39726393168` / `39726393083` 成功，CF部署步骤仍跳过。CF01先行status9请求通过；close25请求已落地六条永久storage guard并通过新探针精确拒绝与独立零行读回，但settings PATCH返回HTTP400，按unknown保留并停止。本机私有Wrangler R2项已关闭；随后独立status7请求确认六guard、R2绑定仍存在、storage墓碑1/活动0/孤儿0，因patch_resolution_required阻断，**不得再次运行close来重发PATCH**。官方请求契约核对与后续终态证明另行处理，不能凭400/等待31秒补判原请求失败。CF03独立status15请求再确认imported、committed/reserved均0。R2新observer真实3请求成功，但REST无sampleAt、GraphQL最新样本约滞后32.5分钟，completeCoverage=false、plan=unknown、accountEvidence=null、uploadEligible=false；零观察不推断为完整账号零用量。
+
+下一接续门槛：保留CF01未知PATCH、六guard、本机关闭配置和全部收据，先完成官方settings请求契约及可信未知终态的核对，不能重放原写或恢复R2项；现有status只可云端只读观察，不会自动解锁。可信在途排空、routes/本机进程连接闭包与合格R2证据仍缺，authority保持imported；书籍上传0，API/auth/私人阅读关闭，主站仍为原已验收静态部署。不要再按下方历史交接从旧schema-freeze或旧audit开始重跑。
+
+官方契约纠正与修复分工：Sol/high通过固定revision的Cloudflare OpenAPI确认，settings PATCH虽接受multipart JSON，但inherit的具体version UUID仅适用于Workers version endpoints；其他endpoint只接受latest。此前SDK注释不足以证明settings支持具体UUID。这是确定的请求契约缺陷，不能据此猜测旧400的实际provider code或改判unknown。Sol/high负责给所有入口的该PATCH分支加固定失败保护及离线测试、更新操作说明，保持已落地六guard及identity hash原样；不改成可能继承未部署版本的latest，不新增替代写路径，不重发旧请求。主Agent复审/整体验证/CI后交付，真实绑定收回留待有可信版本保留和未知终态证据的独立方案。
+
+契约保护实现已由主Agent复审：全部PATCH构造和派发已删除，PATCH预算为0；仍有R2时，在六guard和本机配置冻结后、创建PATCH intent前固定拒绝。原unknown及五项expected hash的独立核验继续保留，六guard/BASE_SCHEMA与已落地版本逐字一致。Sol专项68项通过，主Agent独立完整588项Node及8项Python通过，零失败/跳过；测试数量变化来自删除已不可能执行的PATCH响应分支并补入零PATCH门禁。顺序disabled构建1280页、公开产物1318文件、静态资源1304项和实际凭证扫描1484文件均通过，秘密命中/不安全文件为0。此修正未再调用云管理接口，真实绑定收回和上传状态不变；接续不得把代码门禁视为云端闭包完成。
+
 验收与验证：先运行迁移/CF01专项，核对私有输入和历史状态，再真实status→freeze→import→独立status；任何unknown立即停止受影响写入，只读恢复。新实现须覆盖默认零IO、固定资源/预算、逐请求durable intent、未知写不重试、独立回读、身份/配置漂移及秘密消除，主Agent独立审查并运行完整Node/Python、disabled构建、verify:public/static和实际凭证扫描。CF01库存只证明观测；无可信历史执行版本和终态排空证明仍禁止ready。R2新鲜完整证据不足则不上传，不手写许可，不重放旧probe。
 
 明确不做：不修改已落地SQL003/004、不删除历史unknown/预留/收据、不解冻旧入口、不改计费、不将paw改成生产服务器、不扩大账号读取、不启用生产API/auth或私人阅读。后续上传依赖ready与合格R2证据，未满足不得越过。

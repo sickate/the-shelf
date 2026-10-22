@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-22T05:08:34.830Z",
-  "version": "76670fde8bef2ad009ce571c7d25784d81aa34ddfe7819095758fb2d552da33a",
+  "generatedAt": "2026-10-22T05:25:55.867Z",
+  "version": "6e96bf5ec35b19b9b0f1cf226517c21456d0b785e9c79addcaa6cb24f74e1e29",
   "basePath": "/",
   "documents": [
     {
@@ -107,7 +107,7 @@
       "title": "The Shelf 开发计划",
       "description": "第一版已交付真实收藏书架、公开文档，以及可在本机运行的私人阅读与按需 AI 后端。CF-02 已将静态网站迁到 Cloudflare Workers Static Assets；GitHub 保存代码，GitHub Pages 保留为回退站点。业务 API、登录和私人阅读仍未迁移。",
       "updatedAt": "2026-10-22",
-      "version": "c97a4dd209b3d781ea757f42dc3819808223a5d1619c037e9c7962e41a6059ab",
+      "version": "5e03ce2f9f79db8d2a45eea370536bf09eec737be69ee9021e6c596c96d029de",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",

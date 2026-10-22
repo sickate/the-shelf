@@ -17,7 +17,7 @@ export const CF01_CLOSE_LIMITS = Object.freeze({
   requests: 32,
   ddl: 6,
   negativeProbes: 1,
-  patches: 1,
+  patches: 0,
   responseBytes: 2_000_000,
   deadlineMs: 30_000,
 });
@@ -51,6 +51,7 @@ const CODES = new Set(
     "probe_row_present",
     "status_required",
     "patch_resolution_required",
+    "patch_contract_unsupported",
     "unknown_write_quiescence_pending",
     "state_invalid",
     "operator_locked",
@@ -425,7 +426,7 @@ function normalizeBindings(input, dbid) {
 function settingsView(settings, dbid) {
   if (!record(settings)) fail("cf01_close_bindings_invalid");
   const bindings = normalizeBindings(settings.bindings, dbid);
-  // Omitted metadata is PATCH-preserved; hash it for independent drift detection.
+  // Hash non-binding metadata for independent and historical observation checks.
   const other = Object.fromEntries(
     Object.entries(settings).filter(
       ([k]) => k !== "bindings" && k !== "annotations",
@@ -451,10 +452,6 @@ function settingsView(settings, dbid) {
     metadataSha256: digest(other),
     annotationsSha256: digest(writableAnnotations),
   };
-  Object.defineProperty(view, "writableAnnotations", {
-    value: writableAnnotations,
-    enumerable: false,
-  });
   return view;
 }
 async function loadFixed(root, environment) {
@@ -949,25 +946,21 @@ export async function runCf01StorageClose({
       db = `/d1/database/${fixed.resources.databaseId}`,
       worker = `/workers/scripts/${WORKER}`;
     let ddl = 0,
-      probes = 0,
-      patches = 0;
+      probes = 0;
+    const patches = 0;
     const request = async ({
       suffix,
       label,
       sql,
       params = [],
       kind = null,
-      patch,
-      expected,
       validate,
     }) => {
+      if (kind !== null && !["ddl", "probe"].includes(kind))
+        fail("cf01_close_patch_contract_unsupported");
       if (receipt.requests.length >= CF01_CLOSE_LIMITS.requests)
         fail("cf01_close_request_budget");
-      if (
-        (kind === "ddl" && ++ddl > 6) ||
-        (kind === "probe" && ++probes > 1) ||
-        (kind === "patch" && ++patches > 1)
-      )
+      if ((kind === "ddl" && ++ddl > 6) || (kind === "probe" && ++probes > 1))
         fail("cf01_close_write_budget");
       await store.check();
       await checkDirectories();
@@ -985,7 +978,7 @@ export async function runCf01StorageClose({
         index: receipt.requests.length + 1,
         label,
         path: suffix,
-        method: patch ? "PATCH" : sql ? "POST" : "GET",
+        method: sql ? "POST" : "GET",
         kind: kind ?? "read",
         state: "dispatched",
         at: clock(),
@@ -1001,7 +994,6 @@ export async function runCf01StorageClose({
           at: item.at,
           kind,
           state: "dispatched",
-          ...(kind === "patch" ? { expected } : {}),
         };
         state.writes.push(write);
         state.checkpoint = null;
@@ -1013,13 +1005,7 @@ export async function runCf01StorageClose({
         const attempt = (async () => {
           let body,
             headers = { authorization: `Bearer ${fixed.credentials.token}` };
-          if (patch) {
-            body = new FormData();
-            body.set(
-              "settings",
-              new Blob([JSON.stringify(patch)], { type: "application/json" }),
-            );
-          } else if (sql) {
+          if (sql) {
             headers["content-type"] = "application/json";
             body = JSON.stringify({ sql, params });
           }
@@ -1073,7 +1059,7 @@ export async function runCf01StorageClose({
         clearTimeout(timer);
         item.state = kind === "probe" ? "rejected" : "observed";
         item.sha256 = digest(value);
-        if (write && kind !== "patch") write.state = item.state;
+        if (write) write.state = item.state;
         await save();
         return value;
       } catch (e) {
@@ -1245,39 +1231,10 @@ export async function runCf01StorageClose({
         );
         await save();
       }
-      if (before.bindings.some((b) => b.name === "CF_BUCKET")) {
-        const patch = {
-          bindings: expected.map((b) => ({
-            name: b.name,
-            type: "inherit",
-            version_id: beforeDeployment.versionId,
-          })),
-          annotations: before.writableAnnotations,
-        };
-        await request({
-          suffix: worker + "/settings",
-          label: "remove-fixed-r2-binding",
-          kind: "patch",
-          expected: {
-            bindingsSha256: digest(expected),
-            metadataSha256: before.metadataSha256,
-            annotationsSha256: before.annotationsSha256,
-            codeSha256: digest(receipt.initial.code),
-            subdomainSha256: digest(receipt.initial.subdomain),
-          },
-          patch,
-          validate: (d) => {
-            const s = settingsView(d.result, fixed.resources.databaseId);
-            if (
-              digest(s.bindings) !== digest(expected) ||
-              s.metadataSha256 !== before.metadataSha256 ||
-              s.annotationsSha256 !== before.annotationsSha256
-            )
-              fail("cf01_close_settings_changed");
-            return s;
-          },
-        });
-      }
+      // The legacy settings endpoint cannot inherit a concrete version UUID.
+      // Never create a PATCH intent or serialize a substitute latest request.
+      if (before.bindings.some((b) => b.name === "CF_BUCKET"))
+        fail("cf01_close_patch_contract_unsupported");
       const finalSettings = await workerSettings("independent-settings"),
         finalDeployment = await deployment("independent-deployment");
       const finalCode = await version(
@@ -1307,9 +1264,6 @@ export async function runCf01StorageClose({
         subdomain: finalSubdomain,
       };
     }
-    for (const w of state.writes)
-      if (w.runId === runId && w.kind === "patch" && w.state === "dispatched")
-        w.state = "observed";
     receipt.status =
       action === "close"
         ? "capability-reduced-drain-unproven"
@@ -1337,13 +1291,6 @@ export async function runCf01StorageClose({
   } catch (e) {
     const error = safeError(e);
     if (receipt && store && state) {
-      for (const w of state.writes)
-        if (
-          w.runId === receipt.runId &&
-          w.kind === "patch" &&
-          w.state === "dispatched"
-        )
-          w.state = "unknown";
       receipt.status = "failed-closed";
       receipt.error = error.code;
       if (

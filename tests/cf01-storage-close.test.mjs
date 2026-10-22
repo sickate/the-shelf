@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
   CF01_CLOSE_GUARDS,
@@ -92,7 +93,7 @@ async function fixture(t) {
     },
   ];
   const remote = {
-    bindings,
+    bindings: bindings.filter((b) => b.name !== "CF_BUCKET"),
     version: VERSION,
     annotations: {
       "workers/message": ANNOTATION,
@@ -170,25 +171,7 @@ async function fixture(t) {
       }
     }
     if (url.endsWith("/settings")) {
-      if (options.method === "PATCH") {
-        assert.ok(options.body instanceof FormData);
-        const patch = JSON.parse(await options.body.get("settings").text());
-        assert.deepEqual(Object.keys(patch).sort(), [
-          "annotations",
-          "bindings",
-        ]);
-        assert.equal(patch.bindings.length, 4);
-        for (const b of patch.bindings)
-          assert.deepEqual(b, {
-            name: b.name,
-            type: "inherit",
-            version_id: VERSION,
-          });
-        assert.deepEqual(patch.annotations, { "workers/message": ANNOTATION });
-        assert.ok(!JSON.stringify(patch).includes(SENTINEL));
-        remote.bindings = remote.bindings.filter((b) => b.name !== "CF_BUCKET");
-        remote.version = NEWVERSION;
-      }
+      assert.notEqual(options.method, "PATCH", "no executable PATCH transport");
       return envelope(settings());
     }
     assert.equal(options.method, "GET");
@@ -255,6 +238,35 @@ async function fixture(t) {
       ),
   };
 }
+const digest = (value) =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+async function seedLegacyUnknownPatch(f) {
+  // Historical synthetic state only: no executable invalid request or cloud write.
+  for (const guard of CF01_CLOSE_GUARDS) f.db.exec(guard.sql);
+  await f.run({ action: "status" });
+  const [receipt] = await f.receipts(),
+    initial = receipt.initial;
+  const state = await f.state();
+  state.writes.push({
+    runId: RUN,
+    index: 25,
+    at: receipt.requests[0].at,
+    kind: "patch",
+    state: "unknown",
+    expected: {
+      bindingsSha256: digest(initial.settings.bindings),
+      metadataSha256: initial.settings.metadataSha256,
+      annotationsSha256: initial.settings.annotationsSha256,
+      codeSha256: digest(initial.code),
+      subdomainSha256: digest(initial.subdomain),
+    },
+  });
+  state.failures.push({ runId: RUN, at: receipt.requests[0].at });
+  state.checkpoint = null;
+  await f.write(".local/cf01/storage-close-state.json", state);
+  await f.write(".local/cf01/wrangler.json", { ...f.config, r2_buckets: [] });
+  f.calls.length = 0;
+}
 test("preview is zero IO and invalid arbitrary actions are rejected", async () => {
   for (const action of ["status", "close"]) {
     const out = await runCf01StorageClose({
@@ -273,12 +285,12 @@ test("preview is zero IO and invalid arbitrary actions are rejected", async () =
   ])
     await assert.rejects(main(args), { code: "cf01_close_usage" });
 });
-test("close installs exact storage-only guards then removes only fixed R2 binding and independently reads back", async (t) => {
+test("close installs exact storage-only guards and independently reads back already absent R2 with zero PATCH", async (t) => {
   const f = await fixture(t),
     out = await f.run();
-  assert.equal(out.requests, 31);
+  assert.equal(out.requests, 30);
   assert.equal(out.ddl, 6);
-  assert.equal(out.patches, 1);
+  assert.equal(out.patches, 0);
   assert.equal(out.storageAdmissionGuardsObserved, true);
   assert.equal(out.r2BindingAbsentObserved, true);
   assert.equal(out.cloudWriteFreezeProven, false);
@@ -294,7 +306,7 @@ test("close installs exact storage-only guards then removes only fixed R2 bindin
   for (const secret of [TOKEN, SENTINEL, ANNOTATION])
     assert.ok(!receipts.includes(secret));
   const state = await f.state();
-  assert.equal(state.writes.length, 8);
+  assert.equal(state.writes.length, 7);
   assert.ok(
     state.writes.every((w) => ["observed", "rejected"].includes(w.state)),
   );
@@ -311,7 +323,7 @@ test("status is fixed cloud read-only and cannot authorize closure", async (t) =
   assert.equal(out.ddl, 0);
   assert.equal(out.patches, 0);
   assert.equal(out.storageAdmissionGuardsObserved, false);
-  assert.equal(out.r2BindingAbsentObserved, false);
+  assert.equal(out.r2BindingAbsentObserved, true);
   assert.ok(
     f.calls.every(
       ({ options }) =>
@@ -390,7 +402,7 @@ test("unknown DDL is never retried, partial guards require independent status, o
   await f.run({ action: "status" });
   const out = await f.run();
   assert.equal(out.ddl, 5);
-  assert.equal(out.requests, 29);
+  assert.equal(out.requests, 28);
   assert.equal((await f.state()).writes[0].state, "unknown");
   assert.equal(
     f.calls.filter(
@@ -429,33 +441,16 @@ test("known partial DDL with failed independent readback still requires a separa
   await f.run({ action: "status" });
   assert.equal((await f.run()).ddl, 5);
 });
-test("unknown PATCH keeps local config closed and requires status; successful cloud change is not resent", async (t) => {
+test("historical unknown PATCH requires independent matching status and remains unknown on zero-PATCH recovery", async (t) => {
   const f = await fixture(t);
-  await assert.rejects(
-    f.run({
-      fetchImpl: async (url, options) => {
-        const response = await f.fetchImpl(url, options);
-        if (options.method === "PATCH") throw new Error(SENTINEL);
-        return response;
-      },
-    }),
-    { code: "cf01_close_local_or_transport_failure" },
-  );
-  assert.deepEqual(
-    JSON.parse(
-      await fs.readFile(path.join(f.root, ".local/cf01/wrangler.json"), "utf8"),
-    ).r2_buckets,
-    [],
-  );
-  assert.equal((await f.state()).writes.at(-1).state, "unknown");
+  await seedLegacyUnknownPatch(f);
   await assert.rejects(f.run(), { code: "cf01_close_status_required" });
-  f.advance(31_001);
   await f.run({ action: "status" });
   const out = await f.run();
   assert.equal(out.patches, 0);
   assert.equal(out.ddl, 0);
   assert.equal(out.requests, 18);
-  assert.equal(f.calls.filter((c) => c.options.method === "PATCH").length, 1);
+  assert.equal(f.calls.filter((c) => c.options.method === "PATCH").length, 0);
   assert.equal(
     (await f.state()).writes.find((w) => w.kind === "patch").state,
     "unknown",
@@ -812,54 +807,43 @@ test("caller-controlled error text and mutable exported errors cannot enter diag
   );
   assert.ok(!JSON.stringify(await f.receipts()).includes(SENTINEL));
 });
-test("PATCH cannot change preserved bindings, module code or unrelated metadata unnoticed", async (t) => {
+test("historical unknown PATCH independently checks preserved binding/code/metadata/annotations hashes", async (t) => {
   for (const variant of ["binding", "code", "metadata", "annotations"]) {
     await t.test(variant, async (t) => {
       const f = await fixture(t);
-      let patched = false;
+      await seedLegacyUnknownPatch(f);
+      if (variant === "binding")
+        f.remote.bindings.find((b) => b.name === "CF_MOCK").environment =
+          "development";
+      if (variant === "metadata") f.remote.observability = { enabled: true };
+      if (variant === "annotations")
+        f.remote.annotations = {
+          "workers/message": "changed-private-annotation",
+        };
       await assert.rejects(
         f.run({
+          action: "status",
           fetchImpl: async (url, options) => {
             const response = await f.fetchImpl(url, options);
-            if (options.method === "PATCH") {
-              patched = true;
-              if (variant === "binding") {
-                f.remote.bindings.find(
-                  (b) => b.name === "CF_MOCK",
-                ).environment = "development";
-                return envelope(f.settings());
-              }
-              if (variant === "metadata") {
-                f.remote.observability = { enabled: true };
-                return envelope(f.settings());
-              }
-              if (variant === "annotations") {
-                f.remote.annotations = {
-                  "workers/message": "changed-private-annotation",
-                };
-                return envelope(f.settings());
-              }
-            }
-            if (variant === "code" && patched && url.includes("/versions/")) {
+            if (variant === "code" && url.includes("/versions/")) {
               const data = await response.json();
               data.result.modules[0].content_base64 =
-                Buffer.from("// different code").toString("base64");
+                Buffer.from("// changed code").toString("base64");
               return Response.json(data);
             }
             return response;
           },
         }),
       );
+      assert.equal((await f.state()).checkpoint, null);
+      assert.equal(
+        (await f.state()).writes.find((w) => w.kind === "patch").state,
+        "unknown",
+      );
       assert.equal(
         f.calls.filter((c) => c.options.method === "PATCH").length,
-        1,
+        0,
       );
-      assert.equal(
-        f.remote.bindings.some((b) => b.name === "CF_BUCKET"),
-        false,
-      );
-      assert.equal((await f.state()).failures.length, 1);
-      await assert.rejects(f.run(), { code: "cf01_close_status_required" });
       assert.ok(
         !JSON.stringify(await f.receipts()).includes(
           "changed-private-annotation",
@@ -868,60 +852,34 @@ test("PATCH cannot change preserved bindings, module code or unrelated metadata 
     });
   }
 });
-test("unknown PATCH with binding still present stays blocked even after arbitrary waiting and status", async (t) => {
+test("historical unknown PATCH with binding still present remains blocked after arbitrary waiting", async (t) => {
   const f = await fixture(t);
-  let attempts = 0;
-  await assert.rejects(
-    f.run({
-      fetchImpl: async (url, options) => {
-        if (options.method === "PATCH") {
-          attempts++;
-          throw new Error(SENTINEL);
-        }
-        return f.fetchImpl(url, options);
-      },
-    }),
-    { code: "cf01_close_local_or_transport_failure" },
-  );
+  await seedLegacyUnknownPatch(f);
+  f.remote.bindings.push({
+    name: "CF_BUCKET",
+    type: "r2_bucket",
+    bucket_name: "the-shelf-books",
+  });
   f.advance(86_400_000);
   await assert.rejects(f.run({ action: "status" }), {
     code: "cf01_close_patch_resolution_required",
   });
   await assert.rejects(f.run(), { code: "cf01_close_status_required" });
-  await assert.rejects(f.run({ action: "status" }), {
-    code: "cf01_close_patch_resolution_required",
-  });
-  assert.equal(attempts, 1);
-  assert.equal(
-    (await f.state()).writes.find((w) => w.kind === "patch").state,
-    "unknown",
-  );
+  assert.equal(f.calls.filter((c) => c.options.method === "PATCH").length, 0);
   assert.equal((await f.state()).checkpoint, null);
 });
-test("unknown PATCH status matches pre-dispatch capability hashes, rejects metadata drift and never reclassifies unknown", async (t) => {
+test("historical unknown PATCH status matches preregistered hashes without reclassifying it", async (t) => {
   const f = await fixture(t);
-  await assert.rejects(
-    f.run({
-      fetchImpl: async (url, options) => {
-        const response = await f.fetchImpl(url, options);
-        if (options.method === "PATCH") throw new Error(SENTINEL);
-        return response;
-      },
-    }),
-  );
-  const unknown = (await f.state()).writes.find((w) => w.kind === "patch");
-  assert.equal(Object.keys(unknown.expected).length, 5);
-  // No D1 unknown remains: do not pretend 31 seconds bounds a Worker settings mutation.
+  await seedLegacyUnknownPatch(f);
   f.remote.observability = { enabled: true };
   await assert.rejects(f.run({ action: "status" }), {
     code: "cf01_close_patch_resolution_required",
   });
-  assert.equal((await f.state()).checkpoint, null);
   f.remote.observability = { enabled: false };
   await f.run({ action: "status" });
   const state = await f.state();
-  assert.equal(state.writes.find((w) => w.kind === "patch").state, "unknown");
   assert.equal(state.checkpoint.patchObservations.length, 1);
+  assert.equal(state.writes[0].state, "unknown");
   assert.equal((await f.run()).patches, 0);
 });
 test("storage identity guard also protects delay, mode, creation time and rejects reentering running", async (t) => {
@@ -1000,8 +958,8 @@ test("legacy NULL storage run or tombstone identities block inventory before eve
     });
   }
 });
-test("contradictory success plus errors envelopes fail closed for reads, DDL and PATCH", async (t) => {
-  for (const stage of ["read", "ddl", "patch"]) {
+test("contradictory success plus errors envelopes fail closed for reads and DDL", async (t) => {
+  for (const stage of ["read", "ddl"]) {
     for (const errors of [
       [{ message: SENTINEL }],
       null,
@@ -1022,8 +980,7 @@ test("contradictory success plus errors envelopes fail closed for reads, DDL and
                     : null;
                 const target =
                   (stage === "read" && url.endsWith(`/d1/database/${DBID}`)) ||
-                  (stage === "ddl" && sql === CF01_CLOSE_GUARDS[0].sql) ||
-                  (stage === "patch" && options.method === "PATCH");
+                  (stage === "ddl" && sql === CF01_CLOSE_GUARDS[0].sql);
                 if (!target) return response;
                 poisoned = true;
                 const data = await response.json();
@@ -1042,4 +999,55 @@ test("contradictory success plus errors envelopes fail closed for reads, DDL and
       );
     }
   }
+});
+test("fresh close with R2 completes admission freeze then fails unsupported contract before every PATCH intent or dispatch", async (t) => {
+  const f = await fixture(t);
+  f.remote.bindings.push({
+    name: "CF_BUCKET",
+    type: "r2_bucket",
+    bucket_name: "the-shelf-books",
+  });
+  assert.equal(CF01_CLOSE_LIMITS.patches, 0);
+  await assert.rejects(f.run(), {
+    code: "cf01_close_patch_contract_unsupported",
+  });
+  assert.equal(f.calls.length, 24);
+  assert.equal(f.calls.filter((c) => c.options.method === "PATCH").length, 0);
+  const [receipt] = await f.receipts();
+  assert.equal(receipt.status, "failed-closed");
+  assert.equal(receipt.error, "cf01_close_patch_contract_unsupported");
+  assert.equal(
+    receipt.requests.some((r) => r.kind === "patch" || r.method === "PATCH"),
+    false,
+  );
+  const state = await f.state();
+  assert.equal(state.writes.length, 7);
+  assert.equal(
+    state.writes.some((w) => w.kind === "patch"),
+    false,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await fs.readFile(path.join(f.root, ".local/cf01/wrangler.json"), "utf8"),
+    ).r2_buckets,
+    [],
+  );
+  for (const guard of CF01_CLOSE_GUARDS)
+    assert.equal(
+      f.db
+        .prepare(
+          "SELECT COUNT(*) n FROM sqlite_master WHERE type='trigger' AND name=?",
+        )
+        .get(guard.name).n,
+      1,
+    );
+  assert.equal(receipt.cloudWriteFreezeProven, false);
+  assert.equal(receipt.uploadAllowed, false);
+  const status = await f.run({ action: "status" });
+  assert.equal(status.requests, 9);
+  assert.equal(status.r2BindingAbsentObserved, false);
+  await assert.rejects(f.run(), {
+    code: "cf01_close_patch_contract_unsupported",
+  });
+  assert.equal(f.calls.filter((c) => c.options.method === "PATCH").length, 0);
 });
