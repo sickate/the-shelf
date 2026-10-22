@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { setImmediate } from "node:timers/promises";
 import {
   CF01_CLOSE_INTERNALS as H,
   CF01_CLOSE_GUARDS,
@@ -34,6 +35,11 @@ const errorIs = (suffix) => (e) =>
   e instanceof Cf01VersionCloseError &&
   e.code === `cf01_version_close_${suffix}` &&
   e.message === e.code;
+function mockRequestDeadline(t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => t.mock.timers.reset());
+  return () => t.mock.timers.tick(CF01_VERSION_CLOSE_LIMITS.deadlineMs + 1);
+}
 async function fixture(t) {
   const root = await fs.realpath(
     await fs.mkdtemp(path.join(os.tmpdir(), "shelf-version-close-")),
@@ -505,6 +511,7 @@ for (const phase of ["create", "deploy"])
       const f = await fixture(t);
       if (phase === "deploy") await f.run("create");
       const start = f.calls.length;
+      const expire = result === "deadline" ? mockRequestDeadline(t) : null;
       f.hook = async (call) => {
         if (call.options.method !== "POST" || call.url.endsWith("/query"))
           return;
@@ -526,10 +533,14 @@ for (const phase of ["create", "deploy"])
           return new Response("x", {
             headers: { "content-length": "2000001" },
           });
-        if (result === "deadline") return new Promise(() => {});
+        if (result === "deadline") {
+          // The fixture has verified durable mutation intent before this hook.
+          expire();
+          return new Promise(() => {});
+        }
       };
       await assert.rejects(
-        f.run(phase, result === "deadline" ? { requestTimeoutMs: 5 } : {}),
+        f.run(phase),
         (e) =>
           e instanceof Cf01VersionCloseError && !e.message.includes(SECRET),
       );
@@ -835,14 +846,20 @@ for (const result of [
 ])
   test(`read transport ${result} is bounded and private`, async (t) => {
     const f = await fixture(t);
+    const expire = result === "body-deadline" ? mockRequestDeadline(t) : null;
     f.hook = async () => {
       if (result === "body-deadline")
         return new Response(
-          new ReadableStream({
-            pull() {
-              return new Promise(() => {});
+          new ReadableStream(
+            {
+              pull() {
+                expire();
+                return new Promise(() => {});
+              },
             },
-          }),
+            // Wait for boundedJson's reader instead of eager stream filling.
+            { highWaterMark: 0 },
+          ),
         );
       if (result === "chunk-limit")
         return new Response(
@@ -875,12 +892,7 @@ for (const result of [
           result_info: { has_more: true },
         });
     };
-    await assert.rejects(
-      f.run(
-        "create",
-        result === "body-deadline" ? { requestTimeoutMs: 5 } : {},
-      ),
-    );
+    await assert.rejects(f.run("create"));
     assert.equal(f.calls.length, 1);
     assert.equal(f.mutationCount, 0);
     await f.assertPrivate();
@@ -992,6 +1004,7 @@ for (const phase of ["create", "deploy"])
   test(`${phase} late mutation response after deadline cannot persist response IDs or unlock writes`, async (t) => {
     const f = await fixture(t);
     if (phase === "deploy") await f.run("create");
+    const expire = mockRequestDeadline(t);
     let release, entered;
     const arrived = new Promise((resolve) => {
       entered = resolve;
@@ -1004,9 +1017,11 @@ for (const phase of ["create", "deploy"])
         });
       }
     };
-    const running = f.run(phase, { requestTimeoutMs: 20 });
-    await arrived;
-    await assert.rejects(running, errorIs("deadline"));
+    const running = f.run(phase);
+    await Promise.race([arrived, running]);
+    const rejected = assert.rejects(running, errorIs("deadline"));
+    expire();
+    await rejected;
     release(
       phase === "create"
         ? envelope({ id: W })
@@ -1016,7 +1031,7 @@ for (const phase of ["create", "deploy"])
             versions: [{ version_id: W, percentage: 100 }],
           }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setImmediate();
     const state = await f.state(),
       w = state.writes.at(-1);
     assert.equal(w.state, "unknown");

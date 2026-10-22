@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-22T11:21:48.119Z",
-  "version": "2496779ae90bd617ebc18bb24f370bd11d884e53dfab2ba8c39c0e47a8006d0f",
+  "generatedAt": "2026-10-22T11:33:50.678Z",
+  "version": "bfdc4d50540d988bb4b47e1ef980da1954700b51e3e67290eceb07879f20c3bb",
   "basePath": "/",
   "documents": [
     {
@@ -105,9 +105,9 @@
     {
       "id": "development-plan",
       "title": "The Shelf 开发计划",
-      "description": "实现提交 50473337f5399f2be12d37cfbaaef46f684fd4cf 已推送；Cloudflare CI 39766979379 成功但部署跳过，Pages 39766979402 build/deploy 成功，Pages 开发计划与本地字节一致。主站 runtime 仍 disabled，API health 返回404；这些是静态站观测，不代表业务上线。",
+      "description": "CI修正接续：最小兼容提交66d47e0已推送，Pages39770096434成功；Cloudflare39770096457在唯一deadline合成测试失败，尚未通过最终CI。原因是测试给整轮每请求5ms，CI负载下在preflight先超时、未抵达目标mutation，导致预期unknown写断言读到undefined；本地734/8全绿不能代替此远端结果。Sol/high只负责使deadline测试在目标mutation/body阶段确定性推进，保持生产30秒及所有",
       "updatedAt": "2026-10-22",
-      "version": "32c8d3478e8bcac4fcf1281ba20c27aff8fde873b15658a1d9d35a4f3f869cdc",
+      "version": "196b6786335e800d73711f9918cdfff09b4ad2c8f14ea93cb816159cac96fbc8",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",

@@ -4,6 +4,10 @@
 
 ## 2026-10-22 发布恢复：2c74cc9 已推送
 
+66d47e0最终CI检查：Pages39770096434 build/deploy成功；Cloudflare39770096457测试失败、deploy跳过，不能宣称该提交两CI通过。唯一失败为version create deadline fixture全轮5ms在preflight提前超时，未有目标write而断言读取undefined；日志 `/tmp/shelf-followup-compat-cf-ci-failed.log`。Sol/high实施仅测试阶段确定性修正，生产deadline/validator/unknown语义不动；主Agent独立review与完整验收后另推新提交。实际云mutation仍0，契约外字段阻断未绕过。
+
+上述纯测试修正经主Agent review及5项独立专项后，再次完整734项Node/8项Python通过、零失败/取消/跳过（`/tmp/shelf-followup-deadline-full-20261022.log`）；顺序disabled构建1280页、公开1318文件、静态1304资源和1493文件实际凭证扫描通过，0秘密命中/不安全文件，格式/diff检查通过。仅测试和进度文档变化，生产工具代码未改；新提交对应两CI及Pages/主站独立回读须另行核对，旧失败保留。
+
 本轮最小兼容与交接的最终本地验收：主Agent review后独立734项Node/8项Python通过，零失败/取消/跳过（`/tmp/shelf-followup-compat-full-20261022.log`）；随后disabled构建1280页、公开1318文件、静态1304资源及1493文件实际凭证扫描通过，0秘密命中/不安全文件，格式/diff检查通过。该验收不改变下述实际阻断：全部新云动作只读，未create/deploy，原PATCHunknown保留，业务和上传关闭。最新提交与两CI结果按Git历史/本次工作流核对，不用前轮CI代替。
 
 `50473337f5399f2be12d37cfbaaef46f684fd4cf` 已提交推送；Cloudflare CI `39766979379` 全部构建/测试/检查成功，部署skipped；Pages CI `39766979402` build/deploy成功。独立curl确认Pages开发计划与本地提交字节一致，主站runtime disabled、health404。

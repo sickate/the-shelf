@@ -2,6 +2,10 @@
 
 ## 2026-10-22 接续检查点
 
+CI修正接续：最小兼容提交66d47e0已推送，Pages39770096434成功；Cloudflare39770096457在唯一deadline合成测试失败，尚未通过最终CI。原因是测试给整轮每请求5ms，CI负载下在preflight先超时、未抵达目标mutation，导致预期unknown写断言读到undefined；本地734/8全绿不能代替此远端结果。Sol/high只负责使deadline测试在目标mutation/body阶段确定性推进，保持生产30秒及所有unknown/零重试/安全断言不变，不skip或放宽测试；主Agent复审、独立专项和适用完整验收后提交新CI，原失败记录保留。本修正无云调用，版本契约阻断及上传关闭状态不变。
+
+纯测试修正已完成并由主Agentreview：仅在durable mutation、实际body reader pull或迟到响应arrived阶段推进原30秒的mock timer，显式恢复时钟，原安全断言全部保留，生产代码不变。独立5项目标专项及再次完整734项Node/8项Python通过，零失败/取消/跳过；日志 `/tmp/shelf-followup-deadline-full-20261022.log`。随后按顺序构建/隐私/提交并等待新两CI，不将66d47e0失败改写成成功；下一接续以最新提交对应工作流为准。
+
 实现提交 `50473337f5399f2be12d37cfbaaef46f684fd4cf` 已推送；Cloudflare CI `39766979379` 成功但部署跳过，Pages `39766979402` build/deploy 成功，Pages 开发计划与本地字节一致。主站 runtime 仍 disabled，API health 返回404；这些是静态站观测，不代表业务上线。
 
 本轮最小后续修正：history 两字段经有界校验后全部消除，不改变 outcome/归属；独立15项、真实零网络 history 验证通过。观察到7 runs、24 requests、8 starts，`unknown=1`、`unattributed=1`、`unresolvedMutation=1`、`storageCompletedResponse=1`、`cleanupResponse=7`，不得据此宣称完整历史或 drain 已证明。仅 settings 读取接受精确 `placement:{}` 官方默认表示，并原样参与 hash；具体 version/create 与跨 metadata 精确比较仍严格，不将缺失归一为 `{}`。独立8项通过。私有 Wrangler 仅收紧 `workers_dev=false`，R2 绑定仍为 `[]`、preview 为 false，其余字段保留。
