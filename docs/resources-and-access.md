@@ -2,6 +2,20 @@
 
 更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
 
+## 2026-10-22 接续：版本响应分类与发布基线验收
+
+`d98c620fe6e0a5a7fb37f16c5e6ac34c6bf665c4`两CI已由主Agent独立核对：Cloudflare `39771627350` build成功、deploy skipped；Pages `39771627306` build/deploy成功，公开开发计划与该提交逐字一致。主站runtime为schemaVersion=1/apiMode=disabled、health404，未启用业务。
+
+Sol/high交付临时version-shape诊断，主Agent逐行review、独立原/新20项合成测试全部通过后，按开发计划只执行一次新status；实际7HTTP/0mutation/0额外fetch，第七项具体源版本HTTP200仍candidate_invalid。安全投影仅保留presence/type/固定分类布尔，原响应/未知名称或值/代码/secret/annotations不输出；原validator不改。扁平必需字段及代码字段类型齐全、UUID匹配，metadata/resources缺失，仍有官方flat/legacy集合外顶层字段；settings placement={}、Version缺失是独立crossMetadata阻断。Worker/Script其他schema不能建立Version兼容依据，不再追加分类云请求，不create/deploy。
+
+新私有收据为`.local/cf01/version-close-9930ec63-103e-4596-a330-e851bfd344b3.json`，权限/目录仍由原operator检查；临时有限投影为`/tmp/shelf-cf01-version-shape-observation-20261022.json`（0600），脚本为`/tmp/shelf-cf01-version-shape-diagnostic.mjs`，SHA256见开发计划。旧state/unknown/六guard/预算不改，imported、drain/upload关闭。后续须补完整字段与placement读写默认语义的官方依据；未发送供应商消息。详见不公开的`docs/cf01-version-capability-plan.md`。
+
+本轮首次完整测试在受限沙箱中遇到本机回环监听不可用，client-contract失败且prepared-consumption停滞，已仅终止本次四个测试进程并保留日志`/tmp/shelf-version-contract-followup-tests-20261022.log`；没有修改生产代码或放宽测试。使用既有项目授权在可监听环境独立重跑两文件共11项全部通过，随后完整重验，结果另记。此环境失败不能写成完整测试已通过。
+
+随后独立完整重验734项Node、8项Python通过，零失败/取消/跳过，日志`/tmp/shelf-version-contract-followup-full-20261022.log`。诊断原/新20项及监听相关11项亦通过；生产代码未修改，仅交付核查和交接文档。新构建/隐私/提交与对应两CI仍按后续实际结果核对。
+
+顺序disabled构建与公开检查通过：1280页、verify:public 1318文件、verify:static 1304资源；实际凭证扫描1493文件，matchedFiles=0、unsafeFiles=0，diff检查通过。日志`/tmp/shelf-version-contract-followup-build-20261022.log`。下一步按commit→push→两CI→Pages字节及主站disabled回读验收；不发布业务API或操作CF01云写。
+
 ## 2026-10-22 发布恢复：2c74cc9 已推送
 
 66d47e0最终CI检查：Pages39770096434 build/deploy成功；Cloudflare39770096457测试失败、deploy跳过，不能宣称该提交两CI通过。唯一失败为version create deadline fixture全轮5ms在preflight提前超时，未有目标write而断言读取undefined；日志 `/tmp/shelf-followup-compat-cf-ci-failed.log`。Sol/high实施仅测试阶段确定性修正，生产deadline/validator/unknown语义不动；主Agent独立review与完整验收后另推新提交。实际云mutation仍0，契约外字段阻断未绕过。

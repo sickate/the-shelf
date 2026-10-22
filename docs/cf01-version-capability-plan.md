@@ -1,6 +1,22 @@
 # CF01 固定版本继承与分步部署设计
 
-日期：2026-10-22。状态：契约设计已由主 Agent 审查通过，`scripts/cf01-version-close.mjs`、专项合成测试和操作说明已完成首版实现，正进行扩展验证及主 Agent 复审；**未调用云管理接口、未创建或部署真实版本**。实施模型为 `gpt-6.1-sol / high`，主 Agent 负责独立 review、验证及真实执行。
+日期：2026-10-22。状态：`scripts/cf01-version-close.mjs`、合成测试和操作说明已完成本地验收，`d98c620`两CI成功；真实status仍因具体版本字段契约及跨metadata表示缺口阻断，**尚未创建或部署真实版本**。实施模型为 `gpt-6.1-sol / high`，主 Agent 负责独立review、验证及真实执行。
+
+## 最新核查：具体版本读取仍未通过
+
+2026-10-22接续：已执行status只读核查及受限诊断，当前以本节为准。
+
+主Agent在Sol/high交付后逐行review并独立执行原/新20项诊断合成测试，全部通过；随后只执行一次新status，实际7HTTP，0云mutation，0额外fetch。前六项固定identity/schema/counts/deployment/settings/subdomain已观察，第七项具体源版本HTTP200在`candidate_invalid`停止。诊断不改变生产validator，不输出模块、secret、annotations或未知字段名/值/hash。
+
+结果排除了legacy响应假说：具体Version有扁平四必需字段及modules/main_module/bindings/annotations的相应类型，请求UUID相等；metadata/resources缺失，但仍有扁平与legacy已知集合之外的顶层字段。字段presence/type不能代替内容验明，且官方schema未设置`additionalProperties:false`，因此准确结论为“额外字段语义尚未由官方契约证明”，不是断言平台违反schema。
+
+另有独立缺口：settings的placement为精确`{}`，具体Version中缺失。即使额外字段得到解释，现有crossMetadata仍须拒绝这项存在性差异。settings的`default:{}`不能单独证明跨端点缺失与空对象等价。
+
+官方证据：固定[新GET](https://github.com/cloudflare/api-schemas/blob/d3e86eec17211653ca9bc18c0d4bfcace2904148/openapi.yaml#L241354)引用扁平[Version](https://github.com/cloudflare/api-schemas/blob/d3e86eec17211653ca9bc18c0d4bfcace2904148/openapi.yaml#L511971)；[旧GET](https://github.com/cloudflare/api-schemas/blob/d3e86eec17211653ca9bc18c0d4bfcace2904148/openapi.yaml#L239306)才引用[metadata/resources形状](https://github.com/cloudflare/api-schemas/blob/d3e86eec17211653ca9bc18c0d4bfcace2904148/openapi.yaml#L516341)。固定官方[workers-sdk旧路径](https://github.com/cloudflare/workers-sdk/blob/559bf16db6f320837aa89c6a83b4797f9170b160/packages/deploy-helpers/src/deploy/helpers/versions-api.ts#L28)与[ApiVersion类型](https://github.com/cloudflare/workers-sdk/blob/559bf16db6f320837aa89c6a83b4797f9170b160/packages/deploy-helpers/src/deploy/helpers/versions-types.ts#L23)不能为新路径建立兼容依据。Worker或Script的readonly字段也不能整体移植到Version；旧etag/handlers不等于代码字节/main_module。
+
+后续只在取得明确官方字段及默认语义依据后再研究兼容，不重复相同status或泛化字段诊断。可供供应商核对的问题（尚未发送）：新具体版本GET完整字段列表、额外字段是否只读且可安全忽略；settings空placement与Version缺失的读写含义；创建时如何精确保留此状态。问题不附账号、绑定、模块、annotations或未知原值。
+
+当前没有可实施的生产兼容方案，create/deploy继续关闭；五expected hash、六guard、历史unknown、imported及ready/drain/upload拒绝均保持。此次诊断不能证明绑定收回、排空或上传可用。
 
 ## 目标、范围与结论
 

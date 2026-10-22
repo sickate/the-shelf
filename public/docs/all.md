@@ -511,6 +511,24 @@ CF-02 已验收：新站点全部 1,303 个静态资源与 1,264 个书籍详情
 
 # The Shelf 开发计划
 
+## 2026-10-22 本轮继续：具体版本契约核查
+
+目标：接续 `d98c620`，先核对该提交的两条远端CI，再解决固定CF01具体版本HTTP200响应与严格Version契约不符的阻塞。当前仅确认顶层存在契约外字段、六个lifecycle字段缺失，尚未证明可安全兼容；不得通过删除未知键、猜测默认值或改用latest绕过。
+
+范围与依赖：主Agent负责CI/线上静态状态核对、计划、设计审查及最终验收；`gpt-6.1-sol / high`负责复杂的版本接口契约研究，先只读项目代码、既有官方schema/SDK及公开官方资料，交付差异分类、最小安全诊断或兼容方案、请求预算与不可证明项。研究阶段不云调用、不修改私人状态、不实现新云写路径；设计经主Agent复核后才分配具体实现。若确需诊断，先审查有限投影及合成测试，再另记一次固定status预算（最多14HTTP、0mutation）的计划；未知字段名称/原值、模块、secret和annotations不进入输出。
+
+验收：任何兼容必须有官方契约依据，保持具体UUID、代码/绑定/metadata精确比较、五expected hash、六guard、durable intent、deadline和未知结果零重试；无法证明的表示继续拒绝。实现由主Agent独立review、专项与完整Node/Python回归，顺序执行disabled构建、verify:public、verify:static及实际凭证扫描。研究无可实施结论时记录具体缺口，继续可独立验证的工作，不循环执行同一失败status。
+
+发布与回退：适用验收通过后commit→push→两CI→静态线上核对；Cloudflare自动部署仍关闭。create/deploy不属于本阶段执行范围，须另有有界计划。代码失败可revert，不能恢复旧R2能力或回改历史unknown。authority保持imported、ready/drain/upload关闭；不上传书籍、不调用AI、不启用业务API、不改计费，私人证据/预算/旧库均保留。
+
+接续基线已独立验收：`d98c620fe6e0a5a7fb37f16c5e6ac34c6bf665c4` 的Cloudflare CI `39771627350` 构建成功、部署skipped，Pages CI `39771627306` 构建与部署成功；Pages公开开发计划与该提交逐字一致。主站runtime仍为`schemaVersion=1/apiMode=disabled`，`/api/health`为404。此记录收尾上次纯测试修正的远端验收，不代表业务后端上线。
+
+一次受限诊断执行计划：Sol/high交付临时version-shape wrapper，主Agent逐行审查并独立执行原/新20项合成测试，全部通过。原status为唯一请求生产者，默认preview零IO；仅固定具体版本响应新增官方flat/legacy静态字段presence/type、已知键集合和请求UUID相等布尔，不遍历模块、binding或annotation内容，不输出未知字段名/值/hash。现执行一次新status，硬上限14HTTP（D1为固定SELECT的POST）、0云mutation、0额外fetch；每请求30秒及2MB、最多两次每类capture、原validator/共享锁/durable intent/收据规则不变。失败即停，不再次相同诊断、不create/deploy、不删除锁或unknown；结果另记。临时脚本SHA256为`3d89b480a9baac187bacc62f9ad2fe0024d3a6527d9d4237304669221d812253`，不加入公开资产。
+
+实际诊断7HTTP/0云mutation，在具体源版本HTTP200的`candidate_invalid`停止，原validator未改。扁平必需字段及代码字段presence/type齐全、请求UUID相等；legacy metadata/resources均缺失，排除旧响应假说，但仍有官方flat/legacy集合外顶层字段。另确认settings placement为`{}`而具体Version缺失，crossMetadata须继续拒绝。官方schema未显式禁止扩展字段，故只记“额外字段语义未证明”，不宣称平台违反schema。Sol/high离线复核Worker/Script字段不能建立Version兼容依据；此阶段无安全生产修正，不追加泛化诊断。下一步须取得完整版本字段及placement读写默认语义的官方依据，再设计最小兼容或受支持替代路径；R2能力收回、drain、合格用量证据仍分别待验收。真实create/deploy/上传/AI均0，业务API保持关闭。详细官方链接及未发送的契约问题见仓库内`docs/cf01-version-capability-plan.md`，不加入公开白名单。
+
+主Agent本地验收：诊断专项20项通过；首次完整测试受沙箱回环监听限制未完成，保留原失败日志，不记成功。在可监听环境独立11项通过后，完整734项Node及8项Python全部通过，零失败/取消/跳过（`/tmp/shelf-version-contract-followup-full-20261022.log`）。生产代码无修改，本轮交付为契约核查、真实只读结果及交接记录；构建/隐私和对应新提交CI另验。
+
 ## 2026-10-22 接续检查点
 
 CI修正接续：最小兼容提交66d47e0已推送，Pages39770096434成功；Cloudflare39770096457在唯一deadline合成测试失败，尚未通过最终CI。原因是测试给整轮每请求5ms，CI负载下在preflight先超时、未抵达目标mutation，导致预期unknown写断言读到undefined；本地734/8全绿不能代替此远端结果。Sol/high只负责使deadline测试在目标mutation/body阶段确定性推进，保持生产30秒及所有unknown/零重试/安全断言不变，不skip或放宽测试；主Agent复审、独立专项和适用完整验收后提交新CI，原失败记录保留。本修正无云调用，版本契约阻断及上传关闭状态不变。
