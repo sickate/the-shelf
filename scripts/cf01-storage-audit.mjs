@@ -527,9 +527,14 @@ function bindings(input, databaseId) {
       b.name === "CF_MOCK" &&
       b.type === "service" &&
       b.service === `${WORKER}-mock` &&
-      !b.environment
+      (b.environment === undefined || b.environment === "production")
     )
-      return { name: b.name, type: b.type, service: b.service };
+      return {
+        name: b.name,
+        type: b.type,
+        service: b.service,
+        environment: "production",
+      };
     if (
       b.name === "CF_WORKFLOW" &&
       b.type === "workflow" &&

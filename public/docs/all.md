@@ -513,7 +513,27 @@ CF-02 已验收：新站点全部 1,303 个静态资源与 1,264 个书籍详情
 
 第一版已交付真实收藏书架、公开文档，以及可在本机运行的私人阅读与按需 AI 后端。CF-02 已将静态网站迁到 Cloudflare Workers Static Assets；GitHub 保存代码，GitHub Pages 保留为回退站点。业务 API、登录和私人阅读仍未迁移。
 
-更新日期：2026 年 10 月 22 日。阶段：首版已验证；CF-01 评估完成、鉴权需适配；CF-02 静态迁移完成；CF-03 实现与主要安全测试完成，API 未发布；远端存储冻结验收进行中，尚未上传书籍。
+更新日期：2026 年 10 月 22 日。阶段：首版已验证；CF-01 评估完成、鉴权需适配；CF-02 静态迁移完成；CF-03 实现与主要安全测试完成，API 未发布；远端存储冻结已验收、空源账本已导入 imported，旧写能力闭包待验收，尚未上传书籍。
+
+## 2026-10-22 恢复开发：冻结续验、导入与旧能力收口
+
+目标：从已提交的 `de20e30` 接续，先完成真实冻结负向验收和唯一账本的空源导入/独立回读，再以实际CF01库存为依据实现关闭旧写能力的下一步骤。当前只有schema/marker已实际确认，两个历史unknown仍保留，authority未初始化；本计划不把代码完成视为云端验收。
+
+范围与依赖：主Agent先核对Git/CI，以全新run ID执行独立只读status；满足恢复门槛后，以另一新ID执行schema-freeze，要求两库精确拒绝及各自独立零行读回。通过后才以新ID执行import，并独立status确认phase=imported、预算及两库来源一致。CF01核查可独立进行，执行前仅收紧项目私有输入日志权限，不改写内容；固定14请求、硬上限16，无云写。随后根据真实库存落实storage-only admission关闭和固定Worker R2绑定收回工具，必须先完成官方接口契约核对、实施review及CI，再执行受控云动作。
+
+分工记录：主Agent负责计划、真实操作、集成、独立review、功能验收和发布；安全/持久状态任务分配 `gpt-6.1-sol / high`，范围为CF01关闭能力工具、对应测试和操作说明，依赖真实audit输出及固定远端契约。简单交付文档整理按需分配 `gpt-6-luna / medium`，依赖最终验收结果，不修改私人证据。指定模型不可用即说明并暂停该分工，不替换为其他模型。
+
+补充分工：另一 `gpt-6.1-sol / high` 独立核实官方R2纯汇总来源能否生成既有完整上传证据，仅研究公开官方契约与本项目代码，不调用账号管理接口；输出受限研究记录，供主Agentreview后决定producer实施，不能更改新鲜度、授权或上传门槛。
+
+R2实施补充：官方固定 `GET /accounts/{account}/r2/metrics` 提供无桶维度的账号数字聚合；Sol/high在私有临时区先实现observer补充，总请求硬上限由2变3。先保留既有Volt条件核验，之后固定GraphQL及该GET；仅持久化已知数字存储字段，未知键拒绝、缺项保留null，不累加未证实互斥的published/uploaded，不保留对象数量或任意字符串。须经专项/完整验证、主Agentreview和CI才实际读取。接口未提供可信sampleAt/五分钟上界，不是合格producer；accountEvidence保持null、uploadEligible始终false。不得读取更宽订阅或放宽上传门槛。
+
+实际接续检查点：已核对起点两CI成功；新status 15HTTP、冻结续验39HTTP/0DDL、空源导入67HTTP/0DDL及独立status 15HTTP均成功，authority现为imported，committed/reserved均0；两库schema与marker完整、历史unknown探针当前无行，但原unknown不改判。CF01首轮audit在第6请求因服务绑定environment=production的合法平台格式停止；Sol已根据官方契约补齐只接受缺失或精确production的兼容，主Agent独立41项专项通过，正进行完整验收，提交/CI后再运行新audit。此检查点仍无写能力闭包、无合格R2证据、无书籍上传或业务启用。
+
+验收与验证：先运行迁移/CF01专项，核对私有输入和历史状态，再真实status→freeze→import→独立status；任何unknown立即停止受影响写入，只读恢复。新实现须覆盖默认零IO、固定资源/预算、逐请求durable intent、未知写不重试、独立回读、身份/配置漂移及秘密消除，主Agent独立审查并运行完整Node/Python、disabled构建、verify:public/static和实际凭证扫描。CF01库存只证明观测；无可信历史执行版本和终态排空证明仍禁止ready。R2新鲜完整证据不足则不上传，不手写许可，不重放旧probe。
+
+明确不做：不修改已落地SQL003/004、不删除历史unknown/预留/收据、不解冻旧入口、不改计费、不将paw改成生产服务器、不扩大账号读取、不启用生产API/auth或私人阅读。后续上传依赖ready与合格R2证据，未满足不得越过。
+
+部署与回退：新实现通过主Agentreview和全部适用验证后，commit→push→既有CI；CF自动部署仍关闭，Pages仅发布静态回退，主站沿用已验收静态部署。经CI确认后才运行新受控关闭动作。失败保留冻结、imported、全部账本事实和私有证据，停止operator并保持auth/static业务关闭；代码可revert，旧写能力不恢复。交付分别记录本地验证、CI、真实数据库/能力观测及线上状态。
 
 ## 2026-10-22 收工交接：保存全部代码与文档
 

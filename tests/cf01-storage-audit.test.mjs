@@ -625,6 +625,66 @@ test("unknown remote binding refuses further resources and never stores its cont
   assert.equal(receipt.requests.length, 6);
   assert.ok(!JSON.stringify(receipt).includes("unrelated-private-value"));
 });
+test("fixed service environment accepts only absent or production and normalizes both history and settings", async (t) => {
+  for (const environment of [undefined, "production"]) {
+    await t.test(String(environment), async (t) => {
+      const f = await fixture(t);
+      const fetchImpl = async (url, options) => {
+        const response = await f.fetchImpl(url, options);
+        if (!url.endsWith("/settings") && !url.includes("/versions/"))
+          return response;
+        const data = await response.json();
+        data.result.bindings = data.result.bindings.map((b) =>
+          b.name === "CF_MOCK" ? { ...b, environment } : b,
+        );
+        return Response.json(data);
+      };
+      const out = await f.run({ fetchImpl });
+      const [receipt] = await f.receipts();
+      assert.equal(out.requests, 14);
+      for (const list of [
+        receipt.currentBindings,
+        ...receipt.versions.map((v) => v.bindings),
+      ])
+        assert.equal(
+          list.find((b) => b.name === "CF_MOCK").environment,
+          "production",
+        );
+      assert.equal(out.cloudWriteFreezeProven, false);
+    });
+  }
+});
+test("development, empty, null and arbitrary service environments fail closed", async (t) => {
+  for (const environment of [
+    "development",
+    "private-other-environment",
+    "",
+    null,
+    0,
+  ]) {
+    await t.test(String(environment), async (t) => {
+      const f = await fixture(t);
+      const fetchImpl = async (url, options) => {
+        const response = await f.fetchImpl(url, options);
+        if (!url.endsWith("/settings")) return response;
+        const data = await response.json();
+        data.result.bindings = data.result.bindings.map((b) =>
+          b.name === "CF_MOCK" ? { ...b, environment } : b,
+        );
+        return Response.json(data);
+      };
+      await assert.rejects(f.run({ fetchImpl }), {
+        code: "cf01_audit_bindings_unexpected",
+      });
+      assert.equal(f.calls.length, 6);
+      assert.ok(
+        !JSON.stringify(await f.receipts()).includes(
+          "private-other-environment",
+        ),
+      );
+    });
+  }
+});
 test("malformed historical module encoding cannot create a code receipt", async (t) => {
   const f = await fixture(t);
   const fetchImpl = (url, options) =>

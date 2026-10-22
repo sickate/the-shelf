@@ -22,6 +22,8 @@
 
 2026-10-22 通过官方 Cloudflare TypeScript SDK 的 [beta versions.ts](https://github.com/cloudflare/cloudflare-typescript/blob/main/src/resources/workers/beta/workers/versions.ts) 与 [beta workers.ts](https://github.com/cloudflare/cloudflare-typescript/blob/main/src/resources/workers/beta/workers/workers.ts) 直接 HTTPS 核对：历史版本接口为 `GET /accounts/{account}/workers/workers/{workerId}/versions/{versionId}?include=modules`；模块为 `{name,content_type,content_base64}`。代码只保存经过校验的模块，不把模块名当作本机文件路径。该 API 可能返回数 MB；超过本工具2MB上限时保留失败状态，须另立有界计划，不能现场放宽。beta Worker detail 没有当前部署 version ID 字段，因此收据 `currentVersionId` 明确为 null，本机最新 deploy log 不冒充远端当前版本。
 
+2026-10-22 实际 settings 返回固定 `CF_MOCK → the-shelf-cf01-mock` 的 `environment="production"`。官方 [multipart metadata 文档](https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/#bindings) 的 service 示例明确使用 production；[官方 SDK settings 类型](https://github.com/cloudflare/cloudflare-typescript/blob/main/src/resources/workers/scripts/script-and-version-settings.ts) 将 environment 定义为可选。工具只接受字段缺失或精确 production，两者在安全收据中归一化为 production；development、空串、null及任意其他环境继续拒绝。此兼容同时适用于实际 settings 与历史版本，不扩大目标或授予关闭证明。
+
 现有 CF01 budget/run 和原私人执行收据都没有执行版本标识。工具提供两个历史版本和 storage 完成收据候选供主 Agent 私下人工核对，不能从较新版本、版本时间或 regex 命中推断旧版本已先持久 reserve、后 await PUT、再保存成功终态。`executionVersionMappingProven`、`cloudWriteFreezeProven`、`drainProven`、`uploadAllowed` 永远为 false；成功状态仅为 `inventory-observed-closure-unproven`。缺历史版本/缺页/失败的核查状态为 `failed-closed`。
 
 只读库存不能阻止禁用前已经接入但尚未 reserve 的请求，也不能撤销旧 isolate、删除现有绑定或为 R2 PUT 建立强制 deadline。storage-only admission guard、固定旧 capability 移除、真实历史版本人工对应和可信终态排空证明属于下一独立 review 动作；本工具没有 ready/closure 或云写路径。

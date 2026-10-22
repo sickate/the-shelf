@@ -2,6 +2,23 @@
 
 更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
 
+## 2026-10-22 恢复开发：真实迁移验收记录
+
+本轮从提交 `de20e307e9caee1540bef8146d12ef19f4c2b414` 接续。对应 Cloudflare artifact 工作流 `39723864943` 与 Pages 工作流 `39723864972` 均成功；Cloudflare 自动部署关闭。`storage-migrate` 与 `cf01-storage-audit` 专项测试共 56 项通过，零跳过。
+
+迁移操作均为独立运行，私有收据保存在 `.local/cf03/storage-migration/<runID>/receipt.json`，本文不记录账号、资源标识或密钥：
+
+- `resume-status-20261022-de20e30`：15 次 HTTP、0 条 DDL，恢复成功，authority 为 `uninitialized`。
+- `resume-freeze-20261022-de20e30`：39 次 HTTP、0 条 DDL，冻结成功。check 与 production 两库均精确拒绝旧写入口，并各自独立回读为零行；`databaseWriteFreezeProven=true`。
+- `resume-import-20261022-de20e30`：67 次 HTTP、0 条 DDL，导入结果为 `imported`；`committed` 与 `reserved` 均为 0。闭包尚未证明。
+- `resume-post-import-20261022-de20e30`：独立 status 运行，15 次 HTTP、0 条 DDL，再次确认 `imported`；check 的 56 项及 production 的 88 项 schema 完整，marker 存在，两库旧 reservation/registry 均为 0。两条历史 unknown probe 当前读数为 0，但 `atomicRejectionProven=false`，原有 unknown 结论继续保留。
+
+CF01 收据首次只读审计运行因 `cf01_audit_bindings_unexpected` 停止，共 6 次 HTTP；私有收据为 `.local/cf01/storage-audit-cd307f48-7dc5-4bb0-b5f4-b0ac40136a5b.json`。已只读确认固定 `CF_MOCK` environment 为 `production`，而原工具仅接受空值。Sol/high已依官方契约实现仅接受缺失或精确production的兼容，主Agent独立41项专项通过；完整回归和CI后才重跑audit，当前不能记作审计成功或闭包验收。私有 `wrangler-debug.log` 权限由 `0644` 收紧为 `0600`，内容未改动。
+
+初始预算观察为 `budget_all=7`、`storage=1`、`runs_storage=0`、`orphan=0`；唯一 storage 项为 tombstone。这只是观测，不能证明账本已排空。当前书籍数为 0，R2 用量证据仍不合格；ready、API、auth 与私人阅读继续关闭。主站仍为 `9963771`，本轮未手动部署。
+
+本检查点主Agent独立完整回归为516项Node、8项Python通过，零失败/零跳过。首次沙箱运行的13项HTTP测试因监听127.0.0.1返回EPERM，原日志保留；授权临时端口后重跑整套通过，日志为 `/tmp/shelf-resume-full-authorized-20261022.log`。disabled构建1280页、公开产物1318文件、静态资源1304项及实际凭证扫描1480文件均通过，零秘密命中/零不安全文件；格式与diff检查通过。远端CI和新audit结果待后续独立记录，不将本地通过视为远端成功。
+
 ## 2026-10-22 收工：代码保存，云操作停止
 
 用户要求记录进度、提交全部代码和文档后今天结束。本轮不再执行云端冻结/导入、CF01核查、AI调用、对象上传或手动部署。项目私有配置、凭证、原书、数据库、快照及所有未知收据继续保留于忽略目录；提交只包含非私人代码、说明、测试和固定白名单导出的公开文档。
