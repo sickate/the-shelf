@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { authorized, getRun, objectKey, readInput, reserve, runWorkflow, STEP_CONFIG, validateInput } from "../cloudflare/probe/core.mjs";
+import { authorized, getRun, objectKey, readInput, reserve, storageProbe, runWorkflow, STEP_CONFIG, validateInput } from "../cloudflare/probe/core.mjs";
 import { handle } from "../cloudflare/probe/handler.mjs";
 import { mockFetch } from "../cloudflare/probe/mock.mjs";
 import { classifyCryptoFailure, CryptoProbeError, cryptoProbe, safeCryptoFailureReason } from "../cloudflare/probe/crypto.mjs";
@@ -95,33 +95,43 @@ test("JSON byte cap works with misleading or missing length; schema rejects arbi
   assert.equal((await send(env, "POST", "/anything", {})).status, 404);
 });
 
-test("D1 survives separate requests; R2 full/range and cleanup touch a single neutral prefix", async () => {
+// Historical fixture only: production storage admission stays permanently disabled.
+function historicalStorage(db, id) {
+  db.sqlite.prepare("INSERT INTO cf01_budget(run_id,kind,created_at,delay_seconds,mode) VALUES (?,'storage',?,0,'success')").run(id, Date.now());
+}
+test("storage entrypoints reject before D1/R2 while historical diagnostic cleanup remains available", async () => {
+  let databaseCalls = 0, bucketCalls = 0;
+  const blockedDb = { prepare() { databaseCalls++; throw Error("must not query"); } };
+  const blockedBucket = new Proxy({}, { get() { bucketCalls++; throw Error("must not touch R2"); } });
+  const id = randomUUID();
+  await assert.rejects(reserve(blockedDb, {runId:id,kind:"storage"}), /legacy_storage_migration_required/);
+  await assert.rejects(storageProbe({ CF_DB:blockedDb, CF_BUCKET:blockedBucket }, id), /legacy_storage_migration_required/);
+  const response = await send({CF_PROBE_TOKEN:TOKEN,CF_DB:blockedDb,CF_BUCKET:blockedBucket}, "POST", "/v1/runs", {runId:id,kind:"storage"});
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {error:"legacy_storage_migration_required"});
+  assert.deepEqual({databaseCalls,bucketCalls}, {databaseCalls:0,bucketCalls:0});
   const { env } = environment();
-  const id = randomUUID(), input = { runId: id, kind: "storage" };
-  const created = await (await send(env, "POST", "/v1/runs", input)).json();
-  assert.equal(created.run.state, "completed");
-  assert.deepEqual(JSON.parse(created.run.result_json), { fullOk: true, rangeOk: true, bytes: 72 });
-  const queried = await (await send(env, "GET", `/v1/runs/${id}`)).json();
-  assert.equal(queried.run.run_id, id);
-  const before = env.CF_BUCKET.keys.length;
-  assert.equal((await (await send(env, "POST", "/v1/runs", input)).json()).duplicate, true);
-  assert.equal(env.CF_BUCKET.keys.length, before);
-  assert.equal((await send(env, "DELETE", `/v1/runs/${id}`)).status, 200);
-  assert.equal(env.CF_BUCKET.values.size, 0);
-  assert.equal((await send(env, "GET", `/v1/runs/${id}`)).status, 404);
-  assert.equal((await send(env, "POST", "/v1/runs", input)).status, 409);
-  assert.equal(await getRun(env.CF_DB, id), null);
-  assert.ok(env.CF_BUCKET.keys.every(key => key === `diagnostics/cf01/${id}/neutral.txt`));
+  historicalStorage(env.CF_DB,id);
+  env.CF_DB.sqlite.prepare("UPDATE cf01_runs SET state='completed' WHERE run_id=?").run(id);
+  env.CF_BUCKET.values.set(objectKey(id), "historical neutral fixture");
+  assert.equal((await (await send(env,"GET",`/v1/runs/${id}`)).json()).run.run_id,id);
+  assert.equal((await send(env,"DELETE",`/v1/runs/${id}`)).status,200);
+  assert.equal(env.CF_BUCKET.values.size,0);
+  assert.equal(await getRun(env.CF_DB,id),null);
+  assert.equal(env.CF_DB.sqlite.prepare("SELECT count(*) AS n FROM cf01_budget").get().n,1);
+  assert.equal((await send(env,"POST","/v1/runs",{runId:id,kind:"storage"})).status,409);
+  assert.ok(env.CF_BUCKET.keys.every(key=>key===objectKey(id)));
 });
 
 test("persistent caps cannot be reset by cleanup; crypto caps are per algorithm", async () => {
   const { env } = environment();
   for (let i = 0; i < 4; i++) {
     const input = { runId: randomUUID(), kind: "storage" };
-    assert.equal(await reserve(env.CF_DB, input), true);
+    historicalStorage(env.CF_DB, input.runId);
     env.CF_DB.sqlite.prepare("DELETE FROM cf01_runs WHERE run_id = ?").run(input.runId);
   }
-  assert.equal(await reserve(env.CF_DB, { runId: randomUUID(), kind: "storage" }), false);
+  await assert.rejects(reserve(env.CF_DB, { runId: randomUUID(), kind: "storage" }), /legacy_storage_migration_required/);
+  assert.equal(env.CF_DB.sqlite.prepare("SELECT count(*) AS n FROM cf01_budget WHERE kind='storage'").get().n,4);
   for (const kind of ["scrypt", "pbkdf2"]) {
     assert.equal(await reserve(env.CF_DB, { runId: randomUUID(), kind }), true);
     assert.equal(await reserve(env.CF_DB, { runId: randomUUID(), kind }), true);
@@ -129,42 +139,29 @@ test("persistent caps cannot be reset by cleanup; crypto caps are per algorithm"
   }
 });
 
-test("cleanup refuses an in-flight storage put, then removes the object after the original request completes", async () => {
+test("cleanup preserves historical running storage and removes only a terminal object", async () => {
   const { env } = environment();
   const id = randomUUID();
-  let started, release;
-  const putStarted = new Promise(resolve => { started = resolve; });
-  const putBlocked = new Promise(resolve => { release = resolve; });
-  const originalPut = env.CF_BUCKET.put.bind(env.CF_BUCKET);
-  env.CF_BUCKET.put = async (key, text) => {
-    started();
-    await putBlocked;
-    return originalPut(key, text);
-  };
-  const pendingCreate = send(env, "POST", "/v1/runs", { runId: id, kind: "storage" });
-  await putStarted;
-  try {
-    const rejected = await send(env, "DELETE", `/v1/runs/${id}`);
-    assert.equal(rejected.status, 409);
-    assert.deepEqual(await rejected.json(), { error: "run_not_terminal" });
-    assert.equal((await getRun(env.CF_DB, id)).state, "running");
-    assert.equal(env.CF_BUCKET.keys.length, 0, "cleanup must not touch R2 while put remains pending");
-  } finally { release(); }
-  const completed = await (await pendingCreate).json();
-  assert.equal(completed.run.state, "completed");
-  assert.equal(env.CF_BUCKET.values.has(objectKey(id)), true);
-  const cleanup = await send(env, "DELETE", `/v1/runs/${id}`);
-  assert.equal(cleanup.status, 200);
-  assert.equal((await cleanup.json()).cleaned, true);
-  assert.equal(await getRun(env.CF_DB, id), null);
-  assert.equal(env.CF_BUCKET.values.size, 0);
+  historicalStorage(env.CF_DB,id);
+  env.CF_DB.sqlite.prepare("UPDATE cf01_runs SET state='running' WHERE run_id=?").run(id);
+  const rejected = await send(env,"DELETE",`/v1/runs/${id}`);
+  assert.equal(rejected.status,409);
+  assert.deepEqual(await rejected.json(),{error:"run_not_terminal"});
+  assert.equal((await getRun(env.CF_DB,id)).state,"running");
+  assert.equal(env.CF_BUCKET.keys.length,0);
+  env.CF_DB.sqlite.prepare("UPDATE cf01_runs SET state='completed' WHERE run_id=?").run(id);
+  env.CF_BUCKET.values.set(objectKey(id),"historical neutral fixture");
+  assert.equal((await send(env,"DELETE",`/v1/runs/${id}`)).status,200);
+  assert.equal(await getRun(env.CF_DB,id),null);
+  assert.equal(env.CF_BUCKET.values.size,0);
 });
 
 test("reserved and running non-Workflow runs remain until a terminal state", async () => {
   for (const kind of ["storage", "scrypt", "pbkdf2"]) {
     const { env } = environment();
     const id = randomUUID();
-    await reserve(env.CF_DB, { runId: id, kind });
+    if (kind === "storage") historicalStorage(env.CF_DB,id);
+    else await reserve(env.CF_DB, { runId: id, kind });
     for (const state of ["reserved", "running"]) {
       env.CF_DB.sqlite.prepare("UPDATE cf01_runs SET state = ? WHERE run_id = ?").run(state, id);
       const rejected = await send(env, "DELETE", `/v1/runs/${id}`);

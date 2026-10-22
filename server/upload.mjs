@@ -1,13 +1,10 @@
 // Explicit selected-file upload only. Dry run is the default; never scans a collection.
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { getConfig, r2Configured } from "./config.mjs";
-import { loadJson, validateFile, presign, ApiError } from "./storage.mjs";
-export async function uploadSelected(
-  config,
-  ids,
-  { execute = false, fetchImpl = fetch } = {},
-) {
+import { getConfig } from "./config.mjs";
+import { loadJson, validateFile, ApiError } from "./storage.mjs";
+export async function uploadSelected(config, ids, { execute = false } = {}) {
+  if (execute) throw new ApiError("legacy_storage_migration_required", 409);
   if (!ids.length || ids.length > 100 || new Set(ids).size !== ids.length)
     throw new ApiError("select_1_to_100_unique_file_ids");
   await fs.mkdir(config.stateDir, { recursive: true, mode: 0o700 });
@@ -64,39 +61,6 @@ export async function uploadSelected(
       otherExistingBytes: config.r2ExistingBytes,
       budgetBytes: config.r2Budget,
     };
-    if (!execute) return plan;
-    if (!r2Configured(config)) throw new ApiError("r2_unconfigured", 503);
-    for (const f of selected)
-      reservations[f.id] = {
-        sizeBytes: f.entry.sizeBytes,
-        key: f.key,
-        createdAt: new Date().toISOString(),
-      };
-    await fs.writeFile(reservationPath, JSON.stringify(reservations), {
-      mode: 0o600,
-    });
-    for (const f of selected) {
-      await validateFile(manifest, f.id);
-      const data = await fs.readFile(f.real);
-      await validateFile(manifest, f.id);
-      const response = await fetchImpl(presign(config, f.key, "PUT"), {
-        method: "PUT",
-        body: data,
-        redirect: "error",
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!response.ok) throw new ApiError("upload_failed", 502);
-      f.entry.storageKey = f.key;
-      const temp = config.manifestPath + ".upload.tmp";
-      await fs.writeFile(temp, JSON.stringify(manifest, null, 2) + "\n", {
-        mode: 0o600,
-      });
-      await fs.rename(temp, config.manifestPath);
-      delete reservations[f.id];
-      await fs.writeFile(reservationPath, JSON.stringify(reservations), {
-        mode: 0o600,
-      });
-    }
     return plan;
   } finally {
     await lock.close();
@@ -113,6 +77,7 @@ if (
   if (args.some((x) => x.startsWith("--") && x !== "--execute"))
     throw new ApiError("unknown_option");
   try {
+    if (execute) throw new ApiError("legacy_storage_migration_required", 409);
     console.log(
       JSON.stringify(
         await uploadSelected(

@@ -48,7 +48,7 @@ const clone = (value) => {
     fail("storage_invalid_input");
   }
 };
-function identityValue(input) {
+export function identityValue(input) {
   exact(input, [
     "schemaVersion",
     "authorityId",
@@ -243,7 +243,7 @@ export async function validateObjectBytes(input, bytes) {
   return { descriptor, bytes: data };
 }
 
-function frozenSnapshot(input, identity) {
+export function frozenSnapshot(input, identity) {
   exact(
     input,
     [
@@ -1056,7 +1056,7 @@ async function boundedObjectBody(body, size) {
     reader.releaseLock();
   }
 }
-async function verifyStoredObject(input, store) {
+export async function verifyStoredObject(input, store) {
   const descriptor = objectDescriptor(clone(input));
   const initial = await store.head(descriptor.objectKey);
   if (initial === null) return null;

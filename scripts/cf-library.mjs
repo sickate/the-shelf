@@ -14,17 +14,14 @@ import {
   publicCatalog,
   readPrivateJson,
   writePrivateJson,
-  accountEvidence,
 } from "./cf-library-data.mjs";
 import {
   bootstrap,
   makeFilePlan,
-  uploadOne,
-  reconcile,
   snapshot,
   saveSnapshot,
 } from "./cf-library-operations.mjs";
-import { d1Client, r2Client } from "./cf-library-clients.mjs";
+import { d1Client } from "./cf-library-clients.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const fail = (code) => {
@@ -112,17 +109,12 @@ async function ensureStateDirectory(root) {
 
 export async function runLibrary(
   argv,
-  {
-    root = ROOT,
-    environment = process.env,
-    dbFactory = d1Client,
-    r2Factory = r2Client,
-    now,
-  } = {},
+  { root = ROOT, environment = process.env, dbFactory = d1Client, now } = {},
 ) {
-  const clock = now === undefined ? Date.now : () => now;
-  now = clock();
   const args = parseArguments(argv);
+  if ((args.action === "upload" && args.execute) || args.action === "reconcile")
+    fail("legacy_storage_migration_required");
+  now = now === undefined ? Date.now() : now;
   root = await fs.realpath(root);
   const loaded = await readProjectEnvironment(root, environment);
   if (
@@ -154,23 +146,6 @@ export async function runLibrary(
     await connection.verify();
     return connection;
   };
-  const r2 = () => {
-    const config = loaded.fileEnvironment;
-    if (
-      config.SHELF_R2_ACCOUNT_ID !== loaded.credentials.accountId ||
-      config.SHELF_R2_BUCKET !== "the-shelf-books"
-    )
-      fail("invalid_r2_target");
-    return r2Factory(
-      {
-        accountId: config.SHELF_R2_ACCOUNT_ID,
-        bucket: config.SHELF_R2_BUCKET,
-        accessKey: config.SHELF_R2_ACCESS_KEY_ID,
-        secretKey: config.SHELF_R2_SECRET_ACCESS_KEY,
-      },
-      scope,
-    );
-  };
   if (["plan", "upload"].includes(args.action)) {
     const manifest = await readPrivateJson(
       absolutePrivate(args.manifest, ".local/manifest.json"),
@@ -201,53 +176,14 @@ export async function runLibrary(
       },
       root,
     );
-    if (!args.execute)
-      return {
-        dryRun: true,
-        fileId: args.file,
-        format: plan.file.format,
-        sizeBytes: plan.file.sizeBytes,
-        blockedReason: plan.blockedReason,
-        privatePlan: path.relative(root, planPath),
-      };
-    accountEvidence(evidence, loaded.credentials.accountId, clock());
-    const receiptPath = path.join(
-      root,
-      `.local/cf03/${args.profile}-upload-${args.file}.json`,
-    );
-    return uploadOne(
-      await connect(),
-      scope,
-      loaded.credentials.accountId,
-      manifest,
-      args.file,
-      evidence,
-      r2(),
-      {
-        now: clock(),
-        clock,
-        persist: (data) =>
-          writePrivateJson(
-            receiptPath,
-            { schemaVersion: 1, profile: args.profile, ...data },
-            root,
-          ),
-      },
-    );
-  }
-  if (args.action === "reconcile") {
-    const result = await reconcile(await connect(), scope, args.file, r2(), {
-      now,
-    });
-    await writePrivateJson(
-      path.join(
-        root,
-        `.local/cf03/${args.profile}-reconcile-${args.file}.json`,
-      ),
-      { schemaVersion: 1, profile: args.profile, ...result },
-      root,
-    );
-    return result;
+    return {
+      dryRun: true,
+      fileId: args.file,
+      format: plan.file.format,
+      sizeBytes: plan.file.sizeBytes,
+      blockedReason: plan.blockedReason,
+      privatePlan: path.relative(root, planPath),
+    };
   }
   if (args.action === "bootstrap") {
     const catalog = await publicInput(root);

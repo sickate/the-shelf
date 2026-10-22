@@ -356,6 +356,62 @@ test("unconfigured model and upload budget reject before any network request", a
     code: "storage_budget_exceeded",
   });
 });
+test("legacy selected upload execute refuses before config, source, ledger and filesystem access", async (t) => {
+  const { config, manifest } = await fixture(t);
+  const { uploadSelected } = await import("../server/upload.mjs");
+  await fs.writeFile(config.manifestPath, JSON.stringify(manifest));
+  const ledger = path.join(config.stateDir, "upload-reservations.json");
+  await fs.writeFile(
+    ledger,
+    JSON.stringify({ f1: { state: "uncertain", sizeBytes: 10 } }),
+  );
+  const paths = [config.manifestPath, manifest.files.f1.path, ledger];
+  const before = await Promise.all(paths.map((p) => fs.readFile(p)));
+  const names = await fs.readdir(config.stateDir);
+  let fsCalls = 0,
+    fetchCalls = 0,
+    inputReads = 0;
+  const originals = new Map();
+  for (const key of Object.keys(fs))
+    if (typeof fs[key] === "function") {
+      originals.set(key, fs[key]);
+      fs[key] = () => {
+        fsCalls++;
+        throw Error("must not touch filesystem");
+      };
+    }
+  try {
+    const options = {
+      execute: true,
+      fetchImpl() {
+        fetchCalls++;
+      },
+    };
+    await assert.rejects(uploadSelected(config, ["f1"], options), {
+      code: "legacy_storage_migration_required",
+    });
+    const poison = new Proxy(
+      {},
+      {
+        get() {
+          inputReads++;
+          throw Error("must not read input");
+        },
+      },
+    );
+    await assert.rejects(uploadSelected(poison, poison, options), {
+      code: "legacy_storage_migration_required",
+    });
+  } finally {
+    for (const [key, original] of originals) fs[key] = original;
+  }
+  assert.deepEqual(
+    { fsCalls, fetchCalls, inputReads },
+    { fsCalls: 0, fetchCalls: 0, inputReads: 0 },
+  );
+  assert.deepEqual(await Promise.all(paths.map((p) => fs.readFile(p))), before);
+  assert.deepEqual(await fs.readdir(config.stateDir), names);
+});
 test("prepared private text works without source mount; R2 acquisition rejects oversized response", async (t) => {
   const { config, manifest } = await fixture(t);
   const { getChunks } = await import("../server/jobs.mjs");

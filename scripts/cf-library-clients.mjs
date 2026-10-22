@@ -123,11 +123,7 @@ export function r2Client(
   )
     fail("invalid_r2_target");
   const prefix = scope === "production" ? "books/cf03/" : "cf03-check/";
-  const request = async (
-    method,
-    key,
-    { data = Buffer.alloc(0), sha256, format } = {},
-  ) => {
+  const request = async (method, key) => {
     if (
       typeof key !== "string" ||
       !key.startsWith(prefix) ||
@@ -146,26 +142,9 @@ export function r2Client(
       credentialScope = `${day}/auto/s3/aws4_request`;
     const headers = {
       host,
-      "x-amz-content-sha256": sha(data),
+      "x-amz-content-sha256": sha(Buffer.alloc(0)),
       "x-amz-date": date,
     };
-    if (method === "PUT") {
-      if (
-        !/^[a-f0-9]{64}$/.test(sha256 || "") ||
-        sha256 !== sha(data) ||
-        !["EPUB", "PDF"].includes(format) ||
-        data.length < 1 ||
-        data.length > LIMIT
-      )
-        fail("invalid_upload_body");
-      Object.assign(headers, {
-        "x-amz-meta-sha256": sha256,
-        "cache-control": "private, no-store",
-        "content-type":
-          format === "EPUB" ? "application/epub+zip" : "application/pdf",
-        "if-none-match": "*",
-      });
-    }
     const keys = Object.keys(headers).sort(),
       signed = keys.join(";");
     const canonical = `${method}\n${uri}\n\n${keys.map((k) => `${k}:${headers[k].trim()}\n`).join("")}\n${signed}\n${headers["x-amz-content-sha256"]}`;
@@ -184,20 +163,14 @@ export function r2Client(
       response = await fetchImpl(`https://${host}${uri}`, {
         method,
         headers,
-        ...(method === "PUT" ? { body: data } : {}),
         redirect: "error",
         signal: AbortSignal.timeout(60_000),
       });
     } catch {
-      fail(
-        method === "PUT" ? "upload_outcome_unknown" : "object_read_unavailable",
-      );
+      fail("object_read_unavailable");
     }
     if (method === "HEAD" && response.status === 404) return null;
-    if (!response.ok)
-      fail(
-        method === "PUT" ? "upload_outcome_unknown" : "object_read_unavailable",
-      );
+    if (!response.ok) fail("object_read_unavailable");
     return response;
   };
   return {
@@ -218,8 +191,8 @@ export function r2Client(
         fail("invalid_object_size");
       return boundedBody(await request("GET", key), size);
     },
-    async put(key, data, options) {
-      await request("PUT", key, { ...options, data });
+    async put() {
+      fail("legacy_storage_migration_required");
     },
   };
 }

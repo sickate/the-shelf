@@ -109,7 +109,9 @@ async function optionalPrivate(filename, root) {
   }
 }
 
-async function localInventory(root, env) {
+// Shared read-only check for the fixed migration operator; callers must provide
+// the effective project environment, including the private .env overrides.
+export async function localInventory(root, env) {
   const config = getConfig(env, root),
     privateRoot = path.join(root, ".local");
   for (const p of [config.manifestPath, config.stateDir]) {

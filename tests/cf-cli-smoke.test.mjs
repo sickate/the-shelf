@@ -147,3 +147,68 @@ test("real API CLI completes module loading and reaches its precise D1 identity 
     `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/d1/database/11111111-1111-4111-8111-111111111111`,
   );
 });
+
+test("real legacy upload CLIs reject execution before filesystem, configuration and network use", async (t) => {
+  const root = await fixture(t);
+  for (const name of [
+    "scripts/cf-library.mjs",
+    "scripts/cf-library-operations.mjs",
+    "cloudflare/library/core.mjs",
+    "cloudflare/library/security.mjs",
+    "server/upload.mjs",
+    "server/storage.mjs",
+    "server/config.mjs",
+  ]) {
+    await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true });
+    await fs.copyFile(path.join(ROOT, name), path.join(root, name));
+  }
+  await fs.writeFile(
+    path.join(root, "refuse-effects.mjs"),
+    `import fs from 'node:fs/promises';
+    for (const key of Object.keys(fs)) if(typeof fs[key]==='function') fs[key]=()=>{throw new Error('filesystem_forbidden');};
+    globalThis.fetch=()=>{throw new Error('network_forbidden');};`,
+  );
+  for (const [entry, args] of [
+    ["server/upload.mjs", ["file_1", "--execute"]],
+    [
+      "scripts/cf-library.mjs",
+      ["upload", "--profile", "production", "--file", "file_1", "--execute"],
+    ],
+    [
+      "scripts/cf-library.mjs",
+      ["reconcile", "--profile", "check", "--file", "file_1", "--execute"],
+    ],
+  ]) {
+    const result = await new Promise((resolve) =>
+      execFile(
+        process.execPath,
+        [
+          "--import",
+          path.join(root, "refuse-effects.mjs"),
+          path.join(root, entry),
+          ...args,
+        ],
+        {
+          cwd: root,
+          env: { SHELF_PORT: "invalid" },
+          timeout: 5000,
+          encoding: "utf8",
+        },
+        (error, stdout, stderr) =>
+          resolve({
+            code: error?.code ?? 0,
+            signal: error?.signal,
+            killed: error?.killed,
+            stdout,
+            stderr,
+          }),
+      ),
+    );
+    controlledFailure(result);
+    assert.match(result.stderr, /legacy_storage_migration_required/);
+    assert.doesNotMatch(
+      result.stderr,
+      /filesystem_forbidden|network_forbidden|Invalid SHELF_PORT/,
+    );
+  }
+});

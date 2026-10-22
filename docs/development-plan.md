@@ -4,6 +4,22 @@
 
 更新日期：2026 年 10 月 21 日。阶段：首版已验证；CF-01 评估完成、鉴权需适配；CF-02 静态迁移完成；CF-03 实现与主要安全测试完成，生产 CPU 门槛未通过，API 未发布。
 
+## 2026-10-21 检查点：静态发布、AI smoke 与远端迁移状态
+
+2026-10-22 接续验证：按用户再次要求，重新读取生产接入指南（仍标注2026-10-20更新），使用已发布的有界 smoke 独立执行新一轮合成验证。无 Key 请求返回401；两次带项目 Key 的 `gpt-luna` 任务均返回200，普通文本与显式 `json_object` 输出均通过内容校验，全轮3个HTTP请求、2个带Key任务、没有重试。据此确认当前任务Key、`/v1/tasks` 与 `gpt-luna` 实测可用；`gpt-sol` 尚未单独实测。下文10月21日503未知结果保留为历史，不改写为当时成功。未发送书籍或私人内容。
+
+当前实施收口分工：远端authority和SQL由 `gpt-6.1-sol / high` 完成严格导入、独立投影回读、取消与未知结果保护；迁移操作器由同模型独立完成固定资源的 `schema-freeze / import / status`，每请求预登记并允许未知结果后只读恢复；逐文件同步入口由同模型完成实际配置路径、选定版本、确定预留ID与只核对恢复。依赖顺序为authority稳定接口→操作器/同步入口→主Agent整合验收→提交及CI→真实数据库冻结和导入。导入保持 `imported`；完整旧进程、连接、CF01写能力及在途请求关闭证明另行验收后才可 `ready`。当前没有合格R2上传用量证据生产者，公开同步执行保持拒绝新PUT；不得用手写证据或迁移收据代替真实上传证据。检查失败保留静态站、冻结与全部预留，通过修正代码及独立status恢复，不恢复旧写入口。
+
+第二实施检查点的主Agent review和本地整体验收通过：471项Node、8项Python测试零失败/零跳过，disabled构建1280页、公开产物1318文件、静态资源1304项及1477文件真实凭证扫描通过。已实现永久拒绝旧写入口、唯一远端预算adapter和SQL、固定资源冻结/导入/status工具及逐文件同步/核对入口。迁移工具离线空源验证为139次HTTP/100条DDL、导入67次HTTP；schema动作硬上限144请求/102条DDL，import上限80请求，超限或未知结果均停止。本段只记录本地验收；实际远端冻结、导入、ready、上传与云端阅读仍须各自执行和独立验收，不因测试通过而宣称上线。
+
+提交 `9963771bbab02d0dc32f2d3dcb9ab22114ed09af` 已推送至 `main`。主 Agent 完成整合 review 与本地验收：398 项 Node、8 项 Python 测试通过，零跳过；静态构建生成 1,280 页，`verify:public` 检查 1,318 个文件，静态资源检查 1,304 项，真实 secret 扫描覆盖 1,463 个文件并通过。Cloudflare 工作流 `39620203325` 构建 artifact 成功（自动部署关闭），Pages 工作流 `39620203289` 成功。随后主 Agent 本机受控发布 Cloudflare 静态站并完成线上核验：runtime 的 `schemaVersion=1`、`apiMode=disabled`，`/api/health` 返回 404，AI raw 文档字节一致。此结果只证明静态站发布，业务 API 与私人阅读未上线。
+
+真实只读 preflight 完成 14/18 项请求。固定 check identity/schema 有效，reservations、registry、auth 均为 0；production 实际应用 schema 为空。当前 manifest 的 `storageKey` 数为 0，本机预留为空且 lock 不存在。这些快照不能证明账本被冻结、已迁移或已切换为唯一远端 authority；`uploadAllowed=false`，本阶段没有真实上传。authority、旧入口关闭与 R2 只读 observer 仍在实现 review 中，未执行云端写操作。
+
+真实 AI smoke 以未授权请求 401 通过，但首个带 Key 的 `gpt-luna/topic_analysis` 返回 503 `unknown`；第二个模型请求未发送。实际共 2 个 HTTP 请求、其中 1 个带 Key 请求，没有重试。因此真实模型任务尚未验证成功，不能据此确认模型可用。
+
+本检查点继续按“先详细计划、复杂任务由 Sol / 简单任务由 Luna、主 Agent review 与验收、通过后再发布”执行。现阶段远端唯一预算账本、旧写入入口迁移关闭、逐文件上传及云端阅读均未达验收门槛；静态发布与上述离线验证不替代这些阶段的实施或验收。
+
 ## 2026-10-21 接续：AI 契约收尾、唯一远端预算与云端阅读
 
 需求与当前差距：用户要求先固定本机各项目 Codex 开发流程，然后按依赖完成 AI/R2、远端预算账本/旧入口迁移、真实上传/云端阅读。当前已提交基线为 `6c8b230`，最新两 CI 成功，线上 `/data/runtime.json` 实测仍为 disabled；未提交的 `scripts/oai-smoke.mjs`、`server/r2-object-store.mjs`、对应测试及10月18日计划须接管审阅，不能按已验收处理。现有 SQLite authority 是离线参考，check/production 的独立 D1 尚不能证明共享预算。

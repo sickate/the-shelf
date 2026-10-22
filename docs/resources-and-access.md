@@ -2,6 +2,20 @@
 
 更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
 
+## 2026-10-21 检查点
+
+2026-10-22 用户再次要求核验 `.env` 的 `SHELF_OAI_KEY` 后，重新读取公开指南并执行独立有界 smoke `ai-key-check-20261022-0258`。无Key401，两次带Key的 `gpt-luna` 合成任务均200；普通文本与显式JSON对象均通过，耗时约5005ms和3148ms。共3个HTTP、2个带Key任务、零重试，没有发送书籍或私人内容。当前Key/文本入口/该模型已实测可用，`gpt-sol` 未单独实测；前轮503仍保留unknown历史。私有证据为 `.local/ai-smoke/ai-key-check-20261022-0258/receipt.json`，不包含Key或生成正文。公开指南此次仍标注2026-10-20更新。
+
+第二实施检查点本地通过：471项Node、8项Python，零跳过；disabled build1280页、verify:public1318文件、verify:static1304资源和1477文件真实凭证扫描零命中/零不安全文件。主Agent分别审阅authority、旧入口拒绝、bounded迁移与selected-sync；新代码尚待此检查点提交/CI后执行真实冻结和导入，业务API仍关闭、R2对象尚未上传。日志仅本机 `/tmp/shelf-ledger-full-tests.log`、`/tmp/shelf-ledger-build.log`、`/tmp/shelf-ledger-static-verify.log`；不把离线模拟139/67次请求记为真实云请求。
+
+提交 `9963771bbab02d0dc32f2d3dcb9ab22114ed09af` 已推送至 `main`。主 Agent 本地验收为 398 项 Node、8 项 Python 测试通过，零跳过；构建 1,280 页，`verify:public` 检查 1,318 个文件，静态资源检查 1,304 项，真实 secret 扫描 1,463 个文件通过。Cloudflare workflow `39620203325` 仅构建 artifact 且成功，自动部署关闭；Pages workflow `39620203289` 成功。主 Agent 随后执行本机受控静态部署并完成线上核验：runtime 为 `schemaVersion=1`、`apiMode=disabled`，`/api/health` 为 404，AI raw 文档与预期字节一致。此发布不包含业务 API 或私人阅读。
+
+真实只读 preflight 完成 14/18 请求：check identity/schema 有效，reservations、registry、auth 均为 0；production 实际应用 schema 为空。应用 manifest 的 `storageKey` 数为 0，本机预留为空、lock 不存在。以上只代表观察到的当前状态，不能证明冻结、迁移或切换已完成；`uploadAllowed=false`。authority、旧写入入口关闭及 R2 只读 observer 仍在实现 review，未执行云端写入或上传。私有 receipt：`.local/cf03/storage-preflight-fb911552-0eaa-4447-97c4-49c882aaab81.json`。
+
+真实 AI smoke 中，未授权请求以 401 通过；首个带 Key 的 `gpt-luna/topic_analysis` 请求返回 503 `unknown`，第二个模型请求未发送。总计 2 个 HTTP 请求、其中 1 个带 Key 请求，无重试；真实模型任务结果仍未验证成功。私有 receipt 目录：`.local/ai-smoke/ai-contract-20261021-9963771/`。
+
+本 checkpoint 依照先计划、按复杂度分配 Sol/Luna、主 Agent review 和验收、通过后再发布的流程执行。线上当前只验收静态站；远端唯一预算账本、旧入口迁移关闭、真实上传及云端阅读均未完成。上述私有路径仅供本项目维护使用，不含凭证。
+
 ## 当前工作区
 
 当前工作区就是 paw 上的 The Shelf 项目开发目录。默认直接在当前工作区执行，不额外 SSH 到 paw 或重复同步副本；跨机操作仍按具体任务需要和既有授权判断。此前记录的配置与凭证同步及其授权继续有效，作为历史记录保留。

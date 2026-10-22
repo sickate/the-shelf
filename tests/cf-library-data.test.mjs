@@ -278,31 +278,43 @@ async function sourceFixture(t) {
   }
   return { root, manifest, catalog: { books } };
 }
-function memoryR2({ losePutResponse = false, corrupt = false } = {}) {
-  const objects = new Map();
-  let puts = 0;
-  return {
-    objects,
-    get puts() {
-      return puts;
-    },
-    head: async (key) =>
-      objects.has(key)
-        ? {
-            size: objects.get(key).bytes.length,
-            sha256: objects.get(key).sha256,
-            etag: '"test-etag"',
-          }
-        : null,
-    get: async (key) =>
-      corrupt ? Buffer.from("evil") : objects.get(key).bytes,
-    put: async (key, bytes, { sha256 }) => {
-      puts++;
-      if (objects.has(key)) throw Error("must not overwrite");
-      objects.set(key, { bytes, sha256 });
-      if (losePutResponse) throw Error("lost");
-    },
-  };
+// Synthetic historical rows exercise the retained SQL contract without reopening a production write API.
+async function legacySqlReservation(
+  db,
+  scope,
+  accountId,
+  file,
+  observation,
+  at,
+) {
+  const proof = accountEvidence(observation, accountId, at);
+  await db.query(
+    "INSERT INTO storage_state(id,account_id,observed_account_bytes,observed_at,ceiling_bytes,reserved_bytes,committed_bytes,evidence_hash,evidence_complete,updated_at) VALUES (1,?,?,?,8000000000,0,0,?,1,?) ON CONFLICT(id) DO NOTHING",
+    [
+      accountId,
+      proof.observedBytes,
+      proof.observedAt,
+      proof.evidenceSha256,
+      at,
+    ],
+  );
+  const id = `historical-${scope}-${file.fileId}`;
+  await db.query(
+    "INSERT INTO upload_reservations(reservation_id,scope,file_id,book_id,object_key,size_bytes,format,sha256,state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'reserved',?,?)",
+    [
+      id,
+      scope,
+      file.fileId,
+      file.bookId,
+      file.objectKey,
+      file.sizeBytes,
+      file.format,
+      file.sha256,
+      at,
+      at,
+    ],
+  );
+  return id;
 }
 
 test("bootstrap reimports bases without resetting cloud overrides or registering private files", async (t) => {
@@ -418,8 +430,22 @@ test("D1 reservation trigger admits only one competing file and does not erase p
     second = await selectedFile(manifest, "file_2");
   const nearlyFull = { ...evidence(), storedBytes: 7_999_999_996 };
   const results = await Promise.allSettled([
-    reserve(db, "production", "test-account", first, nearlyFull, now),
-    reserve(db, "production", "test-account", second, nearlyFull, now),
+    legacySqlReservation(
+      db,
+      "production",
+      "test-account",
+      first,
+      nearlyFull,
+      now,
+    ),
+    legacySqlReservation(
+      db,
+      "production",
+      "test-account",
+      second,
+      nearlyFull,
+      now,
+    ),
   ]);
   assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
   assert.equal(
@@ -428,15 +454,8 @@ test("D1 reservation trigger admits only one competing file and does not erase p
     4,
   );
   await assert.rejects(
-    reserve(
-      db,
-      "production",
-      "test-account",
-      second,
-      { ...nearlyFull, observedAt: new Date(now - 1).toISOString() },
-      now,
-    ),
-    { code: "account_storage_conflict" },
+    reserve(db, "production", "test-account", second, nearlyFull, now),
+    { code: "legacy_storage_migration_required" },
   );
   assert.equal(
     (await db.query("SELECT reserved_bytes FROM storage_state"))[0]
@@ -462,7 +481,7 @@ test("twenty reservation transactions compete for the final four bytes without p
   }));
   const results = await Promise.allSettled(
     candidates.map((f) =>
-      reserve(
+      legacySqlReservation(
         db,
         "production",
         "test-account",
@@ -481,99 +500,147 @@ test("twenty reservation transactions compete for the final four bytes without p
   );
 });
 
-test("lost PUT response holds budget, refuses another PUT, then reconciles actual SHA and confirms once", async (t) => {
-  const db = await sqlFixture(t),
-    { manifest, catalog } = await sourceFixture(t),
-    r2 = memoryR2({ losePutResponse: true });
+test("legacy reserve/upload/reconcile reject valid inputs without filesystem, database or R2 effects", async (t) => {
+  const { root, manifest, catalog } = await sourceFixture(t);
+  const db = await sqlFixture(t);
   await bootstrap(db, "production", catalog, undefined, now);
-  await assert.rejects(
-    uploadOne(
-      db,
-      "production",
-      "test-account",
-      manifest,
-      "file_1",
-      evidence(),
-      r2,
-      { now },
-    ),
-    { code: "upload_outcome_unknown" },
-  );
-  assert.equal(r2.puts, 1);
-  assert.equal(
-    (await db.query("SELECT state FROM upload_reservations"))[0].state,
+  const file = await selectedFile(manifest, "file_1");
+  for (const [i, state] of [
+    "reserved",
+    "uploading",
     "uncertain",
-  );
-  assert.equal(
-    (await db.query("SELECT reserved_bytes FROM storage_state"))[0]
-      .reserved_bytes,
-    4,
-  );
-  await assert.rejects(
-    uploadOne(
+    "confirmed",
+  ].entries()) {
+    const historical = {
+      ...file,
+      fileId: `historical_${i}`,
+      objectKey: `books/cf03/historical_${i}/${file.sha256}.epub`,
+    };
+    await legacySqlReservation(
       db,
       "production",
       "test-account",
-      manifest,
-      "file_1",
+      historical,
       evidence(),
-      r2,
-      { now },
+      now,
+    );
+    if (state !== "reserved")
+      await db.query(
+        "UPDATE upload_reservations SET state=?,content_verified=?,etag=? WHERE file_id=?",
+        [
+          state,
+          state === "confirmed" ? 1 : 0,
+          state === "confirmed" ? '"historic"' : null,
+          historical.fileId,
+        ],
+      );
+  }
+  const manifestPath = path.join(root, "manifest.json");
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+  const beforeFiles = await Promise.all(
+    [manifestPath, ...Object.values(manifest.files).map((f) => f.path)].map(
+      (f) => fs.readFile(f),
     ),
-    { code: "upload_pending_reconcile_required" },
   );
-  assert.equal(r2.puts, 1);
-  assert.equal(
-    (await reconcile(db, "production", "file_1", r2, { now })).state,
-    "confirmed",
+  const tables = ["storage_state", "upload_reservations", "file_registry"];
+  const beforeLedger = await Promise.all(
+    tables.map((table) => db.query(`SELECT * FROM ${table}`)),
   );
-  assert.equal(
-    (await reconcile(db, "production", "file_1", r2, { now })).alreadyConfirmed,
-    true,
+  let queries = 0,
+    r2Calls = 0,
+    persistence = 0,
+    fsCalls = 0;
+  const blockedDb = {
+    query() {
+      queries++;
+      throw Error("must not query");
+    },
+  };
+  const r2 = new Proxy(
+    {},
+    {
+      get() {
+        r2Calls++;
+        throw Error("must not touch R2");
+      },
+    },
+  );
+  const originals = new Map();
+  for (const key of Object.keys(fs))
+    if (typeof fs[key] === "function") {
+      originals.set(key, fs[key]);
+      fs[key] = () => {
+        fsCalls++;
+        throw Error("must not use filesystem");
+      };
+    }
+  try {
+    await assert.rejects(
+      reserve(blockedDb, "production", "test-account", file, evidence(), now),
+      { code: "legacy_storage_migration_required" },
+    );
+    await assert.rejects(
+      uploadOne(
+        blockedDb,
+        "production",
+        "test-account",
+        manifest,
+        "file_1",
+        evidence(),
+        r2,
+        {
+          now,
+          persist() {
+            persistence++;
+          },
+        },
+      ),
+      { code: "legacy_storage_migration_required" },
+    );
+    for (let i = 0; i < 4; i++) {
+      await assert.rejects(
+        reconcile(blockedDb, "production", `historical_${i}`, r2, { now }),
+        { code: "legacy_storage_migration_required" },
+      );
+    }
+    for (const action of ["upload", "reconcile"]) {
+      await assert.rejects(
+        runLibrary(
+          [action, "--profile", "production", "--file", "file_1", "--execute"],
+          {
+            root,
+            environment: {},
+            dbFactory() {
+              queries++;
+            },
+            r2Factory() {
+              r2Calls++;
+            },
+          },
+        ),
+        { code: "legacy_storage_migration_required" },
+      );
+    }
+  } finally {
+    for (const [key, original] of originals) fs[key] = original;
+  }
+  assert.deepEqual(
+    { queries, r2Calls, persistence, fsCalls },
+    { queries: 0, r2Calls: 0, persistence: 0, fsCalls: 0 },
   );
   assert.deepEqual(
-    (
-      await db.query("SELECT reserved_bytes,committed_bytes FROM storage_state")
-    )[0],
-    { reserved_bytes: 0, committed_bytes: 4 },
-  );
-  assert.equal((await db.query("SELECT * FROM file_registry")).length, 1);
-  const exported = await snapshot(db, "production", { now });
-  assert.equal(exported.catalog.books[0].files[0].reason, "uploaded");
-  assert.equal(exported.catalog.books[0].files[0].status, "candidate");
-  assert.ok(!JSON.stringify(exported.catalog).includes("object_key"));
-});
-
-test("SHA labels and ETag alone cannot confirm corrupt bytes; absence never auto-releases", async (t) => {
-  const db = await sqlFixture(t),
-    { manifest, catalog } = await sourceFixture(t),
-    r2 = memoryR2({ corrupt: true });
-  await bootstrap(db, "production", catalog, undefined, now);
-  await assert.rejects(
-    uploadOne(
-      db,
-      "production",
-      "test-account",
-      manifest,
-      "file_1",
-      evidence(),
-      r2,
-      { now },
+    await Promise.all(
+      [manifestPath, ...Object.values(manifest.files).map((f) => f.path)].map(
+        (f) => fs.readFile(f),
+      ),
     ),
-    { code: "object_hash_mismatch" },
+    beforeFiles,
   );
-  assert.equal(
-    (await db.query("SELECT state FROM upload_reservations"))[0].state,
-    "uncertain",
-  );
-  assert.equal((await db.query("SELECT * FROM file_registry")).length, 0);
-  r2.objects.clear();
-  const result = await reconcile(db, "production", "file_1", r2, { now });
-  assert.equal(result.blockedReason, "object_absence_unresolved");
-  assert.equal(
-    (await db.query("SELECT reserved_bytes FROM storage_state"))[0]
-      .reserved_bytes,
-    4,
+  assert.deepEqual(
+    await Promise.all(
+      tables.map((table) => db.query(`SELECT * FROM ${table}`)),
+    ),
+    beforeLedger,
   );
 });
 
@@ -622,10 +689,9 @@ test("snapshot retries revision changes, aborts persistent churn and preserves i
   );
 });
 
-test("R2 adapter signs only isolated immutable keys and a conditional PUT without redirects", async () => {
+test("legacy R2 PUT rejects before fetch while isolated read signing remains available", async () => {
   const calls = [],
-    bytes = Buffer.from("book"),
-    digest = createHash("sha256").update(bytes).digest("hex");
+    digest = "a".repeat(64);
   const client = r2Client(
     {
       accountId: "a".repeat(32),
@@ -638,21 +704,41 @@ test("R2 adapter signs only isolated immutable keys and a conditional PUT withou
       clock: () => new Date(now),
       fetchImpl: async (url, options) => {
         calls.push({ url, options });
-        return new Response(null, { status: 200 });
+        return new Response(null, {
+          status: 200,
+          headers: {
+            "content-length": "4",
+            "x-amz-meta-sha256": digest,
+            etag: '"test"',
+          },
+        });
       },
     },
   );
-  await client.put(`cf03-check/file_1/${digest}.epub`, bytes, {
-    sha256: digest,
-    format: "EPUB",
-  });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].options.redirect, "error");
-  assert.equal(calls[0].options.headers["if-none-match"], "*");
-  assert.match(
-    calls[0].options.headers.authorization,
-    /SignedHeaders=.*if-none-match/,
+  await assert.rejects(
+    client.put(`cf03-check/file_1/${digest}.epub`, Buffer.from("book"), {
+      sha256: digest,
+      format: "EPUB",
+    }),
+    { code: "legacy_storage_migration_required" },
   );
+  const poison = new Proxy(
+    {},
+    {
+      get() {
+        throw Error("must not read upload input");
+      },
+    },
+  );
+  await assert.rejects(client.put(poison, poison, poison), {
+    code: "legacy_storage_migration_required",
+  });
+  assert.equal(calls.length, 0);
+  await client.head(`cf03-check/file_1/${digest}.epub`);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, "HEAD");
+  assert.equal(calls[0].options.redirect, "error");
+  assert.match(calls[0].options.headers.authorization, /SignedHeaders=/);
   await assert.rejects(client.head(`books/cf03/file_1/${digest}.epub`), {
     code: "invalid_storage_key",
   });
@@ -772,7 +858,7 @@ test("CLI parses explicit profile/single file and dry runs without creating netw
         now,
       },
     ),
-    { code: "account_storage_unknown" },
+    { code: "legacy_storage_migration_required" },
   );
 });
 
@@ -1173,10 +1259,17 @@ async function laggedMetricBoundary(t) {
   );
   const first = await selectedFile(manifest, "file_1"),
     second = await selectedFile(manifest, "file_2");
-  await reserve(db, "production", "test-account", first, oldEvidence, now);
-  const r2 = memoryR2();
-  await r2.put(first.objectKey, first.data, { sha256: first.sha256 });
-  await reconcile(db, "production", "file_1", r2, { now });
+  await legacySqlReservation(
+    db,
+    "production",
+    "test-account",
+    first,
+    oldEvidence,
+    now,
+  );
+  await db.query(
+    "UPDATE upload_reservations SET state='confirmed',content_verified=1,etag='historical-etag' WHERE file_id='file_1'",
+  );
   return {
     db,
     manifest,
@@ -1221,7 +1314,7 @@ test("other usage plus a recent confirmed upload stays additive even when fresh 
   assert.equal(plan.budget.projectedBytes, 300);
   assert.equal(plan.budget.overlapDeductedBytes, 0);
   await assert.rejects(
-    reserve(
+    legacySqlReservation(
       db,
       "production",
       "test-account",
@@ -1309,7 +1402,7 @@ test("002 migration replaces only the old max-budget trigger and preserves ledge
     current.sql,
   );
   await assert.rejects(
-    reserve(
+    legacySqlReservation(
       db,
       "production",
       "test-account",

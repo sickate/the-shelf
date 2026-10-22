@@ -72,6 +72,7 @@ export async function saveResult(db, id, state, result) {
     state, JSON.stringify(result), Date.now(), validId(id)).run();
 }
 export async function reserve(db, input) {
+  if (input.kind === "storage") throw new ProbeError("legacy_storage_migration_required", 409);
   const now = Date.now();
   // The schema trigger atomically reserves the run. Tombstones survive cleanup, so a retried ID
   // never recreates work and cleanup cannot reset the lifetime execution cap.
@@ -84,16 +85,8 @@ export async function reserve(db, input) {
       input.kind, input.kind === "workflow" ? 4 : input.kind === "storage" ? 4 : 2, input.kind).run();
   return result.meta.changes > 0;
 }
-export async function storageProbe(env, id) {
-  const key = objectKey(id);
-  const text = `The Shelf neutral CF-01 diagnostic ${id}\n`;
-  await env.CF_BUCKET.put(key, text, { httpMetadata: { contentType: "text/plain" } });
-  const full = await env.CF_BUCKET.get(key);
-  const range = await env.CF_BUCKET.get(key, { range: { offset: 4, length: 5 } });
-  const fullOk = full?.size === new TextEncoder().encode(text).byteLength && await full.text() === text;
-  const rangeOk = range && await range.text() === text.slice(4, 9);
-  if (!fullOk || !rangeOk) throw new ProbeError("r2_verification_failed", 502);
-  return { fullOk: true, rangeOk: true, bytes: new TextEncoder().encode(text).byteLength };
+export async function storageProbe() {
+  throw new ProbeError("legacy_storage_migration_required", 409);
 }
 export async function runWorkflow(env, input, step) {
   validateInput(input);
