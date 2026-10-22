@@ -54,6 +54,10 @@ node scripts/storage-migrate.mjs schema-freeze --execute --run-id schema-resume-
 
 `status` 仍会在本机写私有观测收据，其“只读”指云端没有写操作。它没有完整的旧R2能力关闭证明，不能用作生产上传许可。
 
+失败请求的 outcome 现在保留实际 HTTP 状态、最多8个受限数字 provider code、顶层及单查询 success 三态、result 形状，以及固定 `legacy_storage_frozen` token/精确错误格式是否出现的布尔值；不保存 provider message、响应正文或秘密。HTTP 200、400、409 与 5xx 必须分开记录，token 布尔值仅帮助诊断，不证明 SQL 已原子拒绝。旧收据中未记录的状态/错误不得事后补推断。
+
+若未决写入属于已知负向预留探针，`status` 仅根据既有 run ID、profile 和完全匹配的固定 SQL hash，对最多8条探针逐条读取精确 reservation ID 的 COUNT，并独立读取两个固定 D1 的 reservation/registry 总 COUNT。这些读请求计入原32次HTTP上限。即使全部为零，收据仍明确 `atomicRejectionProven=false`，旧 unknown 不改成 rejected；若发现任何行则撤销旧恢复检查点并要求预算/库存审查，绝不自动删除。schema 匹配或当前不存在探针行均不能代替当次 SQL 原子拒绝证据；本阶段不改变负向拒绝的接受规则，也不自动重发探针 INSERT。
+
 ## 尚未实现的收口及回退
 
 后续真实关闭能力验收必须单独实现：固定本项目本机旧写入口及其活动连接关闭、持久任务停止和排空、旧CF01 probe 的写绑定/凭证/路由关闭与独立读回、在明确上界内排空已开始的PUT，并提供结构化且可复核的关闭证明。拟议 `close-probe` 必须是固定资源、有限请求、私有预登记和失败保守的独立动作；当前CLI不接受该动作，不能拿冻结标记、环境变量或调用者布尔值代替证明。只有真正实现并验收关闭证明之后，才能评审解除 `ready` 阻断。

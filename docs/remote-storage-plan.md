@@ -70,6 +70,12 @@ production 如果真实没有业务表：须取得固定 ID/name identity、限�
 
 同步协议现在等待异步claim CAS完成后才允许PUT，并等待uncertain落库；有界回归覆盖延迟CAS、CAS失败零PUT、uncertain失败保留原错误、真实旧schema查询、最大请求数、预写intent、外部/符号链接路径、非空本机JSON账本、缺失manifest、缺失/错误D1、不完整evidence、超长响应、忽略AbortSignal的fetch、停滞正文/取消及重定向。此检查点由main review、全套验证及commit/push/CI后执行首次真实只读inventory，不执行云写或上传。
 
-## 官方契约核对
+## 2026-10-22 接续：CF01旧写能力关闭的先行只读核查
+
+主Agent已在提交 `4e23dd3`、本地471项Node/8项Python及两CI通过后执行真实schema冻结。100条DDL及两个冻结标记已独立读回；旧入口负向验证返回未分类错误，保留unknown并停止，authority仍uninitialized，不继续导入或上传。先由Sol/high补齐受限错误元数据与历史probe行精确只读查询，再经review/验证/提交/CI恢复；不得凭完整schema把负向验证补记成功。
+
+并行只读核查由 `gpt-6.1-sol / high` 实施：固定CF01资源，核对实际历史版本与R2写路径、持久预算/运行/tombstone及已完成私人receipt。只读工具默认preview零IO，显式execute每请求durable intent，最多16个固定项目管理请求、单响应最多2MB、期限30秒，不列账号资源、不读取其他项目、不重放probe。使用官方Worker beta version `include=modules`只读取该固定Worker的历史代码；内容仅私有保存或记录hash，不输出秘密。实际所有storage admission都须可映射到先持久预留、后await PUT、后明确成功终态的同版本代码；缺版本、失败/未知/活跃行、缺页均不形成closure证明。
+
+只读库存本身不能关闭在禁用前已接入但尚未reserve的旧请求。下一mutating动作须独立review固定CF01 D1 storage-only admission guard并回读，在不改历史行、Workflow或其他诊断的前提下永久拒绝后续storage预留，然后完整核对已预留历史终态并移除旧R2绑定/入口。可信完整调度账本可能提供终态排空依据；只有真正取得该证据后才评审支持此证明来源，不能以调用者布尔值或时间等待替代。当前先行核查不写云端、不改变ready阻断，也不放宽R2新鲜完整用量门槛。失败保留全部证据和现有静态站。
 
 2026-10-21通过官方HTTPS读取[D1 Database API](https://developers.cloudflare.com/d1/worker-api/d1-database/)：`batch()` 的语句顺序执行，任何一条失败会回滚整批；`withSession("first-primary")` 首次读走primary并维持后续顺序一致性。这不等于跨D1或跨R2事务，安全准入必须由同一D1内原子写入决定。通过[D1 limits](https://developers.cloudflare.com/d1/platform/limits/)核对SQL 100KB、100绑定参数、单行2MB、单查询30秒；batch内每条语句仍受单查询限制。以上两页实际读取成功，web工具的runtime代理404由直接官方HTTPS只读获取替代。

@@ -2,6 +2,16 @@
 
 更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
 
+## 2026-10-22 实际冻结与R2观察
+
+第二检查点 `4e23dd3895145d4a2163f03354cd24324be8cf56` 已推送；Cloudflare artifact CI `39717347207` 和 Pages CI `39717347250` 成功。主站仍为上一受控静态部署，API和私人云端阅读关闭，上传书籍0本。
+
+主Agent实际执行 `schema-freeze` 运行 `schema-20261022-4e23dd3`：134个HTTP已派发、100条DDL已完成；第134个check旧预留负向验证记录unknown后停止。独立只读运行 `status-after-schema-20261022-4e23dd3` 以11个HTTP确认两库schema完整（56/88个对象）和冻结标记存在，authority尚未初始化。没有导入、激活或R2 PUT。旧响应未保留可分类元数据，不推断其具体HTTP状态或事务结果；未知收据和state必须保留。证据在 `.local/cf03/storage-migration/` 对应运行目录。
+
+R2只读运行 `r2-observation-20261022-4e23dd3` 以2个固定汇总请求完成观察，但新样本约24.5分钟前、账号存储为max非sum、操作采样/覆盖及Free状态未完整证明，结果 `observed_incomplete`、`uploadEligible=false`。最新样本的零不能当完整账号零。未列其他桶或读取对象，证据在 `.local/r2-account-audit/` 对应运行目录。
+
+接续先review并发布诊断增强，再只读精确检查历史probe是否留行；原unknown保留、不自动重放。CF01旧写能力及在途调度终态另作固定范围核查，缺完整closure仍不能ready。下方旧轮事实保留为历史。
+
 ## 2026-10-21 检查点
 
 2026-10-22 用户再次要求核验 `.env` 的 `SHELF_OAI_KEY` 后，重新读取公开指南并执行独立有界 smoke `ai-key-check-20261022-0258`。无Key401，两次带Key的 `gpt-luna` 合成任务均200；普通文本与显式JSON对象均通过，耗时约5005ms和3148ms。共3个HTTP、2个带Key任务、零重试，没有发送书籍或私人内容。当前Key/文本入口/该模型已实测可用，`gpt-sol` 未单独实测；前轮503仍保留unknown历史。私有证据为 `.local/ai-smoke/ai-key-check-20261022-0258/receipt.json`，不包含Key或生成正文。公开指南此次仍标注2026-10-20更新。

@@ -47,6 +47,7 @@ const SAFE_CODES = new Set([
   "migration_operator_busy",
   "migration_original_empty_source_unproven",
   "migration_preflight_invalid",
+  "migration_probe_diagnostic_limit",
   "migration_private_directory_changed",
   "migration_private_directory_unsafe",
   "migration_private_file_changed",
@@ -205,6 +206,67 @@ const FILES = Object.freeze({
   freeze: "cloudflare/library/migrations/004-freeze-legacy-storage.sql",
 });
 const RESPONSE_LIMIT = 1_000_000;
+const FREEZE_PROBE_SQL =
+  "INSERT INTO upload_reservations(reservation_id,scope,file_id,book_id,object_key,size_bytes,format,sha256,state,created_at,updated_at) VALUES(?,?,?,?,?,1,'PDF',?,'reserved',?,?)";
+// Only bounded, structural provider diagnostics may enter the private journal.
+// A token observation is diagnostic; it never proves an atomic SQL rejection.
+function providerObservation(body) {
+  const first = Array.isArray(body?.result) ? body.result[0] : undefined;
+  const errors = [
+    ...(Array.isArray(body?.errors) ? body.errors.slice(0, 8) : []),
+    ...(Array.isArray(first?.errors) ? first.errors.slice(0, 8) : []),
+  ];
+  const messages = errors
+    .map((entry) => entry?.message)
+    .filter((value) => typeof value === "string");
+  for (const value of [body?.error, first?.error])
+    if (typeof value === "string") messages.push(value);
+  return {
+    envelopeSuccess:
+      body?.success === true
+        ? "true"
+        : body?.success === false
+          ? "false"
+          : "missing",
+    resultShape: Array.isArray(body?.result)
+      ? "array"
+      : record(body?.result)
+        ? "object"
+        : body?.result === null
+          ? "null"
+          : "missing-or-other",
+    querySuccess:
+      first?.success === true
+        ? "true"
+        : first?.success === false
+          ? "false"
+          : "missing",
+    providerCodes: [
+      ...new Set(
+        errors
+          .map((entry) => entry?.code)
+          .filter(
+            (value) =>
+              Number.isSafeInteger(value) && value >= 0 && value <= 999999999,
+          ),
+      ),
+    ].slice(0, 8),
+    legacyTokenPresent: messages.some((value) =>
+      /\blegacy_storage_frozen\b/.test(value),
+    ),
+    sqliteConstraintPresent: messages.some((value) =>
+      /\bSQLITE_CONSTRAINT(?:_TRIGGER)?\b/.test(value),
+    ),
+    legacyConstraintExact: messages.some((value) =>
+      /^(?:D1_ERROR: )?legacy_storage_frozen(?:: SQLITE_CONSTRAINT(?:_TRIGGER)?)?$/.test(
+        value,
+      ),
+    ),
+    errorsTruncated:
+      (Array.isArray(body?.errors) && body.errors.length > 8) ||
+      (Array.isArray(first?.errors) && first.errors.length > 8),
+  };
+}
 // sqlite_master preserves the submitted definition. Never fold whitespace in
 // quoted literals: even apparently cosmetic drift must stop this fixed operator.
 const normalizeSql = (sql) => sql.trim().replace(/;$/, "");
@@ -628,7 +690,7 @@ class Transport {
         : {}),
     });
     const controller = new AbortController();
-    let response, timer;
+    let response, timer, diagnostic;
     try {
       const attempt = (async () => {
         response = await this.fetchImpl(value.target.href, {
@@ -662,6 +724,7 @@ class Transport {
           return { absent: true };
         }
         const body = await boundedJson(response, controller.signal);
+        diagnostic = providerObservation(body);
         if (
           metadata.expectFrozen &&
           response.status === 400 &&
@@ -717,6 +780,8 @@ class Transport {
       cancel(response?.body);
       await this.journal.outcome(entry, mutating ? "unknown" : "failed", {
         code: safeCode(error),
+        ...(response ? { httpStatus: response.status } : {}),
+        ...(diagnostic ? { provider: diagnostic } : {}),
       });
       throw new MigrationError(
         mutating ? "migration_write_outcome_unknown" : safeCode(error),
@@ -1065,7 +1130,7 @@ async function schemaFreeze(
     await closedAuth(transport, profile);
     const rejected = await transport.query(
       profile,
-      "INSERT INTO upload_reservations(reservation_id,scope,file_id,book_id,object_key,size_bytes,format,sha256,state,created_at,updated_at) VALUES(?,?,?,?,?,1,'PDF',?,'reserved',?,?)",
+      FREEZE_PROBE_SQL,
       [
         `freeze-proof-${journal.receipt.runId}`,
         profile,
@@ -1427,6 +1492,74 @@ async function statusReadback(context, journal, transport, manifest) {
     }
   }
   const pending = unresolved(journal.state);
+  const probes = pending.filter(
+    (operation) => operation.operation === "prove-legacy-reservation-rejected",
+  );
+  if (probes.length > 8) fail("migration_probe_diagnostic_limit");
+  if (probes.length) {
+    const observations = [];
+    for (const operation of probes) {
+      if (
+        !RUN_ID.test(operation.runId || "") ||
+        !["check", "production"].includes(operation.profile) ||
+        operation.sqlSha256 !== hash(FREEZE_PROBE_SQL) ||
+        operation.mutating !== true
+      )
+        fail("migration_state_conflict");
+      const rows = await transport.query(
+        operation.profile,
+        "SELECT COUNT(*) AS count FROM upload_reservations WHERE reservation_id=?",
+        [`freeze-proof-${operation.runId}`],
+        { operation: "status-exact-negative-probe-count" },
+      );
+      if (rows.length !== 1 || !integer(rows[0].count) || rows[0].count > 1)
+        fail("migration_response_invalid");
+      observations.push({
+        runId: operation.runId,
+        sequence: operation.sequence,
+        profile: operation.profile,
+        exactReservationCount: rows[0].count,
+        atomicRejectionProven: false,
+      });
+    }
+    const totals = {};
+    for (const profile of ["check", "production"]) {
+      const rows = await transport.query(
+        profile,
+        "SELECT (SELECT COUNT(*) FROM upload_reservations) AS reservations,(SELECT COUNT(*) FROM file_registry) AS registry",
+        [],
+        { operation: "status-legacy-storage-total-counts" },
+      );
+      if (
+        rows.length !== 1 ||
+        !integer(rows[0].reservations) ||
+        !integer(rows[0].registry)
+      )
+        fail("migration_response_invalid");
+      totals[profile] = rows[0];
+    }
+    // This is an observation of current presence, not proof of the old request's
+    // outcome. Preserve every unknown operation and never mark it rejected.
+    status.negativeProbeReadback = {
+      observations,
+      totals,
+      atomicRejectionProven: false,
+    };
+    journal.receipt.negativeProbeReadback = status.negativeProbeReadback;
+    await journal.save();
+    if (
+      observations.some((value) => value.exactReservationCount !== 0) ||
+      Object.values(totals).some(
+        (value) => value.reservations !== 0 || value.registry !== 0,
+      )
+    ) {
+      journal.state.recovery = null;
+      await journal.stateSave();
+      status.recoveryBlockedBy =
+        "migration_inventory_changed_requires_budget_review";
+      return status;
+    }
+  }
   if (pending.length) {
     const latest = Math.max(
       ...pending.map((operation) => operation.registeredAt),

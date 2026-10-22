@@ -747,7 +747,10 @@ test("HTTP503 carrying a freeze error is an unknown write, never proven transact
       JSON.parse(options.body).sql.startsWith("INSERT INTO upload_reservations")
     )
       return Response.json(
-        { success: false, errors: [{ message: "legacy_storage_frozen" }] },
+        {
+          success: false,
+          errors: [{ code: 7500, message: "legacy_storage_frozen" }],
+        },
         { status: 503 },
       );
   });
@@ -759,6 +762,123 @@ test("HTTP503 carrying a freeze error is an unknown write, never proven transact
   assert.ok(
     state.operations.some((operation) => operation.state === "unknown"),
   );
+  const unknown = state.operations.find(
+    (operation) => operation.state === "unknown",
+  );
+  assert.equal(unknown.httpStatus, 503);
+  assert.deepEqual(unknown.provider.providerCodes, [7500]);
+  assert.equal(unknown.provider.envelopeSuccess, "false");
+  assert.equal(unknown.provider.legacyTokenPresent, true);
+  assert.equal(unknown.provider.legacyConstraintExact, true);
+  state.operations.forEach((operation) => {
+    if (["pending", "unknown"].includes(operation.state))
+      operation.registeredAt -= 32000;
+  });
+  await f.writeState(state);
+  const count = f.calls.length;
+  const status = await f.run("status", "diagnose-unknown-probe");
+  assert.equal(status.recoveryObserved, true);
+  assert.ok(
+    f.calls
+      .slice(count)
+      .every(
+        (call) =>
+          !call.options.body ||
+          /^SELECT /.test(JSON.parse(call.options.body).sql),
+      ),
+  );
+  const receipt = JSON.parse(
+    await fs.readFile(path.join(f.root, status.privateReceipt), "utf8"),
+  );
+  assert.equal(receipt.negativeProbeReadback.atomicRejectionProven, false);
+  assert.equal(
+    receipt.negativeProbeReadback.observations[0].exactReservationCount,
+    0,
+  );
+  assert.deepEqual(receipt.negativeProbeReadback.totals, {
+    check: { reservations: 0, registry: 0 },
+    production: { reservations: 0, registry: 0 },
+  });
+  assert.equal(
+    (await f.state()).operations.filter(
+      (operation) => operation.state === "unknown",
+    ).length,
+    1,
+  );
+  // A later observation of a probe row must invalidate even an older successful
+  // recovery checkpoint. It must not delete that row or classify the write.
+  f.fault((url, options) => {
+    if (!url.includes(IDS.check) || !options.body) return;
+    const { sql } = JSON.parse(options.body);
+    let results;
+    if (
+      sql ===
+      "SELECT COUNT(*) AS count FROM upload_reservations WHERE reservation_id=?"
+    )
+      results = [{ count: 1 }];
+    if (sql.startsWith("SELECT (SELECT COUNT(*) FROM upload_reservations)"))
+      results = [{ reservations: 1, registry: 0 }];
+    if (results)
+      return Response.json({
+        success: true,
+        result: [{ success: true, results }],
+      });
+  });
+  const blocked = await f.run("status", "probe-row-present");
+  assert.equal(
+    blocked.recoveryBlockedBy,
+    "migration_inventory_changed_requires_budget_review",
+  );
+  assert.equal((await f.state()).recovery, null);
+  assert.equal(
+    (await f.state()).operations.filter(
+      (operation) => operation.state === "unknown",
+    ).length,
+    1,
+  );
+});
+
+test("failed response diagnostics retain only bounded provider numbers and envelope booleans across HTTP statuses", async (t) => {
+  const f = await fixture(t);
+  for (const status of [200, 400, 409, 503]) {
+    f.fault(() =>
+      Response.json(
+        {
+          success: false,
+          errors: [
+            { code: 7500, message: `${TOKEN} legacy_storage_frozen` },
+            { code: TOKEN, message: TOKEN },
+          ],
+          result: [
+            {
+              success: false,
+              error: "legacy_storage_frozen: SQLITE_CONSTRAINT",
+            },
+          ],
+        },
+        { status },
+      ),
+    );
+    await assert.rejects(f.run("status", `diagnostic-${status}`), {
+      code: "migration_remote_rejected",
+    });
+    const raw = await fs.readFile(
+      path.join(
+        f.root,
+        `.local/cf03/storage-migration/diagnostic-${status}/receipt.json`,
+      ),
+      "utf8",
+    );
+    assert.ok(!raw.includes(TOKEN));
+    const request = JSON.parse(raw).requests[0];
+    assert.equal(request.httpStatus, status);
+    assert.equal(request.state, "failed");
+    assert.deepEqual(request.provider.providerCodes, [7500]);
+    assert.equal(request.provider.resultShape, "array");
+    assert.equal(request.provider.querySuccess, "false");
+    assert.equal(request.provider.legacyTokenPresent, true);
+    assert.equal(request.provider.sqliteConstraintPresent, true);
+  }
 });
 
 test("import rechecks configured local manifest, ledger and lock after schema freeze before any cloud write", async (t) => {
