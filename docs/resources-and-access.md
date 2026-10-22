@@ -16,6 +16,8 @@ CF03另以 `post-cf01-close-20261022-6cebed0` 独立15HTTP status回读，author
 
 契约保护的本地验收：Sol/high专项68项通过，主Agent review与独立完整588项Node/8项Python通过，零失败/跳过；顺序disabled构建1280页、公开1318文件、静态1304资源及真实凭证扫描1484文件均通过，零秘密命中/不安全文件。待提交推送后以对应CI结果核对静态回退发布，不据此重试云端PATCH或宣称业务上线。
 
+本地修正提交为 `fcfb3d12c7a27ea2022e7d69f7ce5c171156c69f`；随后SSH推送连接关闭，HTTPS推送DNS失败，独立GitHub API亦连接失败，主站runtime GET解析超时。未取得本提交的远端CI或线上验证，不将上一提交的成功结果套用到本修正。下次先确认远端实际HEAD，再在网络恢复后推送并验收现有CI；本机已保存代码和文档，私人证据原样保留。
+
 ## 2026-10-22 恢复开发：真实迁移验收记录
 
 本轮从提交 `de20e307e9caee1540bef8146d12ef19f4c2b414` 接续。对应 Cloudflare artifact 工作流 `39723864943` 与 Pages 工作流 `39723864972` 均成功；Cloudflare 自动部署关闭。`storage-migrate` 与 `cf01-storage-audit` 专项测试共 56 项通过，零跳过。

@@ -28,6 +28,8 @@ R2实施补充：官方固定 `GET /accounts/{account}/r2/metrics` 提供无桶�
 
 契约保护实现已由主Agent复审：全部PATCH构造和派发已删除，PATCH预算为0；仍有R2时，在六guard和本机配置冻结后、创建PATCH intent前固定拒绝。原unknown及五项expected hash的独立核验继续保留，六guard/BASE_SCHEMA与已落地版本逐字一致。Sol专项68项通过，主Agent独立完整588项Node及8项Python通过，零失败/跳过；测试数量变化来自删除已不可能执行的PATCH响应分支并补入零PATCH门禁。顺序disabled构建1280页、公开产物1318文件、静态资源1304项和实际凭证扫描1484文件均通过，秘密命中/不安全文件为0。此修正未再调用云管理接口，真实绑定收回和上传状态不变；接续不得把代码门禁视为云端闭包完成。
 
+发布接续检查点：修正已保存在本地提交 `fcfb3d12c7a27ea2022e7d69f7ce5c171156c69f`。SSH推送连接被远端关闭，使用已有GitHub登录的HTTPS备用推送又因github.com解析失败退出；独立GitHub API核对也连接失败，主站runtime只读核对DNS超时。因此本次尚未确认远端收到修正、未取得对应CI或线上验收结果，不宣称已发布。下次先核对工作区和远端提交；网络恢复后推送本地检查点，等待两CI并核对Pages静态文档及主站disabled/API404。不得借发布恢复重跑云端close、旧PATCH或上传。
+
 验收与验证：先运行迁移/CF01专项，核对私有输入和历史状态，再真实status→freeze→import→独立status；任何unknown立即停止受影响写入，只读恢复。新实现须覆盖默认零IO、固定资源/预算、逐请求durable intent、未知写不重试、独立回读、身份/配置漂移及秘密消除，主Agent独立审查并运行完整Node/Python、disabled构建、verify:public/static和实际凭证扫描。CF01库存只证明观测；无可信历史执行版本和终态排空证明仍禁止ready。R2新鲜完整证据不足则不上传，不手写许可，不重放旧probe。
 
 明确不做：不修改已落地SQL003/004、不删除历史unknown/预留/收据、不解冻旧入口、不改计费、不将paw改成生产服务器、不扩大账号读取、不启用生产API/auth或私人阅读。后续上传依赖ready与合格R2证据，未满足不得越过。
