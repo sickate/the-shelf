@@ -426,6 +426,47 @@ test("status before create is read only, bounded and reports remaining R2", asyn
   assert.equal(f.mutationCount, 0);
   await f.assertPrivate();
 });
+test("settings-read empty placement reaches concrete source GET but exact cross-metadata remains strict", async (t) => {
+  const f = await fixture(t);
+  f.settingsExtra = { placement: {} };
+  await assert.rejects(f.run("status"), errorIs("metadata_invalid"));
+  assert.equal(f.calls.length, 7);
+  assert.ok(f.calls.at(-1).url.includes(`/${U}?include=modules`));
+  assert.equal(f.mutationCount, 0);
+  assert.deepEqual((await f.state()).writes, []);
+  await f.assertPrivate();
+});
+test("empty placement on concrete version is still unsupported and cannot enable create", async (t) => {
+  const f = await fixture(t);
+  f.settingsExtra = { placement: {} };
+  f.source.placement = {};
+  await assert.rejects(f.run("create"), errorIs("metadata_invalid"));
+  assert.equal(f.calls.length, 7);
+  assert.equal(f.mutationCount, 0);
+  assert.deepEqual((await f.state()).writes, []);
+});
+test("matching explicit smart placement remains supported in settings and concrete version", async (t) => {
+  const f = await fixture(t);
+  f.settingsExtra = { placement: { mode: "smart" } };
+  f.source.placement = { mode: "smart" };
+  const result = await f.run("status");
+  assert.equal(result.requests, 13);
+  assert.equal(f.mutationCount, 0);
+});
+for (const placement of [
+  { mode: "off" },
+  { mode: "targeted" },
+  { extra: true },
+  null,
+  [],
+])
+  test(`settings-read nonempty unsupported placement ${JSON.stringify(placement)} remains rejected`, async (t) => {
+    const f = await fixture(t);
+    f.settingsExtra = { placement };
+    await assert.rejects(f.run("status"), errorIs("metadata_invalid"));
+    assert.equal(f.calls.length, 5);
+    assert.equal(f.mutationCount, 0);
+  });
 test("undeployed latest settings may show candidate while actual current remains source", async (t) => {
   const f = await fixture(t);
   f.settingsLatest = true;

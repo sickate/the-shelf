@@ -55,6 +55,20 @@ Generic crypto/Workflow records are validated for the finite projection and
 then discarded. Opaque `result_json` strings are never parsed; malformed JSON
 inside that string does not prevent preserving a safe request classification.
 
+Two explicit historical compatibility fields are validated and then erased:
+request-level `operatorRecovery` must be an opaque string of at most 256
+characters and 1,024 JSON-encoded bytes; it is never parsed or used to repair an
+outcome, supply a run ID, or explain an unknown request. The optional Workflow
+`rollback` field follows the [official binding status contract](https://developers.cloudflare.com/workflows/build/workers-api/#instancestatus):
+`null`, or exactly `outcome` (`complete`/`failed`) and `error` (`null`, or exactly
+string `name`/`message`). Each error string is limited to 1,024 characters and
+the full rollback value to 4,096 JSON-encoded bytes. All rollback metadata is
+discarded. Officially, the top-level Workflow status may remain `running`
+during rollback; this metadata supplies no completion or drain proof. Other
+extra fields, unknown enums, wrong types, and over-limit metadata still fail
+closed. These compatibility fields never enter projections, counters, summaries,
+or release flags, and the original evidence remains unchanged.
+
 `unresolvedStarts` and `unresolvedMutations` count pending/unknown transport
 outcomes, with mutations limited to POST/DELETE. `failedResponses` counts HTTP
 statuses at least 400. `storageCompletedResponses` counts successful HTTP

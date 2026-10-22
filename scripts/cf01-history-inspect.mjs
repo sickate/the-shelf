@@ -56,6 +56,26 @@ const timestamp = (v) =>
 const labels = ["storage", "scrypt", "pbkdf2", "short", "long", "uncertain"];
 const kinds = ["storage", "scrypt", "pbkdf2", "workflow"];
 const states = ["reserved", "running", "completed", "failed", "uncertain"];
+const opaqueString = (v, maxChars, maxBytes) =>
+  typeof v === "string" &&
+  v.length <= maxChars &&
+  Buffer.byteLength(JSON.stringify(v)) <= maxBytes;
+
+function validateOpaqueRollback(value) {
+  if (value === null) return;
+  if (
+    !keys(value, ["outcome", "error"]) ||
+    !["complete", "failed"].includes(value.outcome) ||
+    !Object.hasOwn(value, "error") ||
+    (value.error !== null &&
+      (!keys(value.error, ["name", "message"]) ||
+        !opaqueString(value.error.name, 1024, 4096) ||
+        !opaqueString(value.error.message, 1024, 4096))) ||
+    Buffer.byteLength(JSON.stringify(value)) > 4096
+  )
+    fail();
+  // This provider metadata never contributes to state, association or proof.
+}
 
 function responseProjection(data) {
   if (
@@ -86,7 +106,7 @@ function responseProjection(data) {
     fail();
   if (Object.hasOwn(data, "workflow") && data.workflow !== null) {
     if (
-      !keys(data.workflow, ["status", "error", "output"]) ||
+      !keys(data.workflow, ["status", "error", "output", "rollback"]) ||
       ![
         "queued",
         "running",
@@ -101,6 +121,8 @@ function responseProjection(data) {
       ].includes(data.workflow.status)
     )
       fail();
+    if (Object.hasOwn(data.workflow, "rollback"))
+      validateOpaqueRollback(data.workflow.rollback);
     // Workflow output/error can contain provider data; never inspect or project it.
   }
   const r = data.run;
@@ -181,12 +203,26 @@ export function projectCf01History(input) {
   });
   const requests = input.requests.map((r, index) => {
     if (
-      !keys(r, ["method", "pathname", "at", "outcome", "status", "data"]) ||
+      !keys(r, [
+        "method",
+        "pathname",
+        "at",
+        "outcome",
+        "status",
+        "data",
+        "operatorRecovery",
+      ]) ||
       !["GET", "POST", "DELETE"].includes(r.method) ||
       !timestamp(r.at) ||
       !["pending", "response", "uncertain_no_resend"].includes(r.outcome)
     )
       fail();
+    if (
+      Object.hasOwn(r, "operatorRecovery") &&
+      !opaqueString(r.operatorRecovery, 256, 1024)
+    )
+      fail();
+    // Historical operator annotation is opaque and cannot repair an outcome.
     const pathId =
       typeof r.pathname === "string" && r.pathname.startsWith("/v1/runs/")
         ? r.pathname.slice(9)

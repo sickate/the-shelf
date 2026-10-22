@@ -251,6 +251,105 @@ test("missing/extra fields, unknown enums, wrong shapes, conflicting IDs and cap
   );
 });
 
+test("bounded historical operatorRecovery and official rollback metadata are erased without changing projection", () => {
+  const original = evidence(),
+    expected = projectCf01History(original);
+  for (const rollback of [
+    null,
+    { outcome: "complete", error: null },
+    { outcome: "failed", error: { name: SENTINEL, message: SENTINEL } },
+  ]) {
+    const input = clone(original);
+    input.requests[1].operatorRecovery = JSON.stringify({
+      runId: ID,
+      outcome: "response",
+      note: SENTINEL,
+    });
+    input.requests[6].data.workflow.rollback = rollback;
+    const projected = projectCf01History(input);
+    assert.deepEqual(projected, expected);
+    assert.equal(projected.requests[1].outcome, "unknown");
+    assert.equal(projected.requests[1].attribution, "unattributed");
+    assert.equal(projected.requests[1].runRef, null);
+    const output = JSON.stringify(projected);
+    for (const forbidden of [SENTINEL, "operatorRecovery", "rollback", ID])
+      assert.ok(!output.includes(forbidden));
+    assertClosed(projected);
+  }
+});
+
+test("only the two explicit annotation keys are compatible; wrong types, unknown shapes/enums and bounds fail", () => {
+  for (const annotation of [
+    null,
+    {},
+    [],
+    0,
+    true,
+    "x".repeat(257),
+    "\u0000".repeat(171),
+  ]) {
+    const input = evidence();
+    input.requests[1].operatorRecovery = annotation;
+    invalid(() => projectCf01History(input));
+  }
+  for (const rollback of [
+    false,
+    "complete",
+    [],
+    {},
+    { outcome: "complete" },
+    { outcome: "unknown", error: null },
+    { outcome: "complete", error: null, extra: SENTINEL },
+    { outcome: "failed", error: {} },
+    { outcome: "failed", error: { name: 1, message: SENTINEL } },
+    {
+      outcome: "failed",
+      error: { name: SENTINEL, message: SENTINEL, extra: SENTINEL },
+    },
+    { outcome: "failed", error: { name: "x".repeat(1025), message: "" } },
+    { outcome: "failed", error: { name: "\u0000".repeat(1024), message: "" } },
+    {
+      outcome: "failed",
+      error: { name: "中".repeat(800), message: "中".repeat(800) },
+    },
+  ]) {
+    const input = evidence();
+    input.requests[6].data.workflow.rollback = rollback;
+    invalid(() => projectCf01History(input));
+  }
+  const input = evidence();
+  input.requests[1].operatorRecovery = "x".repeat(256);
+  assert.deepEqual(projectCf01History(input), projectCf01History(evidence()));
+  input.requests[1].operatorRecoveryExtra = SENTINEL;
+  invalid(() => projectCf01History(input));
+});
+
+test("compatible annotations never persist in a private execution receipt or summary", async (t) => {
+  const input = evidence();
+  input.requests[1].operatorRecovery = SENTINEL;
+  input.requests[6].data.workflow.rollback = {
+    outcome: "failed",
+    error: { name: SENTINEL, message: SENTINEL },
+  };
+  const f = await fixture(t, input),
+    before = hash(await fs.readFile(f.filename));
+  const summary = await runCf01HistoryInspect({ execute: true, root: f.root });
+  const receiptName = (await fs.readdir(f.dir)).find((n) =>
+    n.startsWith("history-inspect-"),
+  );
+  const raw = await fs.readFile(path.join(f.dir, receiptName), "utf8"),
+    receipt = JSON.parse(raw);
+  assert.deepEqual(receipt.summary, projectCf01History(evidence()).summary);
+  assert.equal(receipt.requests[1].outcome, "unknown");
+  assert.equal(receipt.requests[1].runRef, null);
+  for (const output of [raw, JSON.stringify(summary)])
+    for (const forbidden of [SENTINEL, "operatorRecovery", "rollback", ID])
+      assert.ok(!output.includes(forbidden));
+  assert.equal(hash(await fs.readFile(f.filename)), before);
+  assertClosed(summary);
+  assertClosed(receipt);
+});
+
 test("default preview and CLI main preview are zero IO/config/network and emit only closed metadata", async (t) => {
   let calls = 0;
   const blocked = () => {

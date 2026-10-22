@@ -22,6 +22,8 @@ node scripts/cf01-version-close.mjs status
 
 所有HTTP先将intent落盘fsync；fetch+body共30秒、响应/请求各2MB上限，不重定向、不重试、不自动分页。私有新状态为 `.local/cf01/version-close-state.json`，每次新收据为 `.local/cf01/version-close-<UUID>.json`。只保存允许的hash/已知枚举/数字和固定资源身份，不保存模块/base64、secret值、annotation文本、作者或provider原始错误。输出错误重新按allowlist构造，外部异常文本不透传。
 
+settings读取允许精确 `placement:{}`，因为固定OpenAPI的settings placement声明 `default:{}`；原样保留它参与旧metadata hash。引用schema和SDK的smart分支仍要求mode，具体version/create没有相同空对象默认声明，因此版本及写body仍只允许placement缺失或 `{mode:"smart"}`。crossMetadata存在性与源/候选精确比较未放宽；settings空对象与version缺失/不支持形状仍安全停止，需后续受限诊断和契约评审。此兼容不放行off/targeted或其他扩展。
+
 任一mutation发生超时、断线、非预期状态、矛盾envelope、落盘失败，或200之后的独立校验失败，均保留dispatched/unknown并停止后续云写。create unknown永不重试，也不允许deploy；候选UUID已持久化只允许固定GET观察，丢失UUID则不list猜认、不创建替代版本。deploy unknown亦不重试；后续独立status可以证明当前已无R2且符合旧expected五hash，但unknown记录始终保留，不改判原请求成功/失败/终止。
 
 原PATCH unknown始终保留。新目标在create之前就必须匹配其五项expected hash：bindings、非binding metadata、可写annotations、代码/入口、subdomain；不改旧hash算法、不重新登记期望。所有回读成功仍只证明观测时当前版本的绑定能力，不能证明旧版本/在途请求/路由/本机进程连接排空。`cloudWriteFreezeProven`、`drainProven`、`uploadAllowed` 始终false，authority保持imported。

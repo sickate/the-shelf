@@ -4,6 +4,32 @@
 
 ## 2026-10-22 发布恢复：2c74cc9 已推送
 
+本轮最小兼容与交接的最终本地验收：主Agent review后独立734项Node/8项Python通过，零失败/取消/跳过（`/tmp/shelf-followup-compat-full-20261022.log`）；随后disabled构建1280页、公开1318文件、静态1304资源及1493文件实际凭证扫描通过，0秘密命中/不安全文件，格式/diff检查通过。该验收不改变下述实际阻断：全部新云动作只读，未create/deploy，原PATCHunknown保留，业务和上传关闭。最新提交与两CI结果按Git历史/本次工作流核对，不用前轮CI代替。
+
+`50473337f5399f2be12d37cfbaaef46f684fd4cf` 已提交推送；Cloudflare CI `39766979379` 全部构建/测试/检查成功，部署skipped；Pages CI `39766979402` build/deploy成功。独立curl确认Pages开发计划与本地提交字节一致，主站runtime disabled、health404。
+
+真实只读接续计划（在上述CI与线上验收后记录）：主Agent串行运行一次 `cf01-version-close status --execute`，固定CF01账号/Worker/D1与现有unknown输入，最多14HTTP（固定D1 SELECT虽用POST亦只读），0云mutation/0DDL/0对象/0重试；新私有状态和新收据使用共享锁，原状态与原收据不写。核对两轮部署、具体版本、settings、subdomain、六guard及库存；任何合法性/hash/身份/权限/并发或响应缺口立即停止，不因剩余预算扩读。该动作不解锁create/deploy、不证明drain；create和deploy各需依据实际结果另记有界计划。随后仅一次运行固定本机history检查，1MB/512项边界、0网络、原证据不变，仅写独立0600安全投影。失败保持六guard、本机空R2配置、全部unknown和imported；无云端回滚、不恢复旧绑定或入口、不上传。
+
+首个version status在锁/收据/云请求之前以config_invalid停止：本机R2数组确为空、preview_urls=false，但workers_dev仍为历史true。此前云端入口关闭记录不能替代本机配置门槛。后续本机收紧计划：复用已验收private store的0700/0600/O_NOFOLLOW/身份pin与fsync/rename，仅把固定私有Wrangler的workers_dev从true改为false，其余字段精确保留，前后读回；不部署、不改云端、不改旧state/receipt/hash。该降低本机误发布能力的配置操作通过后，以全新独立status执行同一14请求只读预算，不复用任何云写。
+
+本机收紧已完成并读回。第二version status实际5HTTP/0mutation，initial-settings200在metadata_invalid停止；前四固定identity/schema/counts/deployment observed，state无writes/候选。history0网络执行因历史字段不兼容停止，原证据不变；有限字段名/type诊断发现request9的operatorRecovery为32bytes JSON string，Workflow rollback均null。Sol/high负责显式有界兼容并消除这两字段，任何历史unknown/归属不改判。另由Sol/high设计一次新status内的已知metadata有限形状诊断，经主Agentreview与有界计划后执行；不额外读取资源或原文，不现场放宽未知字段。详见开发计划顶部追加。
+
+metadata一次性只读诊断计划：主Agent已review Sol/high交付的 `/tmp/shelf-cf01-settings-diagnostic.mjs` 并独立7项合成通过、默认preview0请求。仅一次显式execute，仍调用5047333原status（最多14HTTP/0mutation），wrapper不读私人文件/凭证、不另发fetch；仅固定settings GET200的clone以原signal、2MB/10000chunk/30秒整体边界解析，输出静态META字段presence/type、固定enum/合法性布尔。原Response归还原validator，原状态/收据规则不变，超限/abort/迟到不输出；不输出值、实际额外键名、secret、annotations、代码或provider错误。执行失败仍停止，无重试或云回退；结果只供下一最小契约修正设计，不授权create/deploy/ready。
+
+临时脚本直接CLI因macOS `/tmp` 与 `/private/tmp` 路径别名未触发main，输出为空且0云请求；主Agent已识别并改为显式import后调用导出main，先确认preview输出，再执行上述尚未消耗的单次诊断预算，不修改operator或诊断实现。
+
+实际诊断5HTTP/0mutation，再次在settings metadata校验停止：无未知top keys，已有compatibility/usage字段合法；placement为精确空对象{}，mode及其他字段均缺失。Sol/high核对固定schema的mode可选契约后实施仅{}兼容，保持原样复制/hash，不接受off/其他placement；新验收/CI通过前不再执行version真实动作。history兼容已由主Agent复审、独立15项通过，原unknown与summary规则不变。
+
+只读验收顺序调整见开发计划：最小修正主Agent复审/独立专项通过后，将一次14HTTP/0mutation status及一次0网络history提前作为发布前的真实只读功能验证；每次新缺口停止，不跳过validator，不增请求/范围。云create/deploy继续严格等待完整回归/构建/隐私/提交/两CI及各自计划，ready/上传不变。
+
+history真实只读功能验收已通过：0网络、固定输入未改、写独立0600安全投影；7runs/24requests/8starts，unknown=1、unattributed=1、unresolvedStart=1、unresolvedMutation=1，failedResponse=1、storageCompletedResponse=1、cleanupResponse=7。未知POST仍无法归属，不能把cleanup/completed计数当穷尽或排空证明，readyEligible/drainProven/uploadAllowed均false。settings空placement只读兼容与Version写契约须分开，后者仍严格，详见开发计划追加纠正。
+
+settings-read最小diff已由主Agentreview，独立8项通过：只允许settings默认{}，具体版本{}仍拒绝、跨metadata比较不变；off/targeted/unknown/null/array均仍拒绝。扩展一次性wrapper只增加固定具体版本GET的有限META投影，各surface<=2capture、总HTTP上限仍14，额外fetch=0；主Agent独立8项合成通过。接下来按发布前只读验收计划仅执行一次新status（用显式import/main避免tmp路径别名），0mutation，不因具体版本失败放松validator；据safe projection决定下一契约设计。当前仍无create/deploy。
+
+上述实际status7HTTP/0mutation在具体源版本HTTP200以candidate_invalid停止；具体版本placement缺失，META已知字段合法，但存在不受当前validator支持的顶层字段。最后一次有限诊断计划：Sol/high仅扩展/tmp投影，静态六lifecycle字段及九readonly字段只输出presence/type/null/empty布尔；将unknown按当前支持集合与固定官方Version完整集合分别标记，绝不列实际未知名称/值，不放行lifecycle。主Agent已review并独立9项合成通过；仅执行一次新status原14请求上限/0额外fetch/0mutation，之后按结果设计或保留明确阻断，不追加猜测性请求。原unknown、六guard及预算不动。
+
+最后一次诊断实际7HTTP/0mutation，仍在具体源版本200的candidate_invalid停止：版本顶层同时超出当前支持集合和固定官方完整Version集合，六lifecycle字段均缺失；已有readonly字段类型正常，placement缺失。没有足够契约为额外字段分类，也尚未解决settings默认{}与version缺失的严格对照，因此本阶段保持拒绝、不再云请求、不create/deploy。没有改写旧unknown或声称R2能力已收回；后续先补官方契约依据，不能猜作readonly或通过删字段绕过。当前本地修正、真实history摘要和阻断已交Luna/medium整理，主Agent复审纠正默认表示与committed/reserved表述后接受，最终完整回归与发布结果见提交/工作流。
+
 后续实现的主Agent验收通过：版本工具116项独立专项、history+旧close80项、CLI+core19项；完整723项Node/8项Python零失败/零跳过。顺序disabled构建1280页、公开1318文件、静态1304资源和1493文件实际凭证扫描通过，秘密命中/不安全文件均0。日志仅保存在本机 `/tmp/shelf-followup-full-20261022.log`、`/tmp/shelf-version-main-20261022.log`、`/tmp/shelf-followup-build-20261022.log`。新版本/历史工具仍未真实执行，待本轮提交与两CI通过后先记录有界真实计划；原PATCH unknown、六guard、imported、书籍0和业务关闭状态不变。
 
 用户要求继续后续任务。网络恢复后，主Agent只读确认远端main仍为6cebed0，再通过已有GitHub登录的HTTPS通道推送至 `2c74cc94ef0b291a31100400f9b05a4d01131b23`。Cloudflare CI `39739955059` 成功，部署步骤skipped；Pages CI `39739955068` 的build/deploy均成功。主站curl固定GET回读runtime为schemaVersion=1/apiMode=disabled，API health为404；Python urllib一度返回403，未据此改判应用状态，改用curl独立核对。先前网络失败记录保留为历史，本次恢复不执行CF01云写、账本变更、AI或对象上传。

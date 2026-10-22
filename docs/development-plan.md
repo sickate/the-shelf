@@ -1,5 +1,15 @@
 # The Shelf 开发计划
 
+## 2026-10-22 接续检查点
+
+实现提交 `50473337f5399f2be12d37cfbaaef46f684fd4cf` 已推送；Cloudflare CI `39766979379` 成功但部署跳过，Pages `39766979402` build/deploy 成功，Pages 开发计划与本地字节一致。主站 runtime 仍 disabled，API health 返回404；这些是静态站观测，不代表业务上线。
+
+本轮最小后续修正：history 两字段经有界校验后全部消除，不改变 outcome/归属；独立15项、真实零网络 history 验证通过。观察到7 runs、24 requests、8 starts，`unknown=1`、`unattributed=1`、`unresolvedMutation=1`、`storageCompletedResponse=1`、`cleanupResponse=7`，不得据此宣称完整历史或 drain 已证明。仅 settings 读取接受精确 `placement:{}` 官方默认表示，并原样参与 hash；具体 version/create 与跨 metadata 精确比较仍严格，不将缺失归一为 `{}`。独立8项通过。私有 Wrangler 仅收紧 `workers_dev=false`，R2 绑定仍为 `[]`、preview 为 false，其余字段保留。
+
+真实 status/诊断均为零 mutation。最近两轮各7个 HTTP 请求均在具体源版本的 HTTP 200 `candidate_invalid` 停止；有限诊断只确认 version 有固定官方 schema 外顶层字段，六个官方 lifecycle 字段均缺失，不输出未知字段名称或值。不要盲目重试或放宽 validator；尚未 create/deploy，R2 绑定回收未验收，旧 PATCH `unknown` 与六 guard 保留。最后确认 authority=`imported`，committed/reserved 均为0；书籍为0，API/auth/私人云阅读关闭。合格 R2 证据和 drain 证明仍缺。
+
+主Agent复审后独立完整734项Node及8项Python通过，零失败/取消/跳过；按顺序构建、公开/静态/真实凭证检查后提交推送，最终发布状态以对应Git提交与工作流为准。后续先核对最新commit与CI，再研究官方契约外字段的兼容证明，以及settings默认 `{}` 与version缺失的语义；证据不足就继续拒绝，不重跑旧close/PATCH，不恢复旧写能力，不填ready或上传许可。
+
 第一版已交付真实收藏书架、公开文档，以及可在本机运行的私人阅读与按需 AI 后端。CF-02 已将静态网站迁到 Cloudflare Workers Static Assets；GitHub 保存代码，GitHub Pages 保留为回退站点。业务 API、登录和私人阅读仍未迁移。
 
 更新日期：2026 年 10 月 22 日。阶段：首版已验证；CF-01 评估完成、鉴权需适配；CF-02 静态迁移完成；CF-03 实现与主要安全测试完成，API 未发布；远端存储冻结已验收、空源账本已导入 imported，旧写能力闭包待验收，尚未上传书籍。
@@ -29,6 +39,14 @@
 历史证据采集补充实施：CLI修正经主Agent专项19项通过后，同一Sol/high继续交付固定本机CF01历史检查器，仅以有界只读读取原evidence，保留全部请求序号与有限方法/路径/结果分类，不再丢掉无run ID的POST。默认preview零IO，execute也零网络，不读.env，不修改原证据，不推断缺失body的run归属；输出聚合及私有安全投影，显式标出unattributed/pending/unknown，readyEligible与drainProven始终false。复用已有私有pin/存储helper，原文本/secret/result_json不落输出；纯parser及临时fixture覆盖敏感哨兵、额外/缺失/畸形字段、文件/目录置换和证据不变。它解决采集缺陷，不实现positive-terminal新source、不接入authority或ready；完整回归/构建/隐私/CI及主Agent验收后才实际读取固定私有文件。
 
 本轮实现已由主Agent独立review与验收：版本工具专项116项、历史检查器与旧close联合80项、CLI与core联合19项通过；完整723项Node及8项Python通过，零失败/取消/跳过。六guard及BASE_SCHEMA与HEAD逐字一致，旧close仅新增冻结helper导出及可选有界读取参数，默认2MB不变。所有真实CLI preview为零请求；GitHub中CF自动部署变量未设置，既有工作流继续跳过部署。当前尚无新CF01云调用、候选版本或部署；构建、隐私、提交和CI结果另记，不把本机全绿当实际绑定收回。
+
+真实接续及兼容修正计划：5047333两CI和线上静态已通过。首次status在本机配置校验前0HTTP停止；主Agent仅用已验收privateStore把固定私有Wrangler的workers_dev由true收紧为false、前后回读，其余字段精确保留。随后status5HTTP只读，在initial-settings HTTP200因metadata_invalid停止，前四identity/schema/counts/deployment已观察；没有mutation或候选。history执行亦在输出前因两个历史扩展字段固定拒绝，原输入不变。Sol/high分别承担最小修正：history显式允许有界opaque operatorRecovery string并消除，不改outcome/归属/summary；官方Workflow InstanceStatus.rollback精确null或outcome/error形状仅校验并消除，其他未知字段仍拒绝。version先由Sol交付一次性受限诊断脚本方案供主Agentreview，在新status原14请求预算内仅投影已知metadata字段presence/type/固定enum/合法性布尔，不输出值/secret/annotations，不增请求、不改原validator；拿到事实后才对照固定官方契约另定最小兼容。两修正仍须主Agent独立review、专项/完整回归、顺序构建/隐私与新CI，再接续真实动作；当前create/deploy均未执行，imported、unknown、六guard及关闭状态保留。
+
+诊断后最小修正目标：一次性诊断经主Agent独立7项合成验证后实际5HTTP/0mutation，确认settings无未知键，placement为精确空对象{}而非smart/off；其余出现的已知metadata均合法。Sol/high先确认固定官方schema的mode可选契约；支持时仅新增精确{}或原{mode:smart}兼容，空对象原样复制及hash，不归一为缺失、不接受off/其他placement目标。未知字段、精确metadata比对、五hash与创建/部署门禁不变，配合history修正完成新一轮review/回归/构建/隐私/CI后，再各记真实有界动作。
+
+验证顺序细化：为避免把纯读取输入兼容问题拖到每轮发布后才发现，主Agent完成上述最小diff复审与独立专项后，先将一次version status（仍最多14HTTP/0云mutation、共享锁与全新收据）及一次固定history（0网络/原输入不变）作为真实只读功能验收，任一新缺口立即停止交回Sol，不绕过validator。这取代上一段“所有真实动作均等CI”的只读部分；create/deploy等云mutation依旧必须完整回归、顺序构建/隐私、提交及两CI全部通过，并另记各自有界计划后才执行。此调整不降低任何云写/ready/上传门槛。
+
+固定契约复核纠正：settings.placement含default:{}声明，但其ref的oneOf和Version的placement均有分支required，不能推断mode可选或create placement:{}合法。当前实施缩小为仅settings读取兼容精确默认{}；version/create validator及crossMetadata精确比较保持严格。一次性只读wrapper同时允许对原status本来要GET的固定具体版本作同一有限META投影，各类最多2capture，合计仍14HTTP、0额外fetch，不读取/输出modules值。取得源version事实后才另定默认表示对照或写body方案，尚未决定任何新云写。
 
 ## 2026-10-22 恢复开发：冻结续验、导入与旧能力收口
 

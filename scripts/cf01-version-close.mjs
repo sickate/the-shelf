@@ -162,7 +162,7 @@ const READONLY = [
   "source",
   "startup_time_ms",
 ];
-function metadata(v) {
+function metadata(v, context = "version") {
   const out = {};
   for (const key of META) {
     if (!Object.hasOwn(v, key)) continue;
@@ -184,7 +184,10 @@ function metadata(v) {
         Object.values(x).every((n) => int(n) && n > 0);
     if (key === "usage_model")
       valid = ["standard", "bundled", "unbound"].includes(x);
-    if (key === "placement") valid = exact(x, ["mode"]) && x.mode === "smart";
+    if (key === "placement")
+      valid =
+        (exact(x, ["mode"]) && x.mode === "smart") ||
+        (context === "settings-read" && exact(x, []));
     if (key === "cache_options")
       valid =
         exact(x, ["enabled", "cross_version_cache"]) &&
@@ -269,7 +272,7 @@ function settings(v, dbid) {
     ])
   )
     fail("settings_invalid");
-  metadata(v);
+  metadata(v, "settings-read");
   annotations(v.annotations);
   if (v.logpush !== undefined && typeof v.logpush !== "boolean")
     fail("settings_invalid");
