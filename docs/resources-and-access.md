@@ -2,6 +2,16 @@
 
 更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
 
+## 2026-10-22 单书阅读准备：鉴权控制与HTTP验收工具
+
+新增固定production鉴权生命周期工具及单书HTTP验收runner，均默认preview零IO。主Agent独立review并通过auth最终23项和reading40项；前者初始化仅disabled、close递增generation并同事务撤销全部会话，后者验证匿名拒绝、登录、真实流SHA256/大小/MIME/ETag、CORS、Range和登出撤销。网络、落盘或结果处理未知均不重试；秘密、SQL参数、cookie、签名URL、书籍标识与正文不进入收据。auth历史unknown持续阻断enable，即使新close成功亦不删除历史，当前没有resolution动作。
+
+前端动态阅读/下载入口的首轮review修正及Node专项已通过，但真实浏览器工具没有可用browser，native Chrome连接报cgWindowNotFound。页面fixture服务可启动，不等于浏览器执行通过；前端文件留在工作区，不在本次工具发布中。业务API、上传和真实阅读仍未验收，不声明上线。后续鉴权status只读计划见development-plan，不执行旧enabled=1的auth-init.sql。
+
+补充只读架构复核：官方GA Worker DELETE能避开Version兼容问题，但未找到它对已接收PATCH、旧isolate、独立Workflow及已发R2写入的可验证终止/排序保证，因此不执行删除，也不新增删除operator。未知和六guard保留；合格R2用量证据仍为独立上传前置。没有进行本轮CF01账号调用或修改计费。
+
+主Agent最终本地验收：冻结实现后完整798项Node、8项Python通过，零失败/取消/跳过；日志`/tmp/shelf-private-reading-final-20261022.log`。本地测试包含待浏览器验收、未纳入本次提交的1项前端专项；本次提交的远端代码应为797项Node，须以对应CI实际结果为准。随后disabled构建1280页，verify:public 1318文件、verify:static 1304资源通过；实际凭证扫描1502文件，matchedFiles=0、unsafeFiles=0，格式与diff检查通过。构建日志`/tmp/shelf-private-reading-build-20261022.log`。尚未真实执行production auth、读取对象或部署业务API；发布与只读status结果以对应新提交CI及私有收据为准。
+
 ## 2026-10-22 接续：版本响应分类与发布基线验收
 
 `d98c620fe6e0a5a7fb37f16c5e6ac34c6bf665c4`两CI已由主Agent独立核对：Cloudflare `39771627350` build成功、deploy skipped；Pages `39771627306` build/deploy成功，公开开发计划与该提交逐字一致。主站runtime为schemaVersion=1/apiMode=disabled、health404，未启用业务。

@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-22T13:14:36.183Z",
-  "version": "f131da290366ec50677ab1b092ae1a0fda9f21c808ea786c095e5baa741e048b",
+  "generatedAt": "2026-10-22T14:21:18.670Z",
+  "version": "05873a66aeca84c7459222bf7001bd9e3b67651df4412c0f6ea4d3a161d51d6f",
   "basePath": "/",
   "documents": [
     {
@@ -105,9 +105,9 @@
     {
       "id": "development-plan",
       "title": "The Shelf 开发计划",
-      "description": "目标：接续 d98c620，先核对该提交的两条远端CI，再解决固定CF01具体版本HTTP200响应与严格Version契约不符的阻塞。当前仅确认顶层存在契约外字段、六个lifecycle字段缺失，尚未证明可安全兼容；不得通过删除未知键、猜测默认值或改用latest绕过。",
+      "description": "目标：优先打通“登录→上传一个合格文件→在线阅读”的真实最小闭环；AI后续完善独立推进。现有静态站可用，业务API仍关闭，旧authority仅imported；CF01版本扩展字段与placement契约未明，不再重复同类status诊断。",
       "updatedAt": "2026-10-22",
-      "version": "f516927959f0e7b9b44de6cd5ec365d2de8b8e3dcc8cd40e9665a9fb808ad66f",
+      "version": "429029f49d69811ab8050aa640f8586773d631786ba2dc9e4e0fda03e6806b42",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",

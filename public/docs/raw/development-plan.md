@@ -1,5 +1,25 @@
 # The Shelf 开发计划
 
+## 2026-10-22 加速交付：单本书私人在线阅读
+
+目标：优先打通“登录→上传一个合格文件→在线阅读”的真实最小闭环；AI后续完善独立推进。现有静态站可用，业务API仍关闭，旧authority仅imported；CF01版本扩展字段与placement契约未明，不再重复同类status诊断。
+
+方案与依赖：先由Sol/high评审是否可用项目专属隔离存储目标及独立最小权限凭证，让旧CF01请求只能影响旧目标，并将旧目标全部已知/未知最大存储责任保守计入8GB预算。此为待评审架构候选，尚未授权实现为ready事实；必须证明目标与凭证隔离、旧能力不能触及新对象、旧预算不清零、单一账本及总预算持续有效。若方案无法成立，保持现有门禁并明确缺项；不依赖猜测旧请求终态或等待接口文档。与此同时独立盘点生产登录/阅读实现和旧registry向唯一authority读取的缺口，推进不依赖存储关闭的离线实现与安全验收。
+
+分工：主Agent负责需求、方案选择、依赖协调、独立review/验证和发布；`gpt-6.1-sol / high`负责隔离目标/能力与保守旧责任的架构设计（先只读代码及官方契约，不云调用、不改私有数据）；另一`gpt-6.1-sol / high`负责最小生产登录/阅读链路的代码和发布门槛盘点，先交具体可实施缺口清单，待接口确定后实施。两任务并行、不得重跑旧审计operator或相同CF01诊断，指定模型不可用不替换。方案评审后再追加具体实现范围、验收与真实请求预算，不能边研究边新建云资源。
+
+设计评审及本轮实施：隔离新桶不能补齐旧责任上界或账号存储证据，且增加身份/凭证迁移，故不创建新桶、不切换authority。代码盘点确认新registry的confirmed原书已有同事务file_registry投影，旧冻结trigger有精确允许分支，无需再建双写桥。Sol/high实施固定生产来源的单书只读/登录验收runner（默认preview零IO，成功10HTTP/失败收尾总<=11HTTP；逐请求durable intent；验证匿名拒绝、会话、已确认文件描述、完整GET的hash/大小/MIME/ETag、Range、logout和撤销拒绝；不记录凭证、cookie、签名URL或正文）。另一Sol/high先设计固定production auth的status/initialize-disabled/enable/close控制器，主Agent复核SQL/预算后实施；初始化默认disabled、CAS控制generation、未知mutation不重试，和migration/authority不互写。
+
+前端具体缺口：静态详情的文件按钮不会随API确认状态刷新，上传后仍需重建。将此有界展示任务分配`gpt-6-luna / medium`，范围仅文件行data属性、DOM状态/按钮刷新模块及book.ts接线、合成DOM fixture与必要测试。复用现有canAccessFile/fileStatus，只处理页面已知fileId且format/size相符的API行，全部DOM以textContent/固定元素生成，不加入新API或自动文件请求；默认disabled/Pages不生成入口，本机行为保持。上传权限仍由后端独立检查。主Agent须独立review并做真实浏览器DOM验收，不能以子Agent测试报告代替。
+
+验收：保持原8GB/20MB/逐文件规则，未知占用保守预留；原unknown、旧库/收据/guard均保留。先合成单对象上传/恢复和会话、CSRF、授权、文件完整性/Range回归，再具备合格用量证据与实际套餐安全证据后执行单文件云验收。部署只用固定本项目资源、明确版本和可关闭回退；不改计费、不开账号通用凭证、不发送书籍给AI、不把paw作为生产服务器、不批量上传。实现经主Agentreview、专项/适用全套测试、disabled构建、公开/静态/凭证检查后commit→push→CI→受控部署→真实HTTP及浏览器验证。失败关闭新业务入口，保留预算、对象、未知和既有静态站；代码可回退，不能删除旧证据或假填ready/drain。
+
+实现复审：主Agent已逐项审查两个Sol工具，独立通过读取runner40项及production auth最终23项。读取流新增包含零字节块的硬上限，防止微任务洪泛绕过deadline；鉴权补充跨SQLite连接CAS竞争、close与全部会话撤销的事务回滚、迟到enable被新generation拒绝、持久结果失败保留unknown、state/receipt丢失不可重置等验证。工具尚未真实执行，不能据此声称生产登录已初始化或开启。
+
+前端交付留在工作区待验收：Luna完成动态按钮、状态和解释同步，主Agent review首轮修正后独立Node专项通过。真实浏览器fixture服务启动成功，但本会话CUA无可用浏览器，连接本机Chrome返回cgWindowNotFound，无法取得页面执行结果；不将合成Node DOM视为真实浏览器通过。本轮先独立提交两个运维工具及记录，前端改动暂不提交、不部署，待真实浏览器验收再发布。
+
+后续真实鉴权观察计划：上述工具通过最终完整回归、构建、隐私检查及对应CI后，仅运行一次固定production status（硬上限3HTTP，正常2HTTP，0mutation），读取固定D1身份及鉴权表/触发器和安全行投影；任何不符立即停止，不重试。如确认为缺行且无未决记录，再单独记录并执行至多4HTTP的一次initialize-disabled及独立回读。不得执行历史enabled=1的auth-init.sql，不启用API、不上传；结果不确定保留私有证据并只读恢复，不能重放初始化。真实enable、对象上传和阅读另须满足既有生产门槛。
+
 ## 2026-10-22 本轮继续：具体版本契约核查
 
 目标：接续 `d98c620`，先核对该提交的两条远端CI，再解决固定CF01具体版本HTTP200响应与严格Version契约不符的阻塞。当前仅确认顶层存在契约外字段、六个lifecycle字段缺失，尚未证明可安全兼容；不得通过删除未知键、猜测默认值或改用latest绕过。
