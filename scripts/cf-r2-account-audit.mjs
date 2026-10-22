@@ -11,7 +11,7 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const VOLT_CONFIG = "/Users/paw/code/volt/cloud/wrangler.jsonc";
 const ENDPOINT = "https://api.cloudflare.com/client/v4/graphql";
 export const R2_AUDIT_LIMITS = Object.freeze({
-  requests: 2,
+  requests: 3,
   timeoutMs: 30_000,
   responseBytes: 1_000_000,
   chunks: 100_000,
@@ -313,6 +313,71 @@ export function projectR2Observation(body, now) {
       "operations_sampling_and_ingestion_unknown",
       "product_scoped_free_status_unproven",
     ],
+  };
+}
+/** Official REST account metrics are observations, with no sample time/watermark.
+ * The endpoint has no field-selection parameter. Validate and discard object
+ * counts; retain only authorized storage numbers and fixed schema labels.
+ * Uploaded/published overlap is undocumented, so never add these states. */
+export function projectR2RestMetrics(body, now) {
+  const allowed = (value, keys) =>
+    record(value) && Object.keys(value).every((key) => keys.includes(key));
+  insist(
+    count(now) &&
+      allowed(body, ["success", "errors", "messages", "result"]) &&
+      body.success === true &&
+      (!Object.hasOwn(body, "errors") ||
+        (Array.isArray(body.errors) && body.errors.length === 0)) &&
+      (!Object.hasOwn(body, "messages") ||
+        (Array.isArray(body.messages) &&
+          body.messages.every((message) => typeof message === "string"))) &&
+      allowed(body.result, ["standard", "infrequentAccess"]),
+    "response_invalid",
+  );
+  const observedStorage = {};
+  let hasStorageObservation = false;
+  for (const storageClass of ["standard", "infrequentAccess"]) {
+    const value = body.result[storageClass];
+    if (!Object.hasOwn(body.result, storageClass)) {
+      observedStorage[storageClass] = null;
+      continue;
+    }
+    insist(allowed(value, ["published", "uploaded"]), "response_invalid");
+    observedStorage[storageClass] = {};
+    for (const state of ["published", "uploaded"]) {
+      if (!Object.hasOwn(value, state)) {
+        observedStorage[storageClass][state] = null;
+        continue;
+      }
+      const metrics = value[state];
+      insist(
+        allowed(metrics, ["payloadSize", "metadataSize", "objects"]) &&
+          Object.values(metrics).every(count),
+        "response_invalid",
+      );
+      hasStorageObservation ||=
+        Object.hasOwn(metrics, "payloadSize") ||
+        Object.hasOwn(metrics, "metadataSize");
+      observedStorage[storageClass][state] = {
+        payloadBytes: Object.hasOwn(metrics, "payloadSize")
+          ? metrics.payloadSize
+          : null,
+        metadataBytes: Object.hasOwn(metrics, "metadataSize")
+          ? metrics.metadataSize
+          : null,
+      };
+    }
+  }
+  insist(hasStorageObservation, "response_invalid");
+  return {
+    fetchedAt: new Date(now).toISOString(),
+    sampleAt: null,
+    totalBytes: null,
+    observedStorage,
+    stateOverlap: "unknown",
+    freshness: "unknown",
+    ingestionDelay: "unknown",
+    completeCoverage: false,
   };
 }
 async function checkPath(location, privateRoot) {
@@ -655,6 +720,18 @@ export async function auditR2Account({
       "response_invalid",
     );
     await evidence.write("2-result.json", { status: "observed", ...observed });
+    const restMetrics = projectR2RestMetrics(
+      await request(
+        "r2-account-storage-metrics",
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/metrics`,
+        { method: "GET" },
+      ),
+      clock(),
+    );
+    await evidence.write("3-result.json", {
+      status: "observed",
+      ...restMetrics,
+    });
     const result = {
       schemaVersion: 1,
       status: "observed_incomplete",
@@ -666,6 +743,7 @@ export async function auditR2Account({
         through: query.variables.t,
       },
       ...observed,
+      accountStorageRest: restMetrics,
     };
     await evidence.write("summary.json", result);
     return result;

@@ -13,11 +13,15 @@
 - `resume-import-20261022-de20e30`：67 次 HTTP、0 条 DDL，导入结果为 `imported`；`committed` 与 `reserved` 均为 0。闭包尚未证明。
 - `resume-post-import-20261022-de20e30`：独立 status 运行，15 次 HTTP、0 条 DDL，再次确认 `imported`；check 的 56 项及 production 的 88 项 schema 完整，marker 存在，两库旧 reservation/registry 均为 0。两条历史 unknown probe 当前读数为 0，但 `atomicRejectionProven=false`，原有 unknown 结论继续保留。
 
-CF01 收据首次只读审计运行因 `cf01_audit_bindings_unexpected` 停止，共 6 次 HTTP；私有收据为 `.local/cf01/storage-audit-cd307f48-7dc5-4bb0-b5f4-b0ac40136a5b.json`。已只读确认固定 `CF_MOCK` environment 为 `production`，而原工具仅接受空值。Sol/high已依官方契约实现仅接受缺失或精确production的兼容，主Agent独立41项专项通过；完整回归和CI后才重跑audit，当前不能记作审计成功或闭包验收。私有 `wrangler-debug.log` 权限由 `0644` 收紧为 `0600`，内容未改动。
+CF01 收据首次只读审计运行因 `cf01_audit_bindings_unexpected` 停止，共 6 次 HTTP；私有收据为 `.local/cf01/storage-audit-cd307f48-7dc5-4bb0-b5f4-b0ac40136a5b.json`。已只读确认固定 `CF_MOCK` environment 为 `production`，而原工具仅接受空值。私有 `wrangler-debug.log` 权限由 `0644` 收紧为 `0600`，内容未改动。后续提交 `5c0a25da005925f2cf2c5791d8581018a447b753` 已推送；Cloudflare 工作流 `39725030540` artifact 成功且自动部署跳过，Pages 工作流 `39725030531` 成功并部署静态回退站点。新版 CF01 audit 独立只读运行成功，共14次HTTP，私有收据为 `.local/cf01/storage-audit-1ce19c8f-cb32-4ea1-bed1-6e76ea38b5b2.json`。
 
-初始预算观察为 `budget_all=7`、`storage=1`、`runs_storage=0`、`orphan=0`；唯一 storage 项为 tombstone。这只是观测，不能证明账本已排空。当前书籍数为 0，R2 用量证据仍不合格；ready、API、auth 与私人阅读继续关闭。主站仍为 `9963771`，本轮未手动部署。
+该 audit 状态为 `inventory-observed-closure-unproven`。两次snapshot一致：`budget_all=7`、`storage=1`、`liveStorage=0`、`orphan=0`；唯一storage项是tombstone；取得两个历史版本（number 1、3，各含1个模块），workers.dev与preview均为false。`executionVersionMappingProven`、`cloudWriteFreezeProven`、`drainProven`、`uploadAllowed` 均为false，因此不能据此证明排空或旧写能力已关闭。R2 observer补充虽经主Agent独立15项专项通过，但尚未提交或真实运行，未取得新的REST用量证据。
 
-本检查点主Agent独立完整回归为516项Node、8项Python通过，零失败/零跳过。首次沙箱运行的13项HTTP测试因监听127.0.0.1返回EPERM，原日志保留；授权临时端口后重跑整套通过，日志为 `/tmp/shelf-resume-full-authorized-20261022.log`。disabled构建1280页、公开产物1318文件、静态资源1304项及实际凭证扫描1480文件均通过，零秘密命中/零不安全文件；格式与diff检查通过。远端CI和新audit结果待后续独立记录，不将本地通过视为远端成功。
+初始预算观察为 `budget_all=7`、`storage=1`、`runs_storage=0`、`orphan=0`；唯一 storage 项为 tombstone。这只是观测，不能证明账本已排空。当前书籍数为 0，R2 用量证据仍不合格；ready、API、auth 与私人阅读继续关闭。主站仍为 `9963771`，本轮未手动部署；Pages静态回退部署不改变此状态。
+
+本检查点主Agent独立完整回归为516项Node、8项Python通过，零失败/零跳过。首次沙箱运行的13项HTTP测试因监听127.0.0.1返回EPERM，原日志保留；授权临时端口后重跑整套通过，日志为 `/tmp/shelf-resume-full-authorized-20261022.log`。disabled构建1280页、公开产物1318文件、静态资源1304项及实际凭证扫描1480文件均通过，零秘密命中/零不安全文件；格式与diff检查通过。后续CI与新版audit结果见上文；R2 REST用量证据、排空与旧写能力关闭仍未证明。
+
+下一实现检查点已由主Agent完成独立review及完整590项Node/8项Python验收，零失败/零跳过，日志为 `/tmp/shelf-close-rest-full-20261022.log`。包含固定CF01关闭工具70项专项和R2 REST观察15项；review补齐了未知PATCH只能匹配预登记五项hash后零PATCH继续、SQLite NULL安全identity保护及旧NULL库存拒绝、矛盾success/errors响应失败关闭。关闭工具尚未真实运行，六条guard和settings PATCH尚未落地；R2第三GET尚未真实读取，仍须提交/CI后执行。回归中的文档导出会重写共享文件，因此构建与公开/静态/凭证检查必须在回归后顺序运行，不能并行读取混合产物。
 
 ## 2026-10-22 收工：代码保存，云操作停止
 

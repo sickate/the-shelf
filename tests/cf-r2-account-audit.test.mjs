@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   auditR2Account,
   projectR2Observation,
+  projectR2RestMetrics,
   projectVoltCondition,
   parseVoltConfig,
   r2ObservationRequest,
@@ -36,6 +37,18 @@ const storage = (time = NOW - 60_000, bytes = 17) => ({
   },
   max: { payloadSize: bytes, metadataSize: 3 },
 });
+const restMetrics = (
+  result = {
+    standard: {
+      published: { payloadSize: 17, metadataSize: 3, objects: 2 },
+      uploaded: { payloadSize: 7, metadataSize: 1, objects: 1 },
+    },
+    infrequentAccess: {
+      published: { payloadSize: 0, metadataSize: 0, objects: 0 },
+      uploaded: { payloadSize: 0, metadataSize: 0, objects: 0 },
+    },
+  },
+) => ({ success: true, errors: [], messages: [], result });
 const operation = (actionType = "PutObject", requests = 5) => ({
   dimensions: { actionType, storageClass: "Standard" },
   sum: { requests },
@@ -126,7 +139,7 @@ test("preview and CLI expose no credentials and never load files or send", async
   });
   assert.equal(out.status, "preview");
   assert.equal(out.uploadEligible, false);
-  assert.equal(out.limits.requests, 2);
+  assert.equal(out.limits.requests, 3);
 });
 test("fixed .env account accepts inherited token without copying it to a file; conflicts and CI refuse before network", async (t) => {
   const f = await fixture(t);
@@ -141,11 +154,13 @@ test("fixed .env account accepts inherited token without copying it to a file; c
     fetchImpl: async (_url, request) => {
       calls++;
       assert.equal(request.headers.Authorization, `Bearer ${TOKEN}`);
-      return json(calls === 1 ? settings() : aggregate());
+      return json(
+        calls === 1 ? settings() : calls === 2 ? aggregate() : restMetrics(),
+      );
     },
   });
   assert.equal(result.status, "observed_incomplete");
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   assert.equal(await fs.readFile(envFile, "utf8"), fileContents);
   assert.ok(
     !(await evidence(f))
@@ -265,7 +280,7 @@ test("empty datasets never become zero, future samples/unexpected fields/GraphQL
   assert.equal(saturated.accountStorage.limitReached, true);
   assert.equal(saturated.completeCoverage, false);
 });
-test("two fixed reads are pre-registered; raw Volt settings/IDs/values never reach evidence", async (t) => {
+test("three fixed reads are pre-registered; raw Volt settings/IDs/values never reach evidence", async (t) => {
   const f = await fixture(t);
   let calls = 0;
   const result = await auditR2Account({
@@ -293,6 +308,15 @@ test("two fixed reads are pre-registered; raw Volt settings/IDs/values never rea
           ]),
         );
       }
+      if (calls === 3) {
+        assert.equal(req.method, "GET");
+        assert.equal(
+          url,
+          `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/metrics`,
+        );
+        assert.equal(req.body, undefined);
+        return json(restMetrics());
+      }
       assert.equal(req.method, "POST");
       assert.equal(url, "https://api.cloudflare.com/client/v4/graphql");
       assert.deepEqual(
@@ -302,9 +326,9 @@ test("two fixed reads are pre-registered; raw Volt settings/IDs/values never rea
       return json(aggregate());
     },
   });
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   assert.equal(result.status, "observed_incomplete");
-  assert.equal(result.managementRequests, 2);
+  assert.equal(result.managementRequests, 3);
   assert.equal(result.uploadEligible, false);
   const output =
     JSON.stringify(result) +
@@ -503,4 +527,165 @@ test("private evidence symlinks and hardlinks fail before the next request", asy
     assert.equal(result.status, "stopped");
     assert.equal(result.uploadEligible, false);
   }
+});
+
+test("REST metrics retain separate numeric states, omit object counts, and never claim fresh totals", () => {
+  const body = restMetrics();
+  body.messages = [TOKEN, ACCOUNT];
+  const out = projectR2RestMetrics(body, NOW);
+  assert.deepEqual(out.observedStorage.standard, {
+    published: { payloadBytes: 17, metadataBytes: 3 },
+    uploaded: { payloadBytes: 7, metadataBytes: 1 },
+  });
+  assert.deepEqual(out.observedStorage.infrequentAccess.published, {
+    payloadBytes: 0,
+    metadataBytes: 0,
+  });
+  assert.equal(out.fetchedAt, new Date(NOW).toISOString());
+  assert.equal(out.sampleAt, null);
+  assert.equal(out.totalBytes, null);
+  assert.equal(out.freshness, "unknown");
+  assert.equal(out.stateOverlap, "unknown");
+  assert.equal(out.completeCoverage, false);
+  assert.ok(!/objects|synthetic-secret|aaaaaaaa/.test(JSON.stringify(out)));
+  const missing = projectR2RestMetrics(
+    restMetrics({ standard: { published: { payloadSize: 9 } } }),
+    NOW,
+  );
+  assert.deepEqual(missing.observedStorage.standard, {
+    published: { payloadBytes: 9, metadataBytes: null },
+    uploaded: null,
+  });
+  assert.equal(missing.observedStorage.infrequentAccess, null);
+});
+
+test("REST malformed/unknown fields and unsafe numeric values fail with no reversible diagnostics", () => {
+  const bodies = [
+    null,
+    { success: true },
+    restMetrics({}),
+    restMetrics(null),
+    restMetrics({ standard: {} }),
+    restMetrics({ standard: { published: {} } }),
+    restMetrics({ standard: { published: { objects: 9 } } }),
+    { ...restMetrics(), [TOKEN]: ACCOUNT },
+    { ...restMetrics(), success: false, errors: [{ message: TOKEN }] },
+    { ...restMetrics(), errors: null },
+    { ...restMetrics(), messages: [TOKEN, {}] },
+    restMetrics({ [TOKEN]: { [ACCOUNT]: WORKER } }),
+    restMetrics({ standard: { [TOKEN]: WORKER } }),
+    restMetrics({ standard: { published: { [TOKEN]: ACCOUNT } } }),
+    restMetrics({ standard: null }),
+    restMetrics({ standard: { published: null } }),
+  ];
+  for (const value of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, TOKEN, null])
+    for (const field of ["payloadSize", "metadataSize", "objects"])
+      bodies.push(restMetrics({ standard: { published: { [field]: value } } }));
+  for (const body of bodies)
+    assert.throws(
+      () => projectR2RestMetrics(body, NOW),
+      (e) => e.code === "response_invalid" && !String(e).includes(TOKEN),
+    );
+});
+
+test("REST failures stop at third request with numeric-only historical observations and no complete evidence", async (t) => {
+  for (const variant of [
+    "unknown-key",
+    "errors",
+    "http",
+    "oversize",
+    "deadline",
+    "redirect",
+    "late-url",
+  ]) {
+    const f = await fixture(t);
+    let calls = 0;
+    const result = await auditR2Account({
+      ...f.options,
+      timeoutMs: 10,
+      fetchImpl: async (url) => {
+        calls++;
+        if (calls === 1) return json(settings());
+        if (calls === 2) return json(aggregate());
+        assert.equal(
+          url,
+          `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/metrics`,
+        );
+        if (variant === "deadline") return new Promise(() => {});
+        if (variant === "http") return json({ message: TOKEN }, 503);
+        if (variant === "errors")
+          return json({ success: false, errors: [{ message: TOKEN }] });
+        if (variant === "unknown-key")
+          return json(restMetrics({ [TOKEN]: ACCOUNT }));
+        if (variant === "oversize")
+          return new Response(
+            new Uint8Array(R2_AUDIT_LIMITS.responseBytes + 1),
+            {
+              headers: { "content-type": "application/json" },
+            },
+          );
+        const response = json(restMetrics());
+        Object.defineProperty(
+          response,
+          variant === "redirect" ? "redirected" : "url",
+          {
+            value: variant === "redirect" ? true : "https://other.invalid",
+          },
+        );
+        return response;
+      },
+    });
+    assert.equal(calls, 3);
+    assert.equal(result.status, "stopped");
+    assert.equal(result.managementRequests, 3);
+    assert.equal(result.uploadEligible, false);
+    assert.equal(result.accountEvidence, null);
+    const files = await evidence(f);
+    assert.ok(files.some((v) => v.name === "3-pending.json"));
+    assert.ok(
+      !files.some(
+        (v) => v.name === "summary.json" || v.name === "3-result.json",
+      ),
+    );
+    const historical = JSON.parse(
+      files.find((v) => v.name === "2-result.json").text,
+    );
+    assert.equal(historical.completeCoverage, false);
+    assert.equal(historical.uploadEligible, false);
+    assert.equal(historical.accountEvidence, null);
+    for (const sentinel of [TOKEN, ACCOUNT, WORKER])
+      assert.ok(
+        !(JSON.stringify(result) + files.map((v) => v.text).join("")).includes(
+          sentinel,
+        ),
+      );
+  }
+});
+
+test("receipt identity mutation after third response prevents REST result persistence", async (t) => {
+  const f = await fixture(t);
+  let calls = 0;
+  const result = await auditR2Account({
+    ...f.options,
+    fetchImpl: async () => {
+      calls++;
+      if (calls === 1) return json(settings());
+      if (calls === 2) return json(aggregate());
+      const pending = path.join(
+        f.root,
+        ".local/r2-account-audit/one/3-pending.json",
+      );
+      await fs.rename(pending, pending + ".real");
+      await fs.symlink(pending + ".real", pending);
+      return json(restMetrics());
+    },
+  });
+  assert.equal(calls, 3);
+  assert.equal(result.status, "stopped");
+  assert.equal(result.accountEvidence, null);
+  assert.ok(
+    !(await evidence(f)).some(
+      (v) => v.name === "3-result.json" || v.name === "summary.json",
+    ),
+  );
 });

@@ -18,6 +18,8 @@ R2实施补充：官方固定 `GET /accounts/{account}/r2/metrics` 提供无桶�
 
 实际接续检查点：已核对起点两CI成功；新status 15HTTP、冻结续验39HTTP/0DDL、空源导入67HTTP/0DDL及独立status 15HTTP均成功，authority现为imported，committed/reserved均0；两库schema与marker完整、历史unknown探针当前无行，但原unknown不改判。CF01首轮audit在第6请求因服务绑定environment=production的合法平台格式停止；Sol已根据官方契约补齐只接受缺失或精确production的兼容，主Agent独立41项专项通过，正进行完整验收，提交/CI后再运行新audit。此检查点仍无写能力闭包、无合格R2证据、无书籍上传或业务启用。
 
+后续实际验收：兼容检查点 `5c0a25d` 完整516项Node/8项Python、disabled构建/公开/静态/真实凭证检查均通过并推送，两CI `39725030540` / `39725030531` 成功。新CF01只读audit14请求成功，取得两个固定历史版本、两轮库存一致，storage墓碑1/活动0/孤儿0，入口关闭；这仍不证明历史执行版本映射或在途排空。Sol/high下一工具固定最多32请求、6条storage-only guard DDL、1条新拒绝探针、1次仅移除固定R2绑定的settings PATCH；保留其他绑定/代码/metadata并独立回读。D1未知写按独立status恢复，Worker PATCH未知没有31秒终止推断，只有无R2且与预登记安全hash全部匹配的独立status才可零PATCH继续；原unknown保留。主Agentreview要求修正未知PATCH恢复、完整identity guard和矛盾envelope矩阵后再验收。ready/routes完整性/drain继续不授予。
+
 验收与验证：先运行迁移/CF01专项，核对私有输入和历史状态，再真实status→freeze→import→独立status；任何unknown立即停止受影响写入，只读恢复。新实现须覆盖默认零IO、固定资源/预算、逐请求durable intent、未知写不重试、独立回读、身份/配置漂移及秘密消除，主Agent独立审查并运行完整Node/Python、disabled构建、verify:public/static和实际凭证扫描。CF01库存只证明观测；无可信历史执行版本和终态排空证明仍禁止ready。R2新鲜完整证据不足则不上传，不手写许可，不重放旧probe。
 
 明确不做：不修改已落地SQL003/004、不删除历史unknown/预留/收据、不解冻旧入口、不改计费、不将paw改成生产服务器、不扩大账号读取、不启用生产API/auth或私人阅读。后续上传依赖ready与合格R2证据，未满足不得越过。
