@@ -9,6 +9,7 @@ import {
   parseMigrationArgs,
   loadMigrationContext,
   MIGRATION_BUDGETS,
+  matchesFrozenRejection,
 } from "../scripts/storage-migrate.mjs";
 
 const ACCOUNT = "a".repeat(32),
@@ -879,6 +880,193 @@ test("failed response diagnostics retain only bounded provider numbers and envel
     assert.equal(request.provider.legacyTokenPresent, true);
     assert.equal(request.provider.sqliteConstraintPresent, true);
   }
+});
+
+test("frozen rejection matches only the authorized exact Workerd envelope", () => {
+  const exact =
+    "legacy_storage_frozen: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)";
+  const body = (message = exact) => ({
+    success: false,
+    errors: [{ code: 7500, message }],
+  });
+  for (const message of [exact, `D1_ERROR: ${exact}`])
+    assert.equal(matchesFrozenRejection(400, body(message)), true);
+  for (const message of [
+    "legacy_storage_frozen",
+    "D1_ERROR: legacy_storage_frozen: SQLITE_CONSTRAINT",
+    "legacy_storage_frozen: SQLITE_CONSTRAINT_TRIGGER",
+  ])
+    assert.equal(
+      matchesFrozenRejection(400, { success: false, errors: [{ message }] }),
+      true,
+    );
+  for (const status of [200, 409, 503])
+    assert.equal(matchesFrozenRejection(status, body()), false);
+  for (const message of [
+    `Error: ${exact}`,
+    `${exact}.`,
+    `${exact}\n`,
+    `${exact} `,
+    `${exact} private-payload`,
+    exact.replace("CONSTRAINT_TRIGGER)", "CONSTRAINT_CHECK)"),
+  ])
+    assert.equal(matchesFrozenRejection(400, body(message)), false);
+  for (const invalid of [
+    { errors: [{ code: 7500, message: exact }] },
+    { ...body(), success: true },
+    { ...body(), errors: { code: 7500, message: exact } },
+    { ...body(), errors: [{ message: exact }] },
+    { ...body(), errors: [{ code: 1, message: exact }] },
+    { ...body(), errors: [...body().errors, { code: 7500, message: exact }] },
+  ])
+    assert.equal(matchesFrozenRejection(400, invalid), false);
+});
+
+test("exact Workerd rejection freezes successfully with independent empty-row readback", async (t) => {
+  const f = await fixture(t);
+  f.fault((_url, options, db) => {
+    if (!options.body) return;
+    const { sql, params } = JSON.parse(options.body);
+    if (!sql.startsWith("INSERT INTO upload_reservations")) return;
+    assert.throws(
+      () => db.prepare(sql).all(...params),
+      /legacy_storage_frozen/,
+    );
+    return Response.json(
+      {
+        success: false,
+        errors: [
+          {
+            code: 7500,
+            message:
+              "legacy_storage_frozen: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+          },
+        ],
+      },
+      { status: 400 },
+    );
+  });
+  const out = await f.run("schema-freeze", "extended-rejection");
+  assert.equal(out.phase, "migration_required");
+  const receipt = JSON.parse(
+    await fs.readFile(path.join(f.root, out.privateReceipt), "utf8"),
+  );
+  for (const profile of ["check", "production"])
+    assert.deepEqual(receipt.freezeRejectionReadback[profile], {
+      probe_count: 0,
+      reservations: 0,
+      registry: 0,
+    });
+  assert.equal(
+    receipt.requests.filter(
+      (r) => r.operation === "verify-rejected-probe-absent",
+    ).length,
+    2,
+  );
+  assert.equal(
+    (await f.state()).operations.some((op) => op.state === "unknown"),
+    false,
+  );
+});
+
+test("finite error grammar identifies Workerd extended wrappers while erasing arbitrary content and bounding scans", async (t) => {
+  const f = await fixture(t),
+    sentinel = "SENTINEL-private-body-9C8F";
+  const messages = [
+    "Error: legacy_storage_frozen: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER).\r\n",
+    `${sentinel} private正文 ${TOKEN}`,
+    "unknown ".repeat(100) + sentinel,
+    sentinel.repeat(10000),
+    "私密正文".repeat(3000),
+  ];
+  for (let index = 0; index < messages.length; index++) {
+    f.fault(() =>
+      Response.json(
+        { success: false, errors: [{ code: 7500, message: messages[index] }] },
+        { status: 400 },
+      ),
+    );
+    await assert.rejects(f.run("status", `grammar-${index}`), {
+      code: "migration_remote_rejected",
+    });
+    const directory = path.join(
+      f.root,
+      `.local/cf03/storage-migration/grammar-${index}`,
+    );
+    for (const filename of await fs.readdir(directory)) {
+      const raw = await fs.readFile(path.join(directory, filename), "utf8");
+      assert.ok(
+        !raw.includes(sentinel) &&
+          !raw.includes(TOKEN) &&
+          !raw.includes("私密正文") &&
+          !raw.includes("private正文"),
+      );
+    }
+    const receipt = JSON.parse(
+      await fs.readFile(path.join(directory, "receipt.json"), "utf8"),
+    );
+    const provider = receipt.requests[0].provider,
+      grammar = provider.errorGrammar[0];
+    assert.equal(provider.errorGrammar.length, 1);
+    assert.ok(grammar.tokens.length <= 64);
+    assert.ok(!Object.hasOwn(grammar, "scanned"));
+    assert.equal(receipt.requests[0].state, "failed");
+    if (index === 0) {
+      assert.deepEqual(grammar.tokens, [
+        "error_upper",
+        "colon",
+        "space",
+        "legacy",
+        "colon",
+        "space",
+        "constraint",
+        "space",
+        "lparen",
+        "extended",
+        "colon",
+        "space",
+        "constraint_trigger",
+        "rparen",
+        "dot",
+        "mixed_whitespace",
+      ]);
+      assert.deepEqual(grammar.knownTokenCounts, {
+        error_upper: 1,
+        legacy: 1,
+        constraint: 1,
+        extended: 1,
+        constraint_trigger: 1,
+      });
+      assert.equal(grammar.truncated, false);
+      assert.equal(provider.legacyConstraintExact, false);
+    }
+    if (index >= 2) assert.equal(grammar.truncated, true);
+    if (index >= 3) assert.equal(grammar.utf8LengthBucket, "4096+");
+  }
+  f.fault(() =>
+    Response.json(
+      {
+        success: false,
+        errors: Array.from({ length: 12 }, () => ({
+          code: 7500,
+          message: sentinel,
+        })),
+      },
+      { status: 400 },
+    ),
+  );
+  await assert.rejects(f.run("status", "grammar-error-cap"));
+  const capped = JSON.parse(
+    await fs.readFile(
+      path.join(
+        f.root,
+        ".local/cf03/storage-migration/grammar-error-cap/receipt.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(capped.requests[0].provider.errorGrammar.length, 8);
+  assert.equal(capped.requests[0].provider.errorsTruncated, true);
 });
 
 test("import rechecks configured local manifest, ledger and lock after schema freeze before any cloud write", async (t) => {

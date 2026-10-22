@@ -208,19 +208,149 @@ const FILES = Object.freeze({
 const RESPONSE_LIMIT = 1_000_000;
 const FREEZE_PROBE_SQL =
   "INSERT INTO upload_reservations(reservation_id,scope,file_id,book_id,object_key,size_bytes,format,sha256,state,created_at,updated_at) VALUES(?,?,?,?,?,1,'PDF',?,'reserved',?,?)";
+const BASIC_FROZEN_ERROR =
+  /^(?:D1_ERROR: )?legacy_storage_frozen(?:: SQLITE_CONSTRAINT(?:_TRIGGER)?)?$/;
+const EXTENDED_FROZEN_ERROR =
+  /^(?:D1_ERROR: )?legacy_storage_frozen: SQLITE_CONSTRAINT \(extended: SQLITE_CONSTRAINT_TRIGGER\)$/;
+// Pure envelope matcher for the already fixed, single-statement negative probe.
+// It never consumes the diagnostic grammar or reclassifies previous unknowns.
+export function matchesFrozenRejection(status, body) {
+  if (status !== 400 || body?.success !== false || !Array.isArray(body.errors))
+    return false;
+  if (
+    body.errors.some(
+      (entry) =>
+        typeof entry?.message === "string" &&
+        BASIC_FROZEN_ERROR.test(entry.message),
+    )
+  )
+    return true;
+  return (
+    body.errors.length === 1 &&
+    body.errors[0]?.code === 7500 &&
+    typeof body.errors[0].message === "string" &&
+    EXTENDED_FROZEN_ERROR.test(body.errors[0].message)
+  );
+}
+const GRAMMAR_WORDS = Object.freeze({
+  legacy_storage_frozen: "legacy",
+  SQLITE_CONSTRAINT: "constraint",
+  SQLITE_CONSTRAINT_TRIGGER: "constraint_trigger",
+  D1_ERROR: "d1_error",
+  Error: "error_upper",
+  error: "error_lower",
+  code: "code",
+  extended: "extended",
+  7500: "cf_code_7500",
+  1811: "sqlite_code_1811",
+});
+const GRAMMAR_PUNCTUATION = Object.freeze({
+  ":": "colon",
+  ".": "dot",
+  ",": "comma",
+  ";": "semicolon",
+  "(": "lparen",
+  ")": "rparen",
+  "[": "lbracket",
+  "]": "rbracket",
+  "'": "single_quote",
+  '"': "double_quote",
+  "`": "backtick",
+});
+const grammarWhitespace = (character) =>
+  character === " " ||
+  character === "\t" ||
+  character === "\r" ||
+  character === "\n";
+function errorGrammar(message) {
+  // Bound every character scan, including the older presence diagnostics. Never
+  // persist an unknown fragment, its hash, or an exact unknown-fragment length.
+  const input = message.slice(0, 4096),
+    bytes = Buffer.byteLength(input);
+  const tokens = [],
+    counts = {};
+  let cursor = 0;
+  while (cursor < input.length && tokens.length < 64) {
+    const first = input[cursor];
+    let token;
+    if (grammarWhitespace(first)) {
+      const start = cursor++;
+      while (cursor < input.length && grammarWhitespace(input[cursor]))
+        cursor++;
+      const value = input.slice(start, cursor);
+      token = /^ +$/.test(value)
+        ? "space"
+        : /^\t+$/.test(value)
+          ? "tab"
+          : /^\n+$/.test(value)
+            ? "lf"
+            : /^\r+$/.test(value)
+              ? "cr"
+              : "mixed_whitespace";
+    } else if (Object.hasOwn(GRAMMAR_PUNCTUATION, first)) {
+      token = GRAMMAR_PUNCTUATION[first];
+      cursor++;
+    } else {
+      const start = cursor++;
+      while (
+        cursor < input.length &&
+        !grammarWhitespace(input[cursor]) &&
+        !Object.hasOwn(GRAMMAR_PUNCTUATION, input[cursor])
+      )
+        cursor++;
+      const word = input.slice(start, cursor);
+      token = Object.hasOwn(GRAMMAR_WORDS, word)
+        ? GRAMMAR_WORDS[word]
+        : "other";
+      if (token !== "other") counts[token] = (counts[token] || 0) + 1;
+    }
+    if (token !== "other" || tokens.at(-1) !== "other") tokens.push(token);
+  }
+  return {
+    tokens,
+    knownTokenCounts: counts,
+    utf8LengthBucket:
+      bytes === 0
+        ? "empty"
+        : bytes < 64
+          ? "1-63"
+          : bytes < 256
+            ? "64-255"
+            : bytes < 1024
+              ? "256-1023"
+              : bytes < 4096
+                ? "1024-4095"
+                : "4096+",
+    truncated: message.length > input.length || cursor < input.length,
+    scanned: input,
+  };
+}
 // Only bounded, structural provider diagnostics may enter the private journal.
 // A token observation is diagnostic; it never proves an atomic SQL rejection.
 function providerObservation(body) {
   const first = Array.isArray(body?.result) ? body.result[0] : undefined;
-  const errors = [
-    ...(Array.isArray(body?.errors) ? body.errors.slice(0, 8) : []),
-    ...(Array.isArray(first?.errors) ? first.errors.slice(0, 8) : []),
+  const top = Array.isArray(body?.errors) ? body.errors : [],
+    query = Array.isArray(first?.errors) ? first.errors : [];
+  const errors = [...top.slice(0, 8), ...query.slice(0, 8)].slice(0, 8);
+  const candidates = [
+    ...top
+      .slice(0, 8)
+      .map((entry) => ({ source: "top-errors", message: entry?.message })),
+    ...query
+      .slice(0, 8)
+      .map((entry) => ({ source: "query-errors", message: entry?.message })),
+    ...(typeof body?.error === "string"
+      ? [{ source: "top-error", message: body.error }]
+      : []),
+    ...(typeof first?.error === "string"
+      ? [{ source: "query-error", message: first.error }]
+      : []),
   ];
-  const messages = errors
-    .map((entry) => entry?.message)
-    .filter((value) => typeof value === "string");
-  for (const value of [body?.error, first?.error])
-    if (typeof value === "string") messages.push(value);
+  const grammars = candidates
+    .slice(0, 8)
+    .filter((entry) => typeof entry.message === "string")
+    .map((entry) => ({ source: entry.source, ...errorGrammar(entry.message) }));
+  const messages = grammars.map((entry) => entry.scanned);
   return {
     envelopeSuccess:
       body?.success === true
@@ -258,13 +388,18 @@ function providerObservation(body) {
       /\bSQLITE_CONSTRAINT(?:_TRIGGER)?\b/.test(value),
     ),
     legacyConstraintExact: messages.some((value) =>
-      /^(?:D1_ERROR: )?legacy_storage_frozen(?:: SQLITE_CONSTRAINT(?:_TRIGGER)?)?$/.test(
-        value,
-      ),
+      BASIC_FROZEN_ERROR.test(value),
     ),
+    legacyConstraintExtendedExact: grammars.some(
+      (entry) => !entry.truncated && EXTENDED_FROZEN_ERROR.test(entry.scanned),
+    ),
+    errorGrammar: grammars.map(({ scanned, ...entry }) => entry),
     errorsTruncated:
-      (Array.isArray(body?.errors) && body.errors.length > 8) ||
-      (Array.isArray(first?.errors) && first.errors.length > 8),
+      top.length +
+        query.length +
+        (typeof body?.error === "string" ? 1 : 0) +
+        (typeof first?.error === "string" ? 1 : 0) >
+      8,
   };
 }
 // sqlite_master preserves the submitted definition. Never fold whitespace in
@@ -727,16 +862,7 @@ class Transport {
         diagnostic = providerObservation(body);
         if (
           metadata.expectFrozen &&
-          response.status === 400 &&
-          body?.success === false &&
-          Array.isArray(body.errors) &&
-          body.errors.some(
-            (error) =>
-              typeof error.message === "string" &&
-              /^(?:D1_ERROR: )?legacy_storage_frozen(?:: SQLITE_CONSTRAINT(?:_TRIGGER)?)?$/.test(
-                error.message,
-              ),
-          )
+          matchesFrozenRejection(response.status, body)
         )
           return { frozen: true };
         if (!response.ok || body?.success !== true)
@@ -1145,6 +1271,20 @@ async function schemaFreeze(
     );
     if (rejected.length !== 1 || rejected[0].frozen !== 1)
       fail("migration_freeze_rejection_unproven");
+    const absent = await transport.query(
+      profile,
+      "SELECT COUNT(*) AS probe_count,(SELECT COUNT(*) FROM upload_reservations) AS reservations,(SELECT COUNT(*) FROM file_registry) AS registry FROM upload_reservations WHERE reservation_id=?",
+      [`freeze-proof-${journal.receipt.runId}`],
+      { operation: "verify-rejected-probe-absent" },
+    );
+    if (
+      absent.length !== 1 ||
+      absent[0].probe_count !== 0 ||
+      absent[0].reservations !== 0 ||
+      absent[0].registry !== 0
+    )
+      fail("migration_inventory_changed_requires_budget_review");
+    (journal.receipt.freezeRejectionReadback ||= {})[profile] = absent[0];
     await transport.identity(profile);
   }
   journal.state.schemaFrozen = {

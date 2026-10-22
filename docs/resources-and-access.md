@@ -2,7 +2,27 @@
 
 更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
 
-## 2026-10-22 实际冻结与R2观察
+## 2026-10-22 收工：代码保存，云操作停止
+
+用户要求记录进度、提交全部代码和文档后今天结束。本轮不再执行云端冻结/导入、CF01核查、AI调用、对象上传或手动部署。项目私有配置、凭证、原书、数据库、快照及所有未知收据继续保留于忽略目录；提交只包含非私人代码、说明、测试和固定白名单导出的公开文档。
+
+当前云端状态不变：书籍上传0本，authority为uninitialized，冻结验收未完成；两个未知probe保留，最后只读回查均无记录且两库旧reservation/registry总数均0。R2用量观察不合格，API、登录、私人云端阅读关闭；主站静态版本为9963771。AI Key的合成文本/JSON实测已通过，gpt-sol未单独实测，不代表书内业务或持久AI任务上线。
+
+Sol/high已交付精确Workerd extended格式兼容及独立零行读回、有限错误语法诊断和固定CF01只读audit。主Agent已复审最后修正并运行完整507项Node、8项Python测试，全部通过、零跳过；包含迁移24项、CF01专项32项，以及目录/收据替换、错误码敏感内容消除、严格格式拒绝矩阵与零行回读。格式检查及CF01真实CLI preview零IO通过。测试日志为本机 `/tmp/shelf-closeout-tests-20261022.log`；已落地SQL003/004未改动。CF01工具未真实执行，真实执行前需核验 `.local/cf01/wrangler-debug.log` 当前0644并按授权收紧为0600；本轮未修改该文件或任何云资源。两个既有未知run及各次status的相对路径见下节；禁止重写或补判旧unknown。
+
+收工disabled构建生成1280页，公开产物1318文件和静态资源1304项检查通过；真实凭证扫描1480文件，零命中、零不安全文件。构建日志为本机 `/tmp/shelf-closeout-build-20261022.log`。本次提交后的CI结果以对应Git提交工作流和收工回复为准；没有手动部署主站或业务后端。
+
+下次执行顺序及回退见 `docs/development-plan.md` 顶部收工交接：先核对提交/CI和新run只读status，再新run冻结验收，之后才导入；旧写能力关闭/终态证明、合格R2证据、单对象与选定单本上传、云端阅读仍待完成。收工提交和Pages静态CI不能作为业务已上线依据。
+
+## 2026-10-22 实际冻结续验（cf60690）
+
+提交 `cf60690a138a1e294521f704327c8d7be2bdf772` 已推送。主 Agent 本地复核通过：472项 Node、8项 Python 测试均通过且零跳过，21项迁移专项通过；构建生成1,280页，`verify:public` 检查1,318个文件，静态资源检查1,304项，真实凭证扫描1,477个文件通过。Cloudflare CI `39718968993` artifact成功且自动部署跳过；Pages CI `39718969027` 成功。
+
+增强只读状态运行 `diagnose-after-freeze-20261022-cf60690` 共14次HTTP，确认原probe计数为0、check与production两库的reservation和registry计数均为0。随后schema冻结运行 `freeze-diagnostic-20261022-cf60690` 共32次HTTP、0条DDL；新check probe返回HTTP 400/code 7500，并带有freeze与SQLite标记，但错误格式未通过严格格式匹配规则，按unknown保留。该结果不能证明具体wrapper行为或原子拒绝成功。再以 `status-after-diagnostic-20261022-cf60690` 独立只读运行15次HTTP，确认两个probe均为0、两库旧reservation/registry总数均为0；两个unknown仍保留。
+
+authority仍为 `uninitialized`，书籍0本，业务API未启用，主站仍为静态版本 `9963771`。没有导入、激活、R2 PUT或真实书籍上传。私有receipt位于项目相对路径 `.local/cf03/storage-migration/` 对应运行目录；本文不包含凭证或账号标识。本记录不把新代码视为真实云端核查；CF-01工具仍待主 Agent 验收。下一项Sol工作增加脱敏语法诊断；主Agent已核对官方Workerd源码，并另行批准仅对新响应兼容其精确extended trigger约束格式，仍要求HTTP400、明确失败envelope及单条code7500。泛token、5xx和旧unknown不改变。下方此前检查点保留为历史。
+
+## 2026-10-22 实际冻结与R2观察（历史）
 
 第二检查点 `4e23dd3895145d4a2163f03354cd24324be8cf56` 已推送；Cloudflare artifact CI `39717347207` 和 Pages CI `39717347250` 成功。主站仍为上一受控静态部署，API和私人云端阅读关闭，上传书籍0本。
 

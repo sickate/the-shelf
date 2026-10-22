@@ -25,14 +25,14 @@ node scripts/storage-migrate.mjs ready --execute --run-id ready-001
 
 请求按单条固定 SQL 的 D1 REST 调用记账，不通过 Wrangler 隐式展开。DDL 定义仅由仓库固定的 `schema.sql`、`002-conservative-storage.sql`、`003-storage-authority.sql`、`004-freeze-legacy-storage.sql` 在本机内存 SQLite 中解析取得；执行时保留原始 SQL，按原始依赖顺序创建。任何未知或修改过的既有定义均阻断，不猜测修复。每条请求在发出前私有落盘，DDL 上限在发出前扣除。单次请求 SQL 最多100 KB、参数最多100项，响应最多1 MB；请求和完整响应体共同受最多30秒期限约束。无自动重试、重定向或备用目标。
 
-离线空源场景实测 `schema-freeze` 为139次HTTP请求、100条DDL，`import` 为67次HTTP请求、0条DDL。这些是 mock 的验证结果，不代表已执行真实云端迁移。实际请求数取决于冻结进度及 preflight 的固定分支，且不得突破上述上限。
+离线空源场景实测 `schema-freeze` 为141次HTTP请求、100条DDL（包括两个拒绝探测后的独立零行读回），`import` 为67次HTTP请求、0条DDL。这些是 mock 的验证结果，不代表已执行真实云端迁移。实际请求数取决于冻结进度及 preflight 的固定分支，且不得突破上述上限。
 
 ## 冻结与导入顺序
 
 1. `schema-freeze` 每次先重新运行 `storage-preflight.mjs`，将其每条请求纳入当前运行预算和意图记录。要求本机旧清单/账本为空、旧 D1 预留与 registry 为空、auth 关闭，以及 check Worker 的 workers.dev 和预览入口关闭或 Worker 不存在。
 2. 首次生产 D1 必须由这次 preflight 证明没有应用 schema。原始空源证明在首次 DDL 前写入迁移状态；后续局部恢复必须保留该证明。已经存在应用 schema 且没有原始证明时阻断。
 3. 先补生产基础 schema，以固定 SELECT 核对两个基础种子，仅在缺失时补齐，再补生产 authority schema，接着在两个 D1 安装完全匹配的冻结定义。只在独立读回冻结定义后插入不可变冻结标记。两个标记生效后，才把生产的已知基础 `reserve_upload` trigger 升级为002定义。
-4. 独立读回完整 schema、关闭的 auth、D1身份；在两个D1各提交一次固定旧预留负向测试，必须以 HTTP 400 和明确的 `legacy_storage_frozen` 事务拒绝返回；5xx 即使携带该文本也仍属未知结果。测试意外成功或返回结果未知均阻断。
+4. 独立读回完整 schema、关闭的 auth、D1身份；在两个D1各提交一次固定旧预留负向测试，必须以 HTTP 400 和明确的 `legacy_storage_frozen` 事务拒绝返回；5xx 即使携带该文本也仍属未知结果。保留原有精确基本格式；另仅接受 Workerd 精确格式 `legacy_storage_frozen: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)`（可有 `D1_ERROR: ` 前缀），且要求顶层 `success=false`、`errors` 数组恰一项、code 为数字7500。任意额外前后缀、换行、payload 或其他约束类型不接受。每次已证明拒绝后，另发固定 SELECT 独立读回该探测 ID、全部预留及 registry 均为零；否则阻断。测试意外成功或返回结果未知均阻断，旧未知证据不追溯改判。
 5. `import` 先按当次有效配置重新检查 `getConfig` 实际 manifest、JSON 账本及 upload.lock；任何本机登记、旧预留或 lock 均在云请求之前阻断。再次独立验证上述身份、schema、冻结标记及 auth，并在首个可能写请求前重查本机来源，才调用 `RemoteStorageAuthority.initialize/readFrozenSnapshots/migrateFrozen`。私有收据记录当次本机观测，不沿用 schema-freeze 的旧结果。当前仅支持已实测的空旧源；任何旧预留或registry非空都以 `migration_inventory_changed_requires_budget_review` 阻断。此范围不支持非空源批量迁移。
 6. 首次冻结快照及时间戳保留在私有快照文件，恢复时保持同一迁移哈希。适配器独立读回导入的全部 canonical staging、计数、registry、冻结源及导入收据。成功后 phase 必须仍为 `imported`，`cloudWriteFreezeProven=false`，`uploadAllowed=false`。
 
@@ -56,7 +56,9 @@ node scripts/storage-migrate.mjs schema-freeze --execute --run-id schema-resume-
 
 失败请求的 outcome 现在保留实际 HTTP 状态、最多8个受限数字 provider code、顶层及单查询 success 三态、result 形状，以及固定 `legacy_storage_frozen` token/精确错误格式是否出现的布尔值；不保存 provider message、响应正文或秘密。HTTP 200、400、409 与 5xx 必须分开记录，token 布尔值仅帮助诊断，不证明 SQL 已原子拒绝。旧收据中未记录的状态/错误不得事后补推断。
 
-若未决写入属于已知负向预留探针，`status` 仅根据既有 run ID、profile 和完全匹配的固定 SQL hash，对最多8条探针逐条读取精确 reservation ID 的 COUNT，并独立读取两个固定 D1 的 reservation/registry 总 COUNT。这些读请求计入原32次HTTP上限。即使全部为零，收据仍明确 `atomicRejectionProven=false`，旧 unknown 不改成 rejected；若发现任何行则撤销旧恢复检查点并要求预算/库存审查，绝不自动删除。schema 匹配或当前不存在探针行均不能代替当次 SQL 原子拒绝证据；本阶段不改变负向拒绝的接受规则，也不自动重发探针 INSERT。
+每条错误还可保存有限 grammar 签名：仅识别固定 legacy/SQLite/D1/Error/code/extended 词、固定7500/1811数字及受限ASCII标点/空白枚举；所有其他连续文本只记 `other`，不保留原文、hash或可逆片段。最多8条错误，每消息扫描前4096个UTF-16代码单元、最多64个签名token，保存粗粒度UTF-8长度区间、已扫描范围内的已知token计数和截断标志。该硬上限也覆盖旧token存在性诊断；未识别或截断的错误继续 unknown。Workerd官方 [dbErrorMessage 源码](https://github.com/cloudflare/workerd/blob/main/src/workerd/util/sqlite.c++) 已核实上述 extended 格式；grammar 本身始终仅用于诊断，不参与接受判定，也不把历史布尔观测当作实际原文。
+
+若未决写入属于已知负向预留探针，`status` 仅根据既有 run ID、profile 和完全匹配的固定 SQL hash，对最多8条探针逐条读取精确 reservation ID 的 COUNT，并独立读取两个固定 D1 的 reservation/registry 总 COUNT。这些读请求计入原32次HTTP上限。即使全部为零，收据仍明确 `atomicRejectionProven=false`，旧 unknown 不改成 rejected；若发现任何行则撤销旧恢复检查点并要求预算/库存审查，绝不自动删除。schema 匹配或当前不存在探针行均不能代替当次 SQL 原子拒绝证据；上述只读status不改变负向拒绝的接受规则，也不自动重发探针 INSERT。
 
 ## 尚未实现的收口及回退
 
