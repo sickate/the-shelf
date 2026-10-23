@@ -320,7 +320,7 @@ export async function snapshot(
     let cursor = "";
     while (true) {
       const page = await db.query(
-        "SELECT b.book_id,b.public_json,o.patch_json FROM catalog_books b LEFT JOIN metadata_overrides o ON o.scope=b.scope AND o.book_id=b.book_id WHERE b.scope=? AND b.book_id>? ORDER BY b.book_id LIMIT ?",
+        "SELECT b.book_id,b.public_json,o.patch_json FROM catalog_books b LEFT JOIN metadata_overrides o ON o.scope=b.scope AND o.book_id=b.book_id WHERE b.scope=? AND b.book_id>? AND NOT EXISTS(SELECT 1 FROM book_management m WHERE m.scope=b.scope AND m.book_id=b.book_id AND (m.trashed=1 OR m.visibility='private')) ORDER BY b.book_id LIMIT ?",
         [scope, cursor, pageSize],
       );
       if (

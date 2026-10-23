@@ -1,6 +1,10 @@
 ---
 import Layout from "../../layouts/Layout.astro";
-import { canAccessFile } from "../../lib/file-availability.mjs";
+import {
+  canAccessFile,
+  fileExplanation,
+} from "../../lib/file-availability.mjs";
+import { supportsBrowserReader } from "../../lib/reader-formats.mjs";
 import { catalog, path, size, status, color } from "../../lib/data";
 export function getStaticPaths() {
   return catalog.books.map((book) => ({
@@ -12,7 +16,12 @@ const { book } = Astro.props;
 ---
 
 <Layout title={book.title}>
-  <main id="main" data-book={book.id}>
+  <main
+    id="main"
+    data-book={book.id}
+    data-file-mode={import.meta.env.PUBLIC_SHELF_API_MODE || ""}
+    data-read-base={path()}
+  >
     <div class="breadcrumb">
       <a href={path()}>书架</a> /{" "}
       <a
@@ -131,26 +140,28 @@ const { book } = Astro.props;
           每个文件分别记录状态。待上传只表示大小符合门槛；实际阅读需要后端授权及可用文件。
         </p>
         {book.files.map((f: any) => (
-          <div class="file-row">
+          <div
+            class="file-row"
+            data-file-row
+            data-file-id={f.id}
+            data-file-format={f.format}
+            data-file-size={f.sizeBytes}
+          >
             <div>
               <strong>{f.format}</strong>{" "}
               <span class="muted">· {size(f.sizeBytes)}</span>
               <p>
-                {status(f)}
+                <span data-file-status>{status(f)}</span>
                 <br />
-                {f.reason === "size"
-                  ? "超过 20 MB 门槛，暂不上传或在线读取。"
-                  : f.reason === "empty"
-                    ? "文件为空，无法读取。"
-                    : f.reason === "not_uploaded" &&
-                        import.meta.env.PUBLIC_SHELF_API_MODE
-                      ? "等待上传；目前不能在线阅读或下载。"
-                      : f.readable
-                        ? "支持浏览器阅读格式；需确认文件实际可用。"
-                        : "浏览器不直接支持此格式；可下载原文件，使用 Calibre 转为 EPUB。"}
+                <span data-file-explanation>
+                  {fileExplanation(
+                    f,
+                    import.meta.env.PUBLIC_SHELF_API_MODE || "",
+                  )}
+                </span>
               </p>
             </div>
-            <div class="file-actions">
+            <div class="file-actions" data-file-actions>
               {canAccessFile(
                 f,
                 import.meta.env.PUBLIC_SHELF_API_MODE || "",
@@ -158,11 +169,16 @@ const { book } = Astro.props;
                 <>
                   <a
                     class="button"
+                    data-file-initial-action
                     href={path(`read/?book=${book.id}&file=${f.id}`)}
                   >
-                    {f.readable ? "授权阅读 →" : "下载原文件 →"}
+                    {supportsBrowserReader(f.format)
+                      ? "授权阅读 →"
+                      : "下载原文件 →"}
                   </a>
-                  <button data-download={f.id}>授权下载 ↓</button>
+                  <button data-file-initial-action data-download={f.id}>
+                    授权下载 ↓
+                  </button>
                 </>
               )}
             </div>

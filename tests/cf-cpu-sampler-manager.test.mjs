@@ -633,6 +633,23 @@ test("abort before dispatch sends nothing; timeout/abort during fetch dispatch o
 
 test("real manager SQL and real Worker complete 42 requests with rowid-bound CAS and two full maintenance proofs", async (t) => {
   const f = await fixture(t);
+  // This historical sampler verifies the frozen original admissions/schema contract.
+  // Current Worker metadata reads additionally need empty lifecycle tables. Install
+  // only these two tables in this metadata-only fixture, not the 007 access trigger:
+  // dedicated management tests apply and verify the COMPLETE 007 security migration.
+  const managementSql = await fs.readFile(
+    new URL(
+      "../cloudflare/library/migrations/007-book-management.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const managementTables = [
+    ...managementSql.matchAll(/CREATE TABLE IF NOT EXISTS[\s\S]*?\n\);/g),
+  ].map((match) => match[0]);
+  assert.equal(managementTables.length, 2);
+  for (const table of managementTables) f.db.exec(table);
+
   const originalNow = Date.now;
   Date.now = f.getNow;
   t.after(() => {

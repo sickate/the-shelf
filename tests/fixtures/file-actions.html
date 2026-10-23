@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" /><title>File actions DOM verification</title>
+  <main
+    data-book="book &amp; <one>"
+    data-file-mode="same-origin"
+    data-read-base="/"
+  >
+    <section
+      data-file-row
+      data-file-id="file_abc"
+      data-file-format="PDF"
+      data-file-size="100"
+    >
+      <span data-file-status>待上传 · 私有</span>
+      <span data-file-explanation>等待上传；目前不能在线阅读或下载。</span>
+      <div data-file-actions></div>
+    </section>
+    <section
+      data-file-row
+      data-file-id="file_big"
+      data-file-format="EPUB"
+      data-file-size="20000001"
+    >
+      <span data-file-status>待上传 · 私有</span>
+      <span data-file-explanation>超过 20 MB 门槛，暂不上传或在线读取。</span>
+      <div data-file-actions></div>
+    </section>
+    <section
+      data-file-row
+      data-file-id="file_dup"
+      data-file-format="PDF"
+      data-file-size="100"
+    >
+      <span data-file-status>待上传 · 私有</span>
+      <span data-file-explanation>等待上传；目前不能在线阅读或下载。</span>
+      <div data-file-actions></div>
+    </section>
+    <section
+      data-file-row
+      data-file-id="file_local"
+      data-file-format="PDF"
+      data-file-size="100"
+    >
+      <span data-file-status>待上传 · 私有</span>
+      <span data-file-explanation
+        >支持 PDF、EPUB 与无 DRM 的 MOBI、AZW、AZW3；打开时会检查文件格式与
+        DRM。</span
+      >
+      <div data-file-actions>
+        <a class="button" data-file-initial-action href="/read/">授权阅读 →</a>
+        <button data-file-initial-action data-download="file_local">
+          授权下载 ↓
+        </button>
+      </div>
+    </section>
+    <section
+      data-file-row
+      data-file-id="file_dup"
+      data-file-format="PDF"
+      data-file-size="100"
+    >
+      <span data-file-status>待上传 · 私有</span>
+      <span data-file-explanation>等待上传；目前不能在线阅读或下载。</span>
+      <div data-file-actions></div>
+    </section>
+    <p id="result">running</p>
+  </main>
+  <script type="module">
+    import { fileActions } from "/file-actions.mjs";
+    const root = document.querySelector("main"),
+      assertions = [],
+      assert = (condition, message) => {
+        if (!condition) throw new Error(message);
+        assertions.push(message);
+      },
+      row = (id) =>
+        [...document.querySelectorAll("[data-file-row]")].find(
+          (r) => r.dataset.fileId === id,
+        ),
+      item = (id, patch = {}) => ({
+        id,
+        format: "PDF",
+        sizeBytes: 100,
+        status: "candidate",
+        reason: "uploaded",
+        visibility: "private",
+        readable: true,
+        ...patch,
+      });
+    try {
+      let downloads = 0;
+      const controller = fileActions({
+        root: document,
+        bookId: root.dataset.book,
+        mode: root.dataset.fileMode,
+        readBase: root.dataset.readBase,
+        onDownload: (id) => {
+          assert(
+            id === "file_abc",
+            "new button calls shared download callback with its file id",
+          );
+          downloads++;
+        },
+      });
+      const local = fileActions({ root: document, bookId: "x", mode: "" });
+      local.apply([
+        item("file_local", { id: "file_local", reason: "not_uploaded" }),
+      ]);
+      assert(
+        row("file_local").querySelector("[data-file-actions]").children
+          .length === 2,
+        "local candidate actions remain intact",
+      );
+      assert(
+        !row("file_local").querySelector("[data-dynamic-file-action]"),
+        "local mode adds no cloud authorization entry",
+      );
+      const pending = item("file_abc", { reason: "not_uploaded" });
+      controller.apply([pending]);
+      assert(
+        row("file_abc").querySelector("[data-file-actions]").children.length ===
+          0,
+        "not_uploaded does not create authorization actions",
+      );
+      assert(
+        row("file_abc").querySelector("[data-file-explanation]").textContent ===
+          "等待上传；目前不能在线阅读或下载。",
+        "not_uploaded explanation is synchronized",
+      );
+      controller.apply([item("file_abc")]);
+      const actions = row("file_abc").querySelector("[data-file-actions]"),
+        link = actions.querySelector("a");
+      assert(
+        actions.children.length === 2,
+        "uploaded state adds read and download controls without rebuilding the row",
+      );
+      assert(
+        link.href.includes("book=book%20%26%20%3Cone%3E"),
+        "book id is URL-encoded",
+      );
+      assert(
+        link.textContent === "授权阅读 →" &&
+          actions.querySelector("button").textContent === "授权下载 ↓",
+        "controls use fixed labels",
+      );
+      assert(
+        row("file_abc").querySelector("[data-file-explanation]").textContent ===
+          "文件已确认上传；读取与下载仍需所有者会话授权。",
+        "uploaded explanation matches the authorization controls",
+      );
+      controller.apply([item("file_abc")]);
+      assert(actions.children.length === 2, "same refresh is idempotent");
+      const refreshedButton = actions.querySelector("button");
+      refreshedButton.click();
+      assert(
+        downloads === 1,
+        "generated download control invokes callback once",
+      );
+      controller.apply(undefined);
+      assert(
+        actions.children.length === 0 &&
+          row("file_abc").querySelector("[data-file-status]").textContent ===
+            "状态待核对",
+        "missing API file state hides actions and marks status for verification",
+      );
+      assert(
+        row("file_abc").querySelector("[data-file-explanation]").textContent ===
+          "当前文件状态暂不可核对，在线授权入口已隐藏，请刷新后重试。",
+        "missing API file state updates the explanation",
+      );
+      controller.apply([item("file_abc")]);
+      assert(
+        actions.querySelector("button") !== refreshedButton,
+        "each refreshed button is a newly connected control",
+      );
+      controller.apply([item("file_abc", { reason: "not_uploaded" })]);
+      assert(
+        actions.children.length === 0,
+        "revoked upload removes authorization actions",
+      );
+      assert(
+        row("file_abc").querySelector("[data-file-status]").textContent ===
+          "待上传 · 私有",
+        "revocation refreshes visible status",
+      );
+      assert(
+        row("file_abc").querySelector("[data-file-explanation]").textContent ===
+          "等待上传；目前不能在线阅读或下载。",
+        "revocation refreshes visible explanation",
+      );
+      controller.apply([item("file_abc", { format: "EPUB" })]);
+      assert(actions.children.length === 0, "changed descriptor is rejected");
+      assert(
+        row("file_abc").querySelector("[data-file-status]").textContent ===
+          "状态待核对" &&
+          row("file_abc").querySelector("[data-file-explanation]")
+            .textContent ===
+            "当前文件状态暂不可核对，在线授权入口已隐藏，请刷新后重试。",
+        "descriptor mismatch replaces stale state with pending verification",
+      );
+      controller.apply([
+        item("file_big", {
+          id: "file_big",
+          format: "EPUB",
+          sizeBytes: 20000001,
+        }),
+      ]);
+      assert(
+        row("file_big").querySelector("[data-file-actions]").children.length ===
+          0,
+        "oversized file is rejected by access policy",
+      );
+      controller.apply([item("unknown")]);
+      assert(
+        actions.children.length === 0,
+        "unknown file id cannot create an entry",
+      );
+      controller.apply([item("file_dup"), item("file_dup")]);
+      assert(
+        row("file_dup").querySelector("[data-file-actions]").children.length ===
+          0,
+        "duplicate API ids are rejected",
+      );
+      assert(
+        row("file_dup").querySelector("[data-file-status]").textContent ===
+          "状态待核对",
+        "duplicate API ids show pending verification",
+      );
+      controller.apply([
+        item("file_abc", { reason: "<img src=x onerror=alert(1)>" }),
+      ]);
+      assert(
+        !row("file_abc").querySelector("img"),
+        "special text cannot inject markup",
+      );
+      const disabled = fileActions({
+        root: document,
+        bookId: "x",
+        mode: "disabled",
+      });
+      disabled.apply([item("file_abc")]);
+      assert(
+        actions.children.length === 0,
+        "disabled mode never creates authorization controls",
+      );
+      document.body.dataset.result = "pass";
+      document.getElementById("result").textContent = JSON.stringify(
+        { ok: true, assertions },
+        null,
+        2,
+      );
+    } catch (error) {
+      document.body.dataset.result = "fail";
+      document.getElementById("result").textContent = String(error.stack);
+    }
+  </script>
+</html>

@@ -884,6 +884,15 @@ test("full sampler runs real Worker+SQLite: 40 real API admissions, two CAS race
       "utf8",
     ),
   );
+  sql.exec(
+    await fs.readFile(
+      new URL(
+        "../cloudflare/library/migrations/007-book-management.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   // The real Worker executes its actual SQL, triggers, transaction boundaries,
   // session crypto and CAS. Only D1's remote transport is replaced by SQLite.
   let metadataReaders = [];

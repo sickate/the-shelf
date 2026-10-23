@@ -122,3 +122,47 @@ export const accessUrl = (url: string) => new URL(url, apiBase + "/").href;
 
 export const fetchFile = (fileId: string) =>
   fetchAuthorizedFile(fileId, { api, resolveUrl: accessUrl });
+
+// Binary mutation is limited to an API-returned same-origin upload route. Never retry.
+export async function apiBinary(
+  route: string,
+  bytes: Uint8Array | ArrayBuffer | Blob,
+) {
+  if (!runtime.enabled) throw new Error("在线服务尚未连接。");
+  if (!/^\/api\/manage\/uploads\/[\w-]{1,100}\/bytes$/.test(route))
+    throw new Error("上传地址无效。");
+  if (!csrfToken) throw new Error(messages.authentication_required);
+  let response: Response;
+  try {
+    response = await fetch(apiBase + route, {
+      method: "POST",
+      credentials: "include",
+      redirect: "error",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-CSRF-Token": csrfToken,
+      },
+      body:
+        bytes instanceof Uint8Array ? new Blob([new Uint8Array(bytes)]) : bytes,
+    });
+  } catch {
+    const failure = new Error(
+      "上传结果尚未确认，请刷新管理页核对，勿再次提交文件。",
+    );
+    Object.assign(failure, { code: "upload_uncertain" });
+    throw failure;
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const code =
+      typeof data.error === "string"
+        ? data.error
+        : data.error?.code || data.code;
+    const failure = new Error(
+      messages[code] || code || `请求失败 (${response.status})`,
+    );
+    Object.assign(failure, { code, status: response.status, details: data });
+    throw failure;
+  }
+  return data;
+}

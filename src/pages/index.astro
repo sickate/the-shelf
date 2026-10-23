@@ -21,7 +21,9 @@ import { catalog, path, size, color } from "../lib/data";
       </div>
       <div class="stats">
         <div>
-          <strong>{catalog.books.length.toLocaleString()}</strong>
+          <strong id="catalog-total">
+            {catalog.books.length.toLocaleString()}
+          </strong>
           <span>本藏书</span>
         </div>
         <div>
@@ -39,7 +41,7 @@ import { catalog, path, size, color } from "../lib/data";
         <h2>浏览分类 / COLLECTIONS</h2>
         <nav class="categories" aria-label="书籍分类">
           <a class="active" href={path()} data-category="">
-            全部藏书 <span>{catalog.books.length}</span>
+            全部藏书 <span id="catalog-all-count">{catalog.books.length}</span>
           </a>
           {catalog.categories.map((c) => (
             <a
@@ -47,7 +49,7 @@ import { catalog, path, size, color } from "../lib/data";
               data-category={c.id}
             >
               {c.name}
-              <span>{c.count}</span>
+              <span data-category-count={c.id}>{c.count}</span>
             </a>
           ))}
         </nav>
@@ -103,6 +105,14 @@ import { catalog, path, size, color } from "../lib/data";
             </select>
           </label>
         </form>
+        <p
+          id="catalog-state-status"
+          class="catalog-state-status muted"
+          role="status"
+          hidden
+        >
+          当前无法核对最新公开书架状态，下面显示的是公开目录快照。
+        </p>
         <div class="result-row">
           <span id="count" aria-live="polite">
             {catalog.books.length} 本藏书

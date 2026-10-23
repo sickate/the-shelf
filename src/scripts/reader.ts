@@ -1,5 +1,10 @@
 import { api, session, errorText, fetchFile } from "../lib/api";
 import { base } from "../lib/client";
+import {
+  supportsReader,
+  readBoundedResponse,
+  mountTextReader,
+} from "../lib/ebook/reader.mjs";
 export async function initReader() {
   const params = new URLSearchParams(location.search),
     bookId = params.get("book"),
@@ -60,19 +65,32 @@ export async function initReader() {
     const { access, response } = await fetchFile(fileId);
     const format = access.format.toUpperCase(),
       mime = response.headers.get("content-type") || "";
-    const bytes = await response.arrayBuffer();
+    const bytes = await readBoundedResponse(response);
+    const downloadUrls = new Set<string>();
+    window.addEventListener(
+      "pagehide",
+      () => {
+        for (const url of downloadUrls) URL.revokeObjectURL(url);
+        downloadUrls.clear();
+      },
+      { once: true },
+    );
     download.onclick = () => {
       const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+      downloadUrls.add(url);
       const a = document.createElement("a");
       a.href = url;
       a.download = `${filename}.${format.toLowerCase()}`;
       a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        downloadUrls.delete(url);
+      }, 30000);
     };
     document.getElementById("reader-title")!.textContent =
       `${bookTitle} · ${format} 阅读`;
     document.getElementById("reader-tools")!.hidden = false;
-    if (!["PDF", "EPUB"].includes(format)) {
+    if (!supportsReader(format)) {
       status.textContent = `${format} 不支持浏览器直接阅读。请下载原文件，使用 Calibre 转为 EPUB 后再导入。`;
       for (const id of ["prev", "next", "zoom", "toc", "pdf-page-label"])
         document.getElementById(id)!.hidden = true;
@@ -200,47 +218,21 @@ export async function initReader() {
       container.classList.add("epub");
       const theme = document.getElementById("theme") as HTMLSelectElement;
       theme.hidden = false;
-      const { default: ePub } = await import("epubjs");
-      const epub = ePub(bytes);
-      const rendition = epub.renderTo(container, {
-        width: "100%",
-        height: "100%",
-        flow: "paginated",
-        allowScriptedContent: false,
+      await mountTextReader({
+        bytes,
+        format,
+        container,
+        prev,
+        next,
+        zoom,
+        toc,
+        theme,
+        position,
+        progress,
+        save,
       });
-      rendition.themes.register("light", {
-        body: { background: "#fffdf8", color: "#282820" },
-      });
-      rendition.themes.register("dark", {
-        body: { background: "#262820", color: "#f7f4ed" },
-      });
-      rendition.themes.select("light");
-      rendition.themes.fontSize("100%");
-      theme.onchange = () => rendition.themes.select(theme.value);
-      zoom.onchange = () =>
-        rendition.themes.fontSize(`${Number(zoom.value) * 100}%`);
-      prev.onclick = () => rendition.prev();
-      next.onclick = () => rendition.next();
-      rendition.on("relocated", (location: any) => {
-        save(location.start.cfi);
-        position.textContent = `${location.start.displayed.page} / ${location.start.displayed.total} · 当前章节`;
-      });
-      await rendition.display(progress || undefined);
-      const nav = await epub.loaded.navigation;
-      function append(items: any[], depth = 0) {
-        for (const item of items) {
-          const option = document.createElement("option");
-          option.textContent = " ".repeat(depth * 2) + item.label;
-          option.value = item.href;
-          toc.append(option);
-          if (item.subitems) append(item.subitems, depth + 1);
-        }
-      }
-      append(nav.toc);
-      toc.onchange = () => {
-        if (toc.value) rendition.display(toc.value);
-      };
-      window.addEventListener("pagehide", () => epub.destroy(), { once: true });
+      status.textContent =
+        "已授权 · 安全文字模式：省略图片及原书样式；章节进度仅保存在此浏览器。无 DRM MOBI/KF8 可读，HUFF/CDIC 压缩需先在本机转换。";
     }
   } catch (e) {
     status.textContent = errorText(e);

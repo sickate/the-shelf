@@ -6,6 +6,8 @@
 
 ## 环境与初始化
 
+网页管理版本另需显式应用并核验 `migrations/007-book-management.sql`；`schema.sql` 保留历史契约，`cf:init` 仍只生成原有私有鉴权文件，不隐式安装新表或开启管理。当前生产使用[固定007增量工具与回退规则](../../docs/book-management-operations.md)，不能用重新执行基础 schema 或初始化鉴权代替迁移。新 Worker 在缺少007时对管理/相关读取固定失败，不回退绕过生命周期检查。
+
 所有 CLI 都从仓库根目录运行。`check` 和 `production` 使用独立 D1、独立 scope/origin，以及各自的 owner key、owner pepper 和 session secret。初始化只创建或核验 `.local/cf03/<profile>/` 下的本机私有文件（目录 0700、文件 0600），包括 `auth-init.sql`；不会创建或修改 Cloudflare 资源，不会应用 schema，也不会安装 Worker secret。
 
 ```sh

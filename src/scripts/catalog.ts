@@ -1,3 +1,6 @@
+import { api } from "../lib/api";
+import { applyCatalogVisibility } from "../lib/catalog-visibility.mjs";
+
 export function initCatalog() {
   const data = JSON.parse(
     document.getElementById("catalog-data")!.textContent!,
@@ -7,6 +10,7 @@ export function initCatalog() {
     status = document.getElementById("status") as HTMLSelectElement,
     category = document.getElementById("category") as HTMLSelectElement;
   let page = 1;
+  let visibleBooks = data;
   const perPage = 24;
   const params = new URLSearchParams(location.search);
   search.value = params.get("q") || "";
@@ -19,8 +23,22 @@ export function initCatalog() {
     ),
   );
   function render() {
+    document.getElementById("catalog-total")!.textContent =
+      visibleBooks.length.toLocaleString();
+    document.getElementById("catalog-all-count")!.textContent = String(
+      visibleBooks.length,
+    );
+    document
+      .querySelectorAll<HTMLElement>("[data-category-count]")
+      .forEach((count) => {
+        count.textContent = String(
+          visibleBooks.filter(
+            (book: any) => book.categoryId === count.dataset.categoryCount,
+          ).length,
+        );
+      });
     const q = search.value.trim().toLocaleLowerCase();
-    const filtered = data
+    const filtered = visibleBooks
       .filter(
         (b: any) =>
           (!q ||
@@ -103,4 +121,18 @@ export function initCatalog() {
     render();
   };
   render();
+  if (import.meta.env.PUBLIC_SHELF_API_MODE === "same-origin") {
+    void api("/api/catalog-state")
+      .then((snapshot) => {
+        const result = applyCatalogVisibility(data, snapshot);
+        visibleBooks = result.books;
+        document.getElementById("catalog-state-status")!.hidden =
+          result.available;
+        page = 1;
+        render();
+      })
+      .catch(() => {
+        document.getElementById("catalog-state-status")!.hidden = false;
+      });
+  }
 }

@@ -1205,3 +1205,10 @@ if (
       process.exitCode = 1;
     });
 }
+
+// Shared pinned private receipt IO only; no trial capability is exported here.
+export const SINGLE_TRIAL_PRIVATE_IO = Object.freeze({
+  privateDirectory,
+  writeImmutable,
+  readPrivate,
+});

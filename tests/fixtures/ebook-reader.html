@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh">
+  <meta charset="utf-8" /><title>
+    Synthetic private ebook reader verification</title
+  ><style>
+    #reader {
+      height: 450px;
+    }
+    .ebook-text-frame {
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+    button,
+    select {
+      margin: 5px;
+    }
+  </style>
+  <body>
+    <h1>Original synthetic EPUB/MOBI/KF8 fixture</h1>
+    <p id="result">Running…</p>
+    <button id="prev">Prev</button><button id="next">Next</button
+    ><span id="position"></span
+    ><select id="zoom">
+      <option value="1">100%</option>
+      <option value="1.5">150%</option></select
+    ><select id="toc">
+      <option value="">目录</option></select
+    ><select id="theme">
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+    <div id="reader"></div>
+    <script type="module">
+      import {
+        mountTextReader,
+        sanitizeIsolated,
+      } from "/src/lib/ebook/reader.mjs";
+      import { extractBook } from "/src/lib/ebook/parse-worker.mjs";
+      import {
+        epubFixture,
+        mobiFixture,
+        kf8Fixture,
+      } from "/tests/fixtures/ebook/synthetic.mjs";
+      const el = (id) => document.getElementById(id),
+        assert = (value, message) => {
+          if (!value) throw new Error(message);
+        };
+      let pwned = false;
+      addEventListener("message", (e) => {
+        if (e.data?.pwned) pwned = true;
+      });
+      try {
+        for (const [format, bytes] of [
+          ["EPUB", epubFixture()],
+          ["MOBI", mobiFixture()],
+          ["AZW3", kf8Fixture()],
+          ["AZW", mobiFixture()],
+        ]) {
+          const book = await extractBook(bytes, format),
+            chapters = await sanitizeIsolated(book);
+          assert(chapters.length >= 1, format + " chapters");
+          for (const c of chapters) {
+            assert(
+              !/<(?:script|img|svg|form|input|iframe|link|style)\b/i.test(
+                c.html,
+              ),
+              format + " active content removed",
+            );
+            assert(
+              !/\b(?:src|href|style|on\w+)\s*=/i.test(c.html),
+              format + " attributes removed",
+            );
+          }
+          if (format === "EPUB") {
+            assert(chapters.length === 2, "EPUB spine order");
+            assert(
+              chapters[1].html.includes("Safe paragraph"),
+              "paragraph retained",
+            );
+            assert(
+              chapters[1].html.includes("External link text"),
+              "link text retained",
+            );
+          }
+        }
+        let progress = "";
+        for (const [format, bytes] of [
+          ["MOBI", mobiFixture()],
+          ["AZW3", kf8Fixture()],
+          ["AZW", mobiFixture()],
+          ["EPUB", epubFixture()],
+        ]) {
+          el("toc").replaceChildren(new Option("目录", ""));
+          await mountTextReader({
+            bytes: bytes.buffer,
+            format,
+            container: el("reader"),
+            prev: el("prev"),
+            next: el("next"),
+            zoom: el("zoom"),
+            toc: el("toc"),
+            theme: el("theme"),
+            position: el("position"),
+            progress: "chapter:0",
+            save: (value) => (progress = value),
+          });
+          const loaded = el("reader").querySelector("iframe");
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error(format + " display frame did not load")),
+              5000,
+            );
+            loaded.addEventListener(
+              "load",
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true },
+            );
+          });
+          assert(
+            loaded.srcdoc.includes(
+              format === "EPUB"
+                ? "EPUB first chapter"
+                : format === "AZW3"
+                  ? "Synthetic KF8"
+                  : "Synthetic chapter one",
+            ),
+            format + " display content",
+          );
+          assert(el("toc").options.length >= 2, format + " table of contents");
+        }
+        const frame = el("reader").querySelector("iframe");
+        assert(
+          frame.getAttribute("sandbox") === "",
+          "display has no sandbox capabilities",
+        );
+        assert(frame.srcdoc.includes("script-src 'none'"), "script CSP");
+        assert(frame.srcdoc.includes("default-src 'none'"), "network CSP");
+        assert(
+          el("prev").disabled && !el("next").disabled,
+          "initial navigation",
+        );
+        el("next").click();
+        assert(progress === "chapter:1", "progress saves chapter");
+        assert(el("next").disabled, "last chapter");
+        el("zoom").value = "1.5";
+        el("zoom").dispatchEvent(new Event("change"));
+        assert(frame.srcdoc.includes("font-size:150%"), "font size");
+        el("theme").value = "dark";
+        el("theme").dispatchEvent(new Event("change"));
+        assert(frame.srcdoc.includes("#262820"), "theme");
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        assert(!pwned, "publisher script cannot execute");
+        assert(
+          document.querySelectorAll("iframe").length === 1,
+          "parser iframe cleaned up",
+        );
+        document.body.dataset.result = "pass";
+        el("result").textContent =
+          "PASS: EPUB/MOBI/AZW/KF8 parse, CSP sandbox/sanitization, TOC/navigation/font/theme/progress, parser cleanup.";
+      } catch (error) {
+        document.body.dataset.result = "fail";
+        el("result").textContent = "FAIL: " + error.message;
+        console.error(error);
+      }
+    </script>
+  </body>
+</html>

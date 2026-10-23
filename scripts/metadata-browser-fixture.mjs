@@ -30,6 +30,34 @@ const files = new Map([
       "text/javascript; charset=utf-8",
     ],
   ],
+  [
+    "/file-actions/",
+    [
+      new URL("../tests/fixtures/file-actions.html", import.meta.url),
+      "text/html; charset=utf-8",
+    ],
+  ],
+  [
+    "/file-actions.mjs",
+    [
+      new URL("../src/lib/file-actions.mjs", import.meta.url),
+      "text/javascript; charset=utf-8",
+    ],
+  ],
+  [
+    "/file-availability.mjs",
+    [
+      new URL("../src/lib/file-availability.mjs", import.meta.url),
+      "text/javascript; charset=utf-8",
+    ],
+  ],
+  [
+    "/reader-formats.mjs",
+    [
+      new URL("../src/lib/reader-formats.mjs", import.meta.url),
+      "text/javascript; charset=utf-8",
+    ],
+  ],
 ]);
 const server = http.createServer(async (req, res) => {
   const target = files.get(req.url);

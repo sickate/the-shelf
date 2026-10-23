@@ -72,6 +72,7 @@ async function fixture(t, { confirmed = false } = {}) {
     "migrations/004-freeze-legacy-storage.sql",
     "migrations/005-single-trial.sql",
     "migrations/006-single-trial-admission.sql",
+    "migrations/007-book-management.sql",
   ])
     sql.exec(
       readFileSync(
@@ -547,4 +548,53 @@ test("trial refuses old credentials, wrong target binding and wrong target confi
     assert.ok((await handleRequest(operator(f), f.env)).status >= 400);
     assert.equal(f.puts(), 0);
   }
+});
+
+test("trial trash/restore retains consumed permit and blocks access even through an R2 await race", async (t) => {
+  const f = await fixture(t, { confirmed: true }),
+    cookie = await login(f);
+  const session = await handleRequest(
+      req("/api/session", { headers: { Cookie: cookie } }),
+      f.env,
+    ),
+    csrf = (await session.json()).csrfToken;
+  const send = (path, body) =>
+    handleRequest(
+      req(path, {
+        ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
+        headers: {
+          Cookie: cookie,
+          "X-CSRF-Token": csrf,
+          "Content-Type": "application/json",
+        },
+      }),
+      f.env,
+    );
+  const before = {
+    ...f.sql.prepare("SELECT * FROM shelf_storage_single_trial").get(),
+  };
+  let r = await send("/api/manage/books/trial_book/trash", {
+    expectedVersion: 0,
+  });
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal((await send("/api/files/trial_file/content")).status, 409);
+  r = await send("/api/manage/books/trial_book/restore", {
+    expectedVersion: 1,
+  });
+  assert.equal(r.status, 200);
+  assert.equal((await send("/api/files/trial_file/content")).status, 200);
+  const get = f.env.BOOKS.get;
+  f.env.BOOKS.get = async (...args) => {
+    const o = await get(...args);
+    f.sql.exec(
+      "UPDATE book_management SET version=version+1 WHERE book_id='trial_book'",
+    );
+    return o;
+  };
+  assert.equal((await send("/api/files/trial_file/content")).status, 409);
+  assert.deepEqual(
+    { ...f.sql.prepare("SELECT * FROM shelf_storage_single_trial").get() },
+    before,
+  );
+  assert.equal(f.puts(), 0);
 });

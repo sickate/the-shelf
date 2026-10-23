@@ -40,10 +40,18 @@ const { title = "私人藏书，公共目录", section = "library" } = Astro.pro
           产品与实现
         </a>
         <a
-          aria-current={section === "account" ? "page" : undefined}
+          aria-current={
+            section === "account" || section === "manage" ? "page" : undefined
+          }
           href={path("account/")}
         >
           所有者 <span aria-hidden="true">↗</span>
+        </a>
+        <a
+          aria-current={section === "manage" ? "page" : undefined}
+          href={path("manage/")}
+        >
+          管理书库
         </a>
       </nav>
     </header>

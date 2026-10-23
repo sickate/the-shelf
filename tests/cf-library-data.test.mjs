@@ -240,6 +240,15 @@ async function sqlFixture(t) {
       "utf8",
     ),
   );
+  sqlite.exec(
+    await fs.readFile(
+      new URL(
+        "../cloudflare/library/migrations/007-book-management.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   t.after(() => sqlite.close());
   return {
     sqlite,

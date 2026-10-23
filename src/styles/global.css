@@ -424,6 +424,160 @@ main {
   font-size: 11px;
   white-space: nowrap;
 }
+
+.manage-heading,
+.manage-section-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+}
+.manage-heading {
+  margin-bottom: 36px;
+}
+.manage-heading h1 {
+  font:
+    500 clamp(32px, 4vw, 48px)/1.2 Georgia,
+    "Songti SC",
+    serif;
+  margin: 12px 0 10px;
+}
+.manage-heading p {
+  margin: 0;
+}
+.manage-upload {
+  padding: clamp(20px, 4vw, 38px);
+}
+.manage-section-head h2 {
+  font:
+    500 26px/1.25 Georgia,
+    "Songti SC",
+    serif;
+  margin: 8px 0 0;
+}
+.manage-limit,
+.manage-count {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.manage-list-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.manage-list-tools button {
+  font-size: 11px;
+  padding: 8px 11px;
+}
+.manage-form {
+  margin-top: 24px;
+}
+.manage-fields {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 16px;
+}
+.manage-file {
+  margin-top: 20px;
+}
+.manage-file input {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 14px;
+}
+.manage-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.manage-actions .status-text {
+  margin: 0;
+}
+.notice-blocked {
+  border-left-color: #a87c38;
+}
+.manage-list-section {
+  margin-top: 54px;
+}
+.manage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+.manage-card {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 20px;
+}
+.manage-card h3 {
+  margin: 0;
+  font:
+    500 20px/1.45 Georgia,
+    "Songti SC",
+    serif;
+}
+.manage-book-meta {
+  margin: 8px 0 14px;
+}
+.manage-file-summary {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.manage-read-links,
+.manage-card-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.manage-card-status {
+  margin: 10px 0 0;
+}
+.manage-read-links .button,
+.manage-card-controls button {
+  font-size: 12px;
+  padding: 8px 11px;
+}
+.manage-confirm {
+  flex-basis: 100%;
+  background: #f4eee4;
+  border: 1px solid var(--line);
+  padding: 14px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.manage-confirm p {
+  margin: 0 0 10px;
+}
+.manage-confirm button {
+  margin-right: 8px;
+}
+.manage-confirm .danger {
+  color: #963d2a;
+  border-color: #c9a399;
+}
+.manage-trash {
+  border-top: 1px solid var(--line);
+  padding-top: 30px;
+}
+@media (max-width: 700px) {
+  .manage-heading,
+  .manage-section-head {
+    align-items: flex-start;
+  }
+  .manage-heading {
+    flex-direction: column;
+  }
+  .manage-fields {
+    grid-template-columns: 1fr;
+  }
+}
 .notice {
   font-size: 12px;
   line-height: 1.8;
@@ -803,4 +957,11 @@ footer {
 }
 .cover h2[title] {
   cursor: inherit;
+}
+
+.ebook-text-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
 }

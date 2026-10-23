@@ -26,6 +26,12 @@ import {
   trialObjectHeaders,
 } from "./single-trial.mjs";
 
+import {
+  managementRoute,
+  managedFileAccess,
+  assertCurrent,
+} from "./management.mjs";
+
 const cookieName = "__Host-shelf_session";
 const headers = {
   "Content-Type": "application/json; charset=utf-8",
@@ -174,14 +180,22 @@ async function sessionCandidate(request, env, context) {
 function requireSession(session) {
   if (!session) throw new LibraryError("authentication_required", 401);
 }
-async function bookInfo(env, scope, bookId) {
+async function bookInfo(
+  env,
+  scope,
+  bookId,
+  privateAccess = false,
+  includeTrash = false,
+) {
   const results = await query(() =>
     env.DB.batch([
       prepare(
         env,
-        `SELECT b.public_json,o.patch_json,o.version FROM catalog_books b LEFT JOIN metadata_overrides o ON o.scope=b.scope AND o.book_id=b.book_id WHERE b.scope=? AND b.book_id=?`,
+        `SELECT b.public_json,o.patch_json,o.version,COALESCE(m.visibility,'public') AS visibility,COALESCE(m.version,0) AS management_version FROM catalog_books b LEFT JOIN metadata_overrides o ON o.scope=b.scope AND o.book_id=b.book_id LEFT JOIN book_management m ON m.scope=b.scope AND m.book_id=b.book_id WHERE b.scope=? AND b.book_id=? AND (COALESCE(m.visibility,'public')='public' OR ?=1) AND (COALESCE(m.trashed,0)=0 OR ?=1)`,
         scope,
         bookId,
+        privateAccess ? 1 : 0,
+        includeTrash ? 1 : 0,
       ),
       prepare(
         env,
@@ -200,6 +214,8 @@ async function bookInfo(env, scope, bookId) {
         row.patch_json ? JSON.parse(row.patch_json) : {},
         results[1].results || [],
       ),
+      isPrivate: row.visibility === "private",
+      managementVersion: row.management_version,
       metadataVersion: row.version || 0,
       patch: row.patch_json ? JSON.parse(row.patch_json) : {},
     };
@@ -214,6 +230,15 @@ function registrySource(env) {
 }
 async function trialFileAccess(request, env, context, session, id, content) {
   const t = await query(() => loadTrial(env));
+  const lifecycle = await query(() =>
+    prepare(
+      env,
+      "SELECT trashed,version FROM book_management WHERE scope=? AND book_id=?",
+      context.scope,
+      t.file.book_id,
+    ).first(),
+  );
+  if (lifecycle?.trashed) throw new LibraryError("file_unavailable", 409);
   const file = t.file;
   if (file.file_id !== id) throw new LibraryError("file_unavailable", 409);
   let object,
@@ -282,6 +307,8 @@ async function trialFileAccess(request, env, context, session, id, content) {
         WHERE t.id=1 AND t.state='confirmed' AND t.content_verified=1 AND t.put_attempted=1
           AND t.permit_id=? AND t.target_json=? AND t.descriptor_json=? AND t.etag=? AND t.isolated_target_config_sha256=? AND t.authority_identity_json=?
           AND json_extract(j.value,'$.id')=? AND json_extract(j.value,'$.format')=? AND json_extract(j.value,'$.sizeBytes')=? AND json_extract(j.value,'$.status')='candidate' AND json_extract(j.value,'$.visibility')='private' AND json_extract(j.value,'$.readable')=1
+          AND NOT EXISTS(SELECT 1 FROM book_management m WHERE m.scope='production' AND m.book_id=json_extract(t.descriptor_json,'$.bookId') AND m.trashed=1)
+          AND COALESCE((SELECT version FROM book_management m WHERE m.scope='production' AND m.book_id=json_extract(t.descriptor_json,'$.bookId')),0)=?
       ) RETURNING request_id`,
           context.scope,
           randomKey(),
@@ -299,6 +326,7 @@ async function trialFileAccess(request, env, context, session, id, content) {
           id,
           file.format,
           file.size_bytes,
+          lifecycle?.version ?? 0,
         ),
         prepare(
           env,
@@ -362,6 +390,15 @@ async function fileAccess(env, context, session, id) {
     !validObjectKey(file.object_key, context.scope, file.format)
   )
     throw new LibraryError("file_unavailable", 409);
+  const lifecycle = await query(() =>
+    prepare(
+      env,
+      "SELECT trashed,version FROM book_management WHERE scope=? AND book_id=?",
+      context.scope,
+      file.book_id,
+    ).first(),
+  );
+  if (lifecycle?.trashed) throw new LibraryError("file_unavailable", 409);
   if (typeof env.BOOKS?.head !== "function")
     throw new LibraryError("files_unconfigured", 503);
   let head;
@@ -391,6 +428,8 @@ async function fileAccess(env, context, session, id) {
           AND f.book_id=? AND f.object_key=? AND f.format=? AND f.size_bytes=? AND f.sha256=? AND f.etag IS ?
           AND json_extract(j.value,'$.id')=f.file_id AND json_extract(j.value,'$.format')=f.format
           AND json_extract(j.value,'$.sizeBytes')=f.size_bytes AND json_extract(j.value,'$.status')='candidate'
+          AND NOT EXISTS(SELECT 1 FROM book_management m WHERE m.scope=f.scope AND m.book_id=f.book_id AND m.trashed=1)
+          AND COALESCE((SELECT version FROM book_management m WHERE m.scope=f.scope AND m.book_id=f.book_id),0)=?
       ) RETURNING request_id`,
         context.scope,
         randomKey(),
@@ -408,6 +447,7 @@ async function fileAccess(env, context, session, id) {
         file.size_bytes,
         file.sha256,
         file.etag,
+        lifecycle?.version ?? 0,
       ),
       prepare(
         env,
@@ -452,13 +492,14 @@ async function metadata(request, env, context, session, bookId) {
     prepare(
       env,
       `SELECT COALESCE(o.version,0) AS version,
+      COALESCE((SELECT version FROM book_management m WHERE m.scope=b.scope AND m.book_id=b.book_id),0) AS management_version,
       CASE WHEN COALESCE(o.version,0)=? THEN o.patch_json ELSE NULL END AS patch_json,
       CASE WHEN COALESCE(o.version,0)=? AND ? IS NOT NULL THEN (
         SELECT json_extract(c.public_json,'$.categoryId') FROM catalog_books c
         WHERE c.scope=b.scope AND json_extract(c.public_json,'$.category')=? LIMIT 1
       ) ELSE NULL END AS category_id
       FROM catalog_books b LEFT JOIN metadata_overrides o ON o.scope=b.scope AND o.book_id=b.book_id
-      WHERE b.scope=? AND b.book_id=?`,
+      WHERE b.scope=? AND b.book_id=? AND NOT EXISTS(SELECT 1 FROM book_management m WHERE m.scope=b.scope AND m.book_id=b.book_id AND m.trashed=1)`,
       input.expectedVersion,
       input.expectedVersion,
       clean.category ?? null,
@@ -498,7 +539,9 @@ async function metadata(request, env, context, session, bookId) {
       prepare(
         env,
         `INSERT INTO metadata_overrides(scope,book_id,patch_json,version,updated_at)
-      SELECT ?,?,?,1,? WHERE ?=0 OR EXISTS(SELECT 1 FROM metadata_overrides WHERE scope=? AND book_id=? AND version=?)
+      SELECT ?,?,?,1,? WHERE (?=0 OR EXISTS(SELECT 1 FROM metadata_overrides WHERE scope=? AND book_id=? AND version=?))
+      AND COALESCE((SELECT version FROM book_management WHERE scope=? AND book_id=? AND trashed=0),0)=?
+      AND NOT EXISTS(SELECT 1 FROM book_management WHERE scope=? AND book_id=? AND trashed=1)
       ON CONFLICT(scope,book_id) DO UPDATE SET patch_json=excluded.patch_json,version=metadata_overrides.version+1,updated_at=excluded.updated_at
       WHERE metadata_overrides.version=? RETURNING version,
         (SELECT public_json FROM catalog_books WHERE scope=? AND book_id=?) AS public_json,
@@ -512,6 +555,11 @@ async function metadata(request, env, context, session, bookId) {
         context.scope,
         bookId,
         input.expectedVersion,
+        context.scope,
+        bookId,
+        current.management_version,
+        context.scope,
+        bookId,
         input.expectedVersion,
         context.scope,
         bookId,
@@ -568,6 +616,9 @@ async function route(request, env, context) {
     throw new LibraryError("origin_forbidden", 403);
   if (!["GET", "POST", "HEAD"].includes(request.method))
     throw new LibraryError("method_not_allowed", 405);
+  const binaryUpload = /^\/api\/manage\/uploads\/[\w-]{1,100}\/bytes$/.test(
+    path,
+  );
   const origin = request.headers.get("origin");
   if (
     (origin && origin !== context.origin) ||
@@ -577,9 +628,11 @@ async function route(request, env, context) {
   if (
     request.method === "POST" &&
     (origin !== context.origin ||
-      !/^application\/json(?:\s*;|$)/i.test(
-        request.headers.get("content-type") || "",
-      ))
+      (binaryUpload
+        ? request.headers.get("content-type") !== "application/octet-stream"
+        : !/^application\/json(?:\s*;|$)/i.test(
+            request.headers.get("content-type") || "",
+          )))
   )
     throw new LibraryError(
       origin !== context.origin ? "origin_forbidden" : "invalid_content_type",
@@ -600,6 +653,18 @@ async function route(request, env, context) {
     throw new LibraryError("csrf_invalid", 403);
   if (request.method === "GET" && path === "/api/health")
     return response(200, { ok: true });
+  if (request.method === "GET" && path === "/api/catalog-state") {
+    const rows = await query(() =>
+      prepare(
+        env,
+        `SELECT m.book_id FROM book_management m JOIN catalog_books b ON b.scope=m.scope AND b.book_id=m.book_id WHERE m.scope=? AND m.visibility='public' AND m.trashed=1 ORDER BY m.book_id LIMIT 10001`,
+        context.scope,
+      ).all(),
+    );
+    if (rows.results.length > 10000)
+      throw new LibraryError("catalog_state_limit", 503);
+    return response(200, { hiddenBookIds: rows.results.map((r) => r.book_id) });
+  }
   if (request.method === "GET" && path === "/api/config")
     return response(200, {
       apiConfigured: true,
@@ -688,13 +753,33 @@ async function route(request, env, context) {
       { "Set-Cookie": cookie("", 0) },
     );
   }
+  if (path === "/api/manage" || path.startsWith("/api/manage/")) {
+    requireSession(session);
+    return managementRoute(request, env, context, session, {
+      prepare,
+      query,
+      response,
+      admission,
+      bookInfo,
+      registrySource,
+    });
+  }
   let match = path.match(
     /^\/api\/books\/([\w-]{1,128})(?:\/(metadata|published|history|jobs))?$/,
   );
   if (match) {
     const [, id, action] = match;
     if (request.method === "GET" && !action) {
-      const info = await bookInfo(env, context.scope, id);
+      const info = await bookInfo(env, context.scope, id, Boolean(session));
+      if (info.isPrivate)
+        await assertCurrent(
+          env,
+          context,
+          session,
+          { prepare, query },
+          id,
+          info.managementVersion,
+        );
       return response(200, {
         book: info.book,
         metadataVersion: info.metadataVersion,
@@ -713,6 +798,27 @@ async function route(request, env, context) {
   if (match) {
     requireSession(session);
     const [, id, action] = match;
+    const managed = await query(() =>
+      prepare(
+        env,
+        "SELECT upload_id FROM browser_uploads WHERE scope=? AND file_id=?",
+        context.scope,
+        id,
+      ).first(),
+    );
+    if (managed) {
+      if (!["GET", "HEAD"].includes(request.method))
+        throw new LibraryError("method_not_allowed", 405);
+      return managedFileAccess(
+        request,
+        env,
+        context,
+        session,
+        id,
+        action === "content",
+        { prepare, query, response, admission },
+      );
+    }
     if (trialMode(env)) {
       if (!["GET", "HEAD"].includes(request.method))
         throw new LibraryError("method_not_allowed", 405);

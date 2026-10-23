@@ -52,6 +52,15 @@ class D1 {
   constructor() {
     this.sql = new DatabaseSync(":memory:");
     this.sql.exec(schema);
+    this.sql.exec(
+      readFileSync(
+        new URL(
+          "../cloudflare/library/migrations/007-book-management.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
     this.trace = [];
     this.roundTrips = 0;
   }

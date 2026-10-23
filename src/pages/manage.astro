@@ -1,0 +1,144 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { path } from "../lib/data";
+---
+
+<Layout title="书库管理" section="manage">
+  <main id="main" class="manage-page">
+    <div class="manage-heading">
+      <div>
+        <span class="eyebrow">PRIVATE LIBRARY</span>
+        <h1>管理你的书房</h1>
+        <p class="muted">
+          上传会逐本处理。移入回收站可随时恢复，不会释放原文件占用的存储空间。
+        </p>
+      </div>
+      <a class="button" href={path("account/")}>
+        账户与登录 ↗
+      </a>
+    </div>
+
+    <section class="manage-upload panel" aria-labelledby="upload-title">
+      <div class="manage-section-head">
+        <div>
+          <span class="eyebrow">ADD A BOOK</span>
+          <h2 id="upload-title">添一本新书</h2>
+        </div>
+        <span class="manage-limit">单文件最多 20 MB</span>
+      </div>
+      <p id="manage-capability" class="notice" role="status">
+        正在核对私人书库与上传条件…
+      </p>
+      <form id="upload-form" class="manage-form">
+        <div class="manage-fields">
+          <label>
+            书名 <span aria-hidden="true">*</span>
+            <input
+              id="book-title"
+              name="title"
+              maxlength="240"
+              required
+              placeholder="例如：海边的卡夫卡"
+            />
+          </label>
+          <label>
+            作者
+            <input
+              id="book-author"
+              name="author"
+              maxlength="160"
+              placeholder="可留空"
+            />
+          </label>
+          <label>
+            分类
+            <input
+              id="book-category"
+              name="category"
+              maxlength="80"
+              placeholder="例如：小说"
+            />
+          </label>
+        </div>
+        <label class="manage-file">
+          选择书籍文件
+          <input
+            id="book-file"
+            name="file"
+            type="file"
+            accept=".pdf,.epub,.mobi,.azw,.azw3,application/pdf,application/epub+zip"
+            required
+          />
+        </label>
+        <p id="file-preview" class="muted">
+          支持
+          PDF、EPUB、MOBI、AZW、AZW3。文件留在本机，直到服务端明确开放普通上传。
+        </p>
+        <div class="manage-actions">
+          <button id="upload-submit" class="primary" type="submit" disabled>
+            登记并上传 →
+          </button>
+          <span
+            id="upload-status"
+            class="status-text"
+            role="status"
+            aria-live="polite"
+          ></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="manage-list-section" aria-labelledby="books-title">
+      <div class="manage-section-head">
+        <div>
+          <span class="eyebrow">YOUR COLLECTION</span>
+          <h2 id="books-title">书库</h2>
+        </div>
+        <div class="manage-list-tools">
+          <span id="books-count" class="manage-count">
+            —
+          </span>
+          <button id="manage-reload" type="button">
+            重新核对书库
+          </button>
+        </div>
+      </div>
+      <p id="books-status" class="status-text" role="status">
+        登录后加载私人书库。
+      </p>
+      <div id="books-list" class="manage-grid"></div>
+    </section>
+
+    <section
+      class="manage-list-section manage-trash"
+      aria-labelledby="trash-title"
+    >
+      <div class="manage-section-head">
+        <div>
+          <span class="eyebrow">RECOVERABLE</span>
+          <h2 id="trash-title">回收站</h2>
+        </div>
+        <span id="trash-count" class="manage-count">
+          —
+        </span>
+      </div>
+      <p class="muted">
+        移入回收站会隐藏书籍并停止文件访问；原文件会保留，也不会释放存储空间。
+      </p>
+      <p id="trash-status" class="status-text" role="status">
+        登录后加载回收站。
+      </p>
+      <div id="trash-list" class="manage-grid"></div>
+    </section>
+    <noscript>
+      <p class="notice">
+        书库管理需要启用 JavaScript；登录与阅读仍可从账户页进入。
+      </p>
+    </noscript>
+  </main>
+</Layout>
+
+<script>
+  import { initManage } from "../scripts/manage";
+  initManage();
+</script>

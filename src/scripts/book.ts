@@ -2,10 +2,45 @@ import { base } from "../lib/client";
 import { api, session, errorText, fetchFile, explainCode } from "../lib/api";
 import { metadataEditor, selectCategory } from "../lib/metadata-editor.mjs";
 import { buildJobInput } from "../lib/job-input.mjs";
+import { fileActions } from "../lib/file-actions.mjs";
 export async function initBook() {
-  const book =
-      document.querySelector<HTMLElement>("[data-book]")!.dataset.book!,
-    history = document.getElementById("history")!,
+  const bookRoot = document.querySelector<HTMLElement>("[data-book]")!;
+  const book = bookRoot.dataset.book!;
+  const downloadFile = async (id: string, button: HTMLButtonElement) => {
+    button.disabled = true;
+    const target = document.getElementById("file-message")!;
+    try {
+      await session();
+      const { access, response } = await fetchFile(id);
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${document
+        .getElementById("book-title")!
+        .textContent!.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+        .slice(0, 150)}.${access.format.toLowerCase()}`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      target.textContent = "已开始下载。";
+    } catch (e) {
+      target.textContent = errorText(e);
+    } finally {
+      button.disabled = false;
+    }
+  };
+  const fileController = fileActions({
+    root: document,
+    bookId: book,
+    mode: bookRoot.dataset.fileMode || "",
+    readBase: bookRoot.dataset.readBase || "",
+    onDownload: (id, button) => downloadFile(id, button),
+  });
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-download]")
+    .forEach((button) => {
+      button.onclick = () => downloadFile(button.dataset.download!, button);
+    });
+  const history = document.getElementById("history")!,
     message = document.getElementById("ai-message")!,
     submit = document.getElementById("submit-job") as HTMLButtonElement;
   const jobs = new Map<string, any>(),
@@ -24,6 +59,7 @@ export async function initBook() {
   });
   function applyMetadata(updated: any) {
     if (!updated || updated.id !== book) return;
+    fileController.apply(updated.files);
     const fields: Record<string, string> = {
       "metadata-title": updated.title || "",
       "metadata-author": updated.author || "",
@@ -356,31 +392,4 @@ export async function initBook() {
       submit.disabled = false;
     }
   };
-  document.querySelectorAll<HTMLButtonElement>("[data-download]").forEach(
-    (button) =>
-      (button.onclick = async () => {
-        button.disabled = true;
-        const target = document.getElementById("file-message")!;
-        try {
-          await session();
-          const { access, response } = await fetchFile(
-            button.dataset.download!,
-          );
-          const url = URL.createObjectURL(await response.blob());
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `${document
-            .getElementById("book-title")!
-            .textContent!.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
-            .slice(0, 150)}.${access.format.toLowerCase()}`;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(url), 30000);
-          target.textContent = "已开始下载。";
-        } catch (e) {
-          target.textContent = errorText(e);
-        } finally {
-          button.disabled = false;
-        }
-      }),
-  );
 }
