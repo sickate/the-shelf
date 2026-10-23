@@ -2,6 +2,18 @@
 
 更新日期：2026 年 10 月 23 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。历史按轮次保留，当前状态以最新交付记录及对应私有收据为准。
 
+## 2026-10-23 接续：独立识别失败隔离已本地验收，发布受网络阻断
+
+本地修复提交`11364f3b6b3f1dfc5e4ca7442492dff3bb35a0a1`已完成主Agent review。保留旧uncertain与永久同名去重/当日次数，仅pending阻止独立新文件；新增009私有有界诊断表及终态原子写入。该调整纠正上一轮把unknown扩展为所有独立AI任务永久暂停的设计，既有上传/存储门槛不变。旧首个识别仍unknown，旧secret安装PUT仍unknown，均不重发或改判。
+
+主Agent独立专项56项、完整953项Node及8项Python全部通过，零失败/取消/跳过；日志`/private/tmp/shelf-identify-recovery-review-20261023.log`与`/private/tmp/shelf-identify-recovery-full-20261023.log`。Chrome Tuo连接恢复，最新管理页18个合成真实DOM场景全部通过，包含同名改变size/mtime不重发、uncertain后独立新文件、手改保护、换文件迟到响应、上传、回收站和恢复冲突；这不等于线上AI成功。disabled及same-origin构建1281页、public1325文件/static1310资源通过，实际秘密扫描1555文件零命中/不安全文件，diff检查通过。
+
+009固定SHA256为`46607c049ca3d16afc2a50fa6f27cf01c7aba6b5fa7073616c2461d9c19bebcd`；operator专项12项已包含在全套，保持先建v2→独立回读双guard→移除旧guard、未知DDL不重放及全部原schema/authority/trial/auth/007/008行指纹。私人第二合成验收runner严格匹配GET终态/状态码（failed→502），主Agent独立14项通过，最多11业务HTTP/1额外AI、本轮累计最多2个任务；尚未执行真实请求。
+
+两次同一提交的SSH推送都在连接前因github.com DNS解析失败停止，gh亦无法连接api.github.com；本机对github.com/api.github.com/api.cloudflare.com地址解析检查均失败。进程内resolve4后来仅Cloudflare解析成功，GitHub及公共DNS独立查询仍超时，未修改系统网络配置。备用GitHub连接器只读确认远端main仍为e756111；唯一create_blob请求被403 Resource not accessible by integration拒绝，没有创建blob/tree/commit或更新ref，不扩大连接器权限。该提交尚未推送，未启动对应远端CI；009云端status/apply、Worker新部署、第二真实AI及PDF新回归均未执行，不能宣称新版上线或AI验收通过。线上保持前述0556270版本及既有私人阅读，普通上传仍关闭，首本许可不重置；没有新AI、对象上传、账本修改或计费变更。
+
+网络恢复后从11364f3远端HEAD/推送及两CI开始，再按development-plan顶部固定预算执行009 pre/apply/post、新受控部署及日志/活动版本核对、3个公开资源GET、唯一第二合成AI、固定PDF只读回归。不得重跑第一AI runner、重复secret PUT、重置许可、自动追加第三AI或在postflight失败后重新deploy。该运维记录不在公开导出清单内，不因记录变更重复Worker发布。
+
 ## 2026-10-23 当前交付：文件名识别流程已发布，真实AI未验收
 
 功能提交`5db33b3abe39b813c09f46d840c08eca2b5db7a7`及跨平台测试修正`055627008e744007d3c1435a7cc565b1aad7c354`已推送。首个提交两CI在macOS临时路径硬编码处失败，历史保留；修正后Cloudflare CI `39912666518`整轮success（自动部署仍skipped），Pages CI `39912666641`build/deploy success。主Agent独立完整932项Node及8项Python通过，零失败/取消/跳过；22项跨平台专项、最终23项部署/secret专项、18项固定日志恢复专项通过。disabled及same-origin构建1281页，public1325文件、static1310资源通过；实际秘密扫描1552文件零命中/不安全文件。Chrome Tuo真实17项合成DOM通过，手改书名保留；最终线上浏览器复核时CUA再次cgWindowNotFound，不能记生产浏览器验收完成。
