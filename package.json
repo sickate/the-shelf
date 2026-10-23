@@ -38,6 +38,8 @@
     "@xmldom/xmldom": "0.9.12"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261012.0-beta",
     "prettier": "^3.9.10",
     "prettier-plugin-astro": "^1.1.1",
     "wrangler": "4.151.0"

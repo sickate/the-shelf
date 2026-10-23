@@ -265,7 +265,7 @@ test("task payload is filename-only fixed endpoint/model/effort and successful r
   const f = await fixture(t);
   f.fetch((url, options) => {
     assert.equal(url, IDENTIFY_ENDPOINT);
-    assert.equal(options.redirect, "error");
+    assert.equal(options.redirect, "manual");
     const b = JSON.parse(options.body);
     assert.deepEqual(JSON.parse(b.input), {
       filename: "Synthetic Lantern - Synthetic Writer.pdf",
@@ -1185,4 +1185,30 @@ test("observation SQL rejects nullable ID inconsistencies and fractional measure
     0,
   );
   assert.equal(f.calls(), 0);
+});
+
+test("fetch rejection remains unknown and same filename cannot redispatch after redirect compatibility fix", async (t) => {
+  const f = await fixture(t);
+  f.fetch(() => {
+    throw new TypeError("synthetic_fetch_failure");
+  });
+  assert.equal((await f.run()).status, 409);
+  const row = f.sql
+    .prepare("SELECT state,error_code FROM filename_identifications")
+    .get();
+  assert.equal(row.state, "uncertain");
+  assert.equal(row.error_code, "identify_upstream_uncertain");
+  const diagnostic = (await (await f.run(id(1))).json()).diagnostic;
+  assert.equal(diagnostic.phase, "fetch_error");
+  assert.equal(diagnostic.httpStatus, null);
+  assert.equal(
+    (
+      await f.run({
+        filename: "Synthetic Lantern - Synthetic Writer.pdf",
+        requestId: id(2),
+      })
+    ).status,
+    409,
+  );
+  assert.equal(f.calls(), 1);
 });

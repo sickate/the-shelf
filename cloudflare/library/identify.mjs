@@ -207,7 +207,7 @@ export async function callIdentifyTask(
     try {
       response = await fetchImpl(IDENTIFY_ENDPOINT, {
         method: "POST",
-        redirect: "error",
+        redirect: "manual",
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
