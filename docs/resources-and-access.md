@@ -2,6 +2,18 @@
 
 更新日期：2026 年 10 月 23 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。历史按轮次保留，当前状态以最新交付记录及对应私有收据为准。
 
+## 2026-10-23 当前交付：网页管理与多格式文字阅读
+
+功能提交`575abdb8cec006aa603b9ec66dc8daf951a853a7`已推送；Cloudflare CI `39901317669`测试/构建/隐私/静态检查及artifact成功、自动部署skipped，Pages CI `39901317725`构建/部署成功。主Agent独立完整898项Node及8项Python通过；disabled和same-origin构建均1281页，public/static检查与实际秘密扫描通过。Chrome tuo配置本机CUA曾恢复：合成EPUB/MOBI/AZW/KF8解析、CSP/净化、目录/导航/字号/主题/进度及清理全部PASS，手动切章正文正常；管理页匿名、上传关闭、正常单次提交、重复意图、未知不重传、回收站确认、恢复冲突七项真实DOM全部PASS。此前未发布的动态文件按钮已一并集成。
+
+固定production D1的007已实际安装并独立回读：`.local/book-management-schema/`下`manage007-pre-575abdb-20261023`（7HTTP）、`manage007-apply-575abdb-20261023`（21HTTP/7DDL）、`manage007-post-575abdb-20261023`（7HTTP），最终complete；前后原schema、authority、预留/registry、首本结果与auth_config指纹相同，新增两表为空。基础schema及历史采样/迁移hash未修改，check库本轮不迁移。
+
+受控发布日志`.local/cf03/deploy-831r9Y/deploy.log`确认资源/Worker及triggers已发布；原工具最后settings回读以remote停止，没有重发部署。固定日志hash经私有恢复helper的15项合成测试和主Agent复审后，仅2GET独立确认严格绑定及日志版本为唯一100%活动版本，收据`.local/cf03/management-deploy-recovery-postflight-575abdb-20261023/receipt.json`。首次恢复在本机凭证环境初始化时0请求停止，修复私有helper的环境传递后执行；未改生产validator。线上runtime、管理页、阅读页、首页另4GET均200，与本地same-origin包逐字一致。
+
+线上管理验收`.local/single-trial/management-acceptance-manage-live-575abdb-20261023/`实际9HTTP全部通过：匿名管理401、公开catalog-state空列表、所有者登录/单本已上传目录、纯合成元数据上传意图409、无效CSRF及错误Origin对不存在合成ID的trash403、登出、旧cookie管理401。uploadBytesSent=0、realBookMutationRequests=0、unexpectedUploadIntent=false、generationRevocationRequired=false。原PDF阅读回归`.local/cf03/reading-smoke-reading-after-manage-575abdb-20261023/`实际14HTTP通过全文大小/MIME/ETag/SHA256、Range和匿名/来源/CSRF/撤销保护，测试会话已登出，无需generation撤销。没有再次PUT、删除或移入回收站首本原件。
+
+线上管理API/回收站和阅读器实现已发布；普通上传仍准确关闭：原authority imported、完整用量证据与历史终态未知、隔离桶并非普通上传目标，首本许可已永久消耗。新上传为私有目录，不自动发布到静态目录；回收站保留对象和额度，不能释放存储。EPUB/Kindle初版为文字模式，省略图片和原书样式，不支持DRM、HUFF/CDIC、KFX/Topaz；真实云端仅现有PDF，未声称已上传Kindle/EPUB。发布后CUA又发生cgWindowNotFound，线上最终浏览器复核未完成；本机真实浏览器PASS、线上HTTP读取PASS与browserVerified=false分别记录。此运维记录不公开，提交本文不需要重发功能包；回退必须保留007/所有责任，已有生命周期状态后不得使用缺少校验的旧trial Worker。
+
 ## 2026-10-23 当前交付：首本上传及私人HTTP阅读通过
 
 功能提交47a551e的两CI39887039702/39887039727、运维兼容提交717c3e1e67ed40dfa609c6a6f33d8f1ad63faa51的两CI39890024940/39890024962均completed/success。主站运行的是已验收47a551e Worker及same-origin静态包；717c3e1仅修本机auth operator和记录，未重发Worker或对象。Cloudflare CI自动部署仍关闭，实际发布来自`.local/cf03/deploy-ktYov0/deploy.log`所记录受控发布。
