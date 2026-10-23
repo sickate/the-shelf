@@ -49,7 +49,7 @@ const json = (body, status = 200, headers = {}) =>
     status,
     headers: { "content-type": "application/json", ...headers },
   });
-async function fixture(t, modify = () => {}) {
+async function fixture(t, modify = () => {}, trial = false) {
   const root = await fs.realpath(
     await fs.mkdtemp(path.join(os.tmpdir(), "shelf-reading-")),
   );
@@ -62,18 +62,24 @@ async function fixture(t, modify = () => {}) {
   const directory = path.join(root, ".local/cf03/reading-smoke-test"),
     p = plan(),
     calls = [];
-  const url = await presignGet(
-    {
-      APP_SCOPE: "production",
-      R2_ACCOUNT_ID: ACCOUNT,
-      R2_BUCKET: p.bucket,
-      R2_ACCESS_KEY_ID: "synthetic-access-key",
-      R2_SECRET_ACCESS_KEY: "synthetic-secret-do-not-record",
-    },
-    p.descriptor.objectKey,
-    "PDF",
-    new Date(NOW),
-  );
+  if (trial) {
+    p.mode = "first-book-20261023";
+    p.bucket = "the-shelf-first-book-20261023";
+  }
+  const url = trial
+    ? `${READING_ORIGIN}/api/files/${p.descriptor.fileId}/content`
+    : await presignGet(
+        {
+          APP_SCOPE: "production",
+          R2_ACCOUNT_ID: ACCOUNT,
+          R2_BUCKET: p.bucket,
+          R2_ACCESS_KEY_ID: "synthetic-access-key",
+          R2_SECRET_ACCESS_KEY: "synthetic-secret-do-not-record",
+        },
+        p.descriptor.objectKey,
+        "PDF",
+        new Date(NOW),
+      );
   let loggedIn = false,
     revoked = false;
   const fetchImpl = async (target, options) => {
@@ -100,9 +106,22 @@ async function fixture(t, modify = () => {}) {
       plan: p,
     });
     if (changed !== undefined) return changed;
-    if (target.startsWith(`https://${ACCOUNT}.r2.cloudflarestorage.com/`)) {
+    if (
+      trial &&
+      options.headers.Origin === "https://shelf-reading-negative.invalid"
+    )
+      return json({ error: { code: "origin_forbidden" } }, 403);
+    if (trial && target === url && (!loggedIn || revoked))
+      return json({ error: { code: "authentication_required" } }, 401);
+    if (
+      target.startsWith(`https://${ACCOUNT}.r2.cloudflarestorage.com/`) ||
+      (trial && target === url)
+    ) {
       assert.equal(target, url);
-      assert.equal(options.headers.Cookie, undefined);
+      assert.equal(
+        options.headers.Cookie,
+        trial ? `__Host-shelf_session=${TOKEN}` : undefined,
+      );
       assert.equal(options.headers.Origin, READING_ORIGIN);
       const range = Boolean(options.headers.Range),
         bytes = range ? BYTES.subarray(0, 32) : BYTES;
@@ -137,8 +156,10 @@ async function fixture(t, modify = () => {}) {
       });
     }
     if (pathname === "/api/logout") {
-      assert.equal(options.headers["X-CSRF-Token"], CSRF);
       assert.equal(options.headers.Cookie, `__Host-shelf_session=${TOKEN}`);
+      if (trial && options.headers["X-CSRF-Token"] === "invalid-trial-csrf")
+        return json({ error: { code: "csrf_invalid" } }, 403);
+      assert.equal(options.headers["X-CSRF-Token"], CSRF);
       revoked = true;
       return json({ authenticated: false, csrfToken: null });
     }
@@ -169,10 +190,10 @@ async function fixture(t, modify = () => {}) {
       return !loggedIn || revoked
         ? json({ error: { code: "authentication_required" } }, 401)
         : json({
-            url,
+            url: trial ? new URL(url).pathname : url,
             format: "PDF",
-            mode: "r2",
-            expiresAt: new Date(NOW + 300000).toISOString(),
+            mode: trial ? "local" : "r2",
+            expiresAt: trial ? null : new Date(NOW + 300000).toISOString(),
           });
     throw new Error("PRIVATE_ERROR_SENTINEL");
   };
@@ -269,6 +290,56 @@ test("production single-file chain validates current catalog, object SHA/size/MI
     code: "private_evidence_failed",
   });
   assert.equal(f.calls.length, count);
+});
+test("trial reading smoke verifies Origin and CSRF denial, surviving session, full+Range and revoked content", async (t) => {
+  const f = await fixture(t, () => {}, true),
+    result = await runReadingSmoke(f.options);
+  assert.equal(result.ok, true, result.code);
+  assert.equal(result.requests, 14);
+  assert.equal(f.calls.filter((c) => c.target.endsWith("/content")).length, 5);
+  assert.equal(f.calls.filter((c) => c.target.endsWith("/logout")).length, 2);
+  const labels = await Promise.all(
+    f.calls.map((_, i) =>
+      fs
+        .readFile(
+          path.join(
+            f.directory,
+            `${String(i + 1).padStart(2, "0")}-intent.json`,
+          ),
+          "utf8",
+        )
+        .then(JSON.parse),
+    ),
+  );
+  assert.equal(labels[3].label, "invalid-csrf-logout");
+  assert.equal(labels[4].label, "authenticated-session");
+  assert.equal(labels[7].label, "wrong-origin-content");
+  assert.equal(labels[8].label, "object-full");
+  assert.ok(f.calls.every((c) => new URL(c.target).origin === READING_ORIGIN));
+});
+test("trial negative probes require fixed error codes and do not report a false success", async (t) => {
+  for (const code of ["csrf", "origin"]) {
+    const f = await fixture(
+      t,
+      ({ options }) => {
+        if (
+          code === "csrf" &&
+          options.headers["X-CSRF-Token"] === "invalid-trial-csrf"
+        )
+          return json({ error: { code: "origin_forbidden" } }, 403);
+        if (
+          code === "origin" &&
+          options.headers.Origin === "https://shelf-reading-negative.invalid"
+        )
+          return json({ error: { code: "csrf_invalid" } }, 403);
+      },
+      true,
+    );
+    const result = await runReadingSmoke(f.options);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "authentication_invalid");
+    assert.equal(f.calls.at(-1).target, READING_ORIGIN + "/api/logout");
+  }
 });
 
 test("bad/unknown signature target and query fail before any R2 request and get one cleanup logout", async (t) => {

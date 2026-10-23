@@ -1,5 +1,53 @@
 # The Shelf 开发计划
 
+## 2026-10-23 已批准：首本单次隔离试运行
+
+目标：用户明确回复“允许”后，完成首本<=20MB私人文件的一次上传和在线阅读闭环。该次允许账号用量/旧请求终态未知及实际总量可能超过8GB；不伪造完整证据，不修改计费，不扩大为后续上传许可。此前“待用户决策/未获授权”段落保留为历史，以本节为准。
+
+范围与方案：保留旧authority imported、六guard、全部旧unknown/责任；使用旧CF01绑定及旧桶凭证不能访问的项目隔离桶与新桶专用凭证。在原唯一D1 authority内添加单次例外许可/预留/结果，固定账号、目标、文件ID/hash/key/大小/期限，一次PUT后不可再次领取；正常ready/evidence门禁继续不变。响应丢失/崩溃保留预留，只允许经review的同对象有限只读恢复，不补发PUT、不清账、不删除对象。阅读绑定明确存储目标，保持私有、会话/撤销、CSRF和Range/完整性检查。先设计评审后实现，先本地验收/提交/CI后云操作。
+
+分工及依赖：主Agent负责规则记录、架构评审、集成、独立功能验证、发布及真实有界云操作。T1由gpt-6.1-sol/high设计并实现原authority内的单次许可、SQL保护与并发/崩溃/未知测试；先交设计等待主Agentreview，再编码。T2由gpt-6.1-sol/high设计隔离存储、专用凭证、固定目标读取与部署接线及精确请求预算；先只读设计，不创建资源，不读私人正文，依赖T1契约再实施。T3前端既有Luna/medium交付由主Agent继续真实浏览器验收；未通过不宣称上线。新增简单文档随集成维护，不另开无依赖代码任务。指定模型不可用则说明限制，不替换。
+
+分工细化：第三项安全敏感实现由gpt-6.1-sol/high负责新增single-trial操作器及专项测试/说明，复用选书与私有journal，依赖T1许可接口和T2固定目标；不修改authority/runtime/deploy文件。原前端Luna交付改称T4，由主Agent独立验收。固定候选隔离桶为the-shelf-first-book-20261023，生产显式trial模式只带新桶读取绑定与凭证，默认/check行为不变；不得同时部署旧桶写凭证。资源/凭证创建方法尚在设计核对，未执行云操作。
+
+验收：许可不可复用，双连接竞争只准一个，过期/目标/大小/hash不符拒绝，unknown永久占用额度；正常上传仍拒绝、旧事实不变。隔离目标/凭证权限须实测读回，只含新项目桶，不配置公开访问。专项、完整Node/Python、disabled构建、public/static/凭证检查通过；commit→push→两CI→受控部署→独立回读。真实操作前记录固定文件的私有选择依据、精确HTTP清单/上限和恢复步骤；原书不送AI。验收区分本地、CI、云端HTTP和真实浏览器；不得用静态200或mock代替读书成功。
+
+实施路线评审：新桶S3凭证签发需要API Tokens Write，不能从已有旧桶对象key推断能扩权；浏览器也不可用。因此采用不依赖新S3凭证的binding-only路线：固定新桶BOOKS binding作为隔离能力，生成仅项目专用SINGLE_TRIAL_UPLOAD_SECRET，显式trial生产模式不携带旧桶S3凭证。T2负责固定上传与同源私有全文/Range接口，T3仅一次HTTP上传、不先在本机领取PUT资格；Worker在完整大小/hash匹配后于原D1 CAS领取唯一资格，再最多一次BOOKS.put。未知不补发。T1与T2共享精确claim/schema契约；独立有限同对象HEAD/GET核对后再确认账本。阅读复用现有会话/撤销/目录描述和外部await后的原子复核，避免添加公开对象或跨域签名入口。这是批准的专用访问能力实现方式，不以不存在的桶凭证充当隔离证据。
+
+本地实施检查点：T1交付SQL005/006、原authority单次许可/同余额预留/只读恢复和9项新增专项；主Agent独立review并运行38项专项（含29项原authority）全部通过。SQL006保留原会话generation/enabled约束，新增精确候选目录匹配的已确认单本分支；旧SQL003/004不变。原客户端不启用trial检测时请求预算不变。T3主Agent复审补齐无视abort、零字节洪泛和永不完成cancel的有界保护，独立25项专项通过；T2已交付，待主Agent最终复审及全套回归。主Agent已在私有目录生成专用secret/target配置及单文件选择（均0600、目录0700）；选定PDF为24,582字节，本机实际读取并由PDF.js解析为1页，未输出正文或标识。真实single-trial plan返回planned/unknown、零云请求。未创建桶、未应用新schema、未发许可或上传。浏览器无可用surface，支持文档中的launch_app在本机运行时也未提供，页面验收仍待恢复。
+
+部署依赖补齐：Sol/high只读复核确认旧SQL004不阻止目录bootstrap，现有全目录1264本会产生89HTTP，首本试运行无需引入全部目录。如生产尚无目录，T3继续以Sol/high在同一操作器增加最小catalog动作：固定D1/auth关闭、catalog/overrides为空且无active import时，从已跟踪公开目录选中唯一书目，经原bootstrap()和明确空overrides导入，正常7HTTP、硬上限10，逐请求durable intent；独立回读精确候选和导入fingerprint。明确其为单本API目录，公开静态全目录保持；非空/未知不重置、不自动resume，已有匹配目录则跳过此动作。不得伪造candidate或另写导入器。
+
+发布前独立验收：T2最终runtime/deploy/auth专项59项通过；T3最终单本catalog与增强reading smoke联合58项通过（包括错误Origin、错误CSRF被拒且会话保持、登出后旧cookie拒绝）。主Agent已review最终catalog导入与runtime外部await后的会话/目录/描述复核。前端七文件已单独保存于stash `0176cdca1be8bf25bb07888f18417ec23bd6831d`，不混入本次后端发布；完整回归、构建与隐私检查正在执行。此处仍未创建桶、安装secret、应用schema、导入目录或发出真实PUT；云结果按后续实际收据单独记录。
+
+本地发布门槛已通过：首次完整回归835/838通过，3个失败均为CLI临时仓库漏复制新增依赖；Sol只修复fixture复制清单，主Agent独立3/3复验后，干净全套838项Node、8项Python全部通过，零取消/跳过。最终全套日志`/tmp/shelf-single-trial-full-fixed-20261023.log`，保留首次失败日志。disabled构建1280页、verify:public1318文件、verify:static1304资源、实际秘密扫描1509文件零命中/零不安全文件通过；最终文档变更随发布再生成检查。临时负向/确认/阅读接线helper主Agent逐段审阅及独立4项合成通过，实际云验证仍待执行。此门槛仅为本地结果，提交、CI、部署及真实对象验收分别记录。
+
+真实运维序列预算：本地/CI通过后，主Agent固定新桶GET(404)→一次create POST→metadata/managed-domain/custom-domains/lifecycle四次独立回读，共6管理HTTP；要求私有、无custom domain、无对象自动删除/转层规则。不列其他桶、不改计费、不创建通用token，创建未知不重发。安装三项项目secret、schema005/006完整回读、必要单本目录、受控trial API部署及精确绑定/版本回读后才issue。有效secret+错误hash的合成同大小请求等负向验收不得领取claim/PUT；随后唯一真实upload、只读reconcile、auth显式enable、真实全文/hash/Range/匿名与撤销验收。实际CPU数值/共享余量未知保持unknown；不将旧5ms优化采样当上线失败，也不新增代码不存在的账号完整证据门槛。任何1102或相关安全失败停止受影响步骤并按回退关闭。
+
+运维预算细化：旧桶凭证仅对固定新目标一次HEAD，必须实际403；secret安装为固定Worker settings GET、一次secrets-bulk PATCH、独立settings GET，共3HTTP，精确三项且无旧R2秘密，不假定批量PATCH原子。四个负向POST固定错误secret、Origin、大小和同大小全零错误hash；随后原status只读确认仍reserved/未attempt。reconcile成功后另一次有界observe-confirmed（正常4/cap5HTTP）只读原authority，独占保存已确认descriptor/etag供14/cap15HTTP reading smoke使用，不手写云事实。各次mutation和negative全局attempt不可重发，逐请求durable intent；所有操作工具及测试先由主Agent独立审阅/验证，不产生第二份余额。
+
+部署与回退：保留当前静态站，业务默认关闭；复用已初始化generation1/enabled0鉴权，不重复初始化。新schema为增量，旧SQL不改写。发布失败关闭新API/auth并撤销会话，保留许可、对象、预留、收据及unknown；不恢复旧写能力，不删除历史，不以重新上传代替恢复。仅在设计和验收门槛满足后执行已授权的单本试运行，无需重复征求同一许可。
+
+## 2026-10-23 接续：恢复验收与上传阻塞决策
+
+目标：接续985136a，完成其远端CI/静态发布核对、已计划的production disabled初始化，以及工作区动态文件入口的真实浏览器验收；同时把真实上传的剩余阻塞收敛为可执行步骤或明确的外部依赖，不新增只能输出false的operator。
+
+当前范围与依赖：main仍为985136a，前端七文件及上轮实际观察记录未提交；旧unknown/六guard/imported和8GB/20MB/逐文件门槛继续保留。主Agent先核验既有CI与线上字节，CI成功后才按上一节固定4HTTP/一次INSERT计划初始化disabled；不启用登录、不部署业务API、不上传、不改计费。浏览器仅对合成fixture验收，无法连接则不宣称前端通过或发布它。本轮初次gh查询仍连接失败，CUA无browser且Chrome返回cgWindowNotFound；不反复启动同一失败诊断，不扩读网络或其他项目配置。
+
+分工与方案：主Agent负责网络/CI与生产实际执行、前端独立review/浏览器验收、集成和最终发布。`gpt-6.1-sol / high`负责一次有界只读架构复核：依据现有代码和记录，区分用户硬约束、当前实现门槛、未能取得的供应商事实；交付当前规则内的最短可执行路径，或必须由用户变更的具体最小规则及保留的8GB/逐文件/隐私保护。只读跟踪源码和现有文档，不读.env/.local、不云调用、不改validator/ready/预算、不实现新operator，不重复前轮契约研究；依赖既有R2证据研究、旧写能力设计及费用授权。无新增低复杂度实现，Luna前端交付继续等待主Agent验收，不让子Agent自报代替真实浏览器结果。
+
+验收与验证：真实云操作须有固定目标、独立前置/回读和原请求预算；网络或证据不足立即停止，未知不重试。代码如有修正仍交对应模型实施、主Agent复审、适用专项及完整测试/disabled构建/public/static/凭证检查后commit→push→CI→线上核验。纯记录与设计复核不重复全套测试。未具备证据不上传，不假填Free/完整性/源时间/排空，不扩大账号读取或凭证权限。
+
+部署与回退：本轮没有已批准的业务API/上传迁移发布；默认保留当前静态站。disabled初始化成功保留关闭行和证据，未知保留预留及收据，不删除行/对象、不恢复旧写能力；前端未验收继续留在工作区。网络恢复后只接续尚未执行动作，不重发已发mutation。需要改变用户明确规则时先交具体可审查方案，不能自行放宽再补问。
+
+网络与CI接续：本轮gh初查失败，但两次15秒有界公开curl分别成功读回主站disabled和固定提交CI；后者严格筛选完整985136a SHA，两运行39795268773、39795268728均completed/success。继续核对Pages实际文档与提交字节及部署step，随后按既定4HTTP/1 INSERT/new run的initialize-disabled计划执行；不因初次gh失败重新启动旧迁移或重发任何历史云写。
+
+待用户决策的最小例外（未获授权，未实施）：目前已核对的Cloudflare接口无法生成当前代码要求的五分钟完整账号用量及Free/月操作证明，缺失历史也不能靠重跑补齐。若保持“未知或过期必须阻断”和可证明的实际8GB总量，上传继续关闭。可供选择的例外只允许首本固定文件<=20MB，在账号完整用量和旧请求终态仍unknown时新增最多一个对象；这意味着不能证明上传后账号实际总量仍<=8GB，可能有仅属于项目的存储/操作费用，不修改套餐或计费。后续上传继续阻断。
+
+仅在用户明确选择例外后再细化并实施：新书置于旧CF01能力不能访问的项目私有隔离存储及专用凭证下，仍由同一个远端authority持久记录单次许可/全部预留/结果，不直传绕账、不填假accountEvidence或closure、不将imported改写成ready。许可绑定账号、唯一文件/hash/key/大小、一次PUT及期限；PUT未知不换key、不重试，保留预留，只按后续review的有限HEAD/GET恢复。旧unknown/guard/历史责任均保留；具体schema迁移、HTTP请求清单与上限、并发/崩溃测试、登录/阅读发布及关闭回退须经Sol设计实施和主Agent独立验收后执行。当前没有创建隔离桶/凭证或开放例外通道，用户未答复不视为同意。需要确认的依据是AGENTS.md第25行的未知/过期阻断规则；费用授权不取消这条规则。
+
+本轮实际验收：985136a两CI最终success；Pages公开开发计划与该提交逐字一致，Cloudflare部署skip的既有step观察和主站runtime disabled保留。两项额外job详情读取因自动审核deadline未执行，未以其作新成功证据。按计划真实initialize-disabled成功，实际4HTTP/1 INSERT，独立HTTP回读generation=1/enabled=0、unrevokedSessions=0、unresolvedMutations=0。未开启会话/业务API、未上传对象、不改旧账本或unknown。前端真实浏览器仍因CUA无browser/Chrome cgWindowNotFound未验收；首本例外问题已提出，须等用户明确选择，不因超时默认批准。本轮仅计划、证据记录和已验收运维工具执行，没有新生产代码修改，不重复既有798项完整回归。
+
 ## 2026-10-22 加速交付：单本书私人在线阅读
 
 目标：优先打通“登录→上传一个合格文件→在线阅读”的真实最小闭环；AI后续完善独立推进。现有静态站可用，业务API仍关闭，旧authority仅imported；CF01版本扩展字段与placement契约未明，不再重复同类status诊断。
@@ -19,6 +67,10 @@
 前端交付留在工作区待验收：Luna完成动态按钮、状态和解释同步，主Agent review首轮修正后独立Node专项通过。真实浏览器fixture服务启动成功，但本会话CUA无可用浏览器，连接本机Chrome返回cgWindowNotFound，无法取得页面执行结果；不将合成Node DOM视为真实浏览器通过。本轮先独立提交两个运维工具及记录，前端改动暂不提交、不部署，待真实浏览器验收再发布。
 
 后续真实鉴权观察计划：上述工具通过最终完整回归、构建、隐私检查及对应CI后，仅运行一次固定production status（硬上限3HTTP，正常2HTTP，0mutation），读取固定D1身份及鉴权表/触发器和安全行投影；任何不符立即停止，不重试。如确认为缺行且无未决记录，再单独记录并执行至多4HTTP的一次initialize-disabled及独立回读。不得执行历史enabled=1的auth-init.sql，不启用API、不上传；结果不确定保留私有证据并只读恢复，不能重放初始化。真实enable、对象上传和阅读另须满足既有生产门槛。
+
+只读时序调整：工具提交985136a已推送，本地最终798项Node/8项Python、构建和隐私检查通过，两CI均queued。主Agent将一次固定production status前移至等待CI期间，仍硬上限3HTTP/0云mutation、相同scope/schema/身份和脱敏边界，不重试；它仅补充实际只读验证，不构成发布通过。initialize-disabled及任何云mutation仍等待对应CI通过，enable/上传继续等待全部原门槛。前端和本次时序记录尚未纳入985136a，待后续验收交付。
+
+真实只读结果：production status实际2HTTP通过，auth=null、unresolvedMutations=0，固定D1身份、两表及附属trigger精确符合。主站独立GET为runtime disabled、health404。下一次initialize-disabled执行范围固定：仅在985136a两CI成功后，使用新run ID重新独立核对固定D1/schema/缺行，单次INSERT generation=1/enabled=0并独立HTTP回读，总上限4HTTP/1云mutation；不设置Worker secret、不发布API、不执行旧SQL、不读取/上传对象。回读须匹配本机派生verifier、disabled新行及未撤销会话数0；失败保留state/receipt及unknown，不重试INSERT。仅初始化不授予任何会话/阅读权限；回退保留disabled行及证据，不能删除云数据或清历史。
 
 ## 2026-10-22 本轮继续：具体版本契约核查
 

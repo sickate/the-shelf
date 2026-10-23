@@ -6,6 +6,8 @@ import test from "node:test";
 import {
   PROFILES,
   SECRET_NAMES,
+  SINGLE_TRIAL_SECRET_NAMES,
+  loadPrivacySecrets,
   validateDeployConfig,
   validateRemoteBindings,
   workerConfig,
@@ -15,6 +17,8 @@ import {
   verifyDatabaseIdentity,
 } from "../scripts/cf-api-deploy.mjs";
 import { initialize } from "../scripts/cf-api-init.mjs";
+import { createHash } from "node:crypto";
+import { validateSingleTrialTarget } from "../scripts/single-trial-config.mjs";
 const ACCOUNT = "a".repeat(32),
   TOKEN = "fake-test-project-token-123456789";
 const IDS = {
@@ -65,6 +69,122 @@ const env = () => ({
   SHELF_CF_DEPLOY_TOKEN: TOKEN,
   NODE_OPTIONS: "unsafe",
   CLOUDFLARE_API_BASE_URL: "https://unsafe.invalid",
+});
+test("explicit production trial config pins new bucket and exact three secrets without S3 capability", async () => {
+  const value = {
+    schemaVersion: 1,
+    mode: "first-book-20261023",
+    accountId: ACCOUNT,
+    bucket: "the-shelf-first-book-20261023",
+    worker: "the-shelf",
+    origin: PROFILES.production.origin,
+    uploadSecretSha256: "a".repeat(64),
+  };
+  const target = validateSingleTrialTarget(value, ACCOUNT),
+    generated = workerConfig(
+      "production",
+      config().profiles.production,
+      ACCOUNT,
+      "/safe",
+      { singleTrialTarget: target },
+    );
+  assert.deepEqual(generated.r2_buckets, [
+    { binding: "BOOKS", bucket_name: value.bucket },
+  ]);
+  assert.equal(generated.vars.SINGLE_TRIAL_TARGET_SHA256, target.configSha256);
+  const b = [
+    { name: "DB", type: "d1", id: IDS.production },
+    { name: "BOOKS", type: "r2_bucket", bucket_name: value.bucket },
+    { name: "ASSETS", type: "assets" },
+    ...SINGLE_TRIAL_SECRET_NAMES.map((name) => ({ name, type: "secret_text" })),
+    ...Object.entries(generated.vars).map(([name, text]) => ({
+      name,
+      text,
+      type: "plain_text",
+    })),
+  ];
+  validateRemoteBindings({ bindings: b }, "production", IDS.production, {
+    accountId: ACCOUNT,
+    singleTrialTarget: target,
+  });
+  assert.throws(() =>
+    validateRemoteBindings({ bindings: b }, "production", IDS.production, {
+      accountId: ACCOUNT,
+    }),
+  );
+  for (const change of [
+    (x) => x.push({ name: "R2_ACCESS_KEY_ID", type: "secret_text" }),
+    (x) => (x.find((v) => v.name === "BOOKS").bucket_name = "the-shelf-books"),
+    (x) =>
+      (x.find((v) => v.name === "SINGLE_TRIAL_TARGET_SHA256").text = "b".repeat(
+        64,
+      )),
+  ]) {
+    const changed = structuredClone(b);
+    change(changed);
+    assert.throws(() =>
+      validateRemoteBindings(
+        { bindings: changed },
+        "production",
+        IDS.production,
+        { accountId: ACCOUNT, singleTrialTarget: target },
+      ),
+    );
+  }
+  assert.throws(() =>
+    workerConfig("check", config().profiles.check, ACCOUNT, "/safe", {
+      singleTrialTarget: target,
+    }),
+  );
+});
+test("trial target canonical hash validates real private secret and joins redaction", async (t) => {
+  const root = await fixture(t),
+    secret = Buffer.alloc(32, 37).toString("base64url");
+  await fs.mkdir(path.join(root, ".local/cf03/production"), { mode: 0o700 });
+  await fs.writeFile(
+    path.join(root, ".local/cf03/production/single-trial-upload-secret"),
+    secret + "\n",
+    { mode: 0o600 },
+  );
+  assert.equal(
+    (await loadPrivacySecrets(root))
+      .SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET,
+    secret,
+  );
+  const v = {
+    schemaVersion: 1,
+    mode: "first-book-20261023",
+    accountId: ACCOUNT,
+    bucket: "the-shelf-first-book-20261023",
+    worker: "the-shelf",
+    origin: PROFILES.production.origin,
+    uploadSecretSha256: createHash("sha256").update(secret).digest("hex"),
+  };
+  assert.match(
+    validateSingleTrialTarget(v, ACCOUNT, secret).configSha256,
+    /^[a-f0-9]{64}$/,
+  );
+  assert.throws(() => validateSingleTrialTarget(v, ACCOUNT, "wrong"));
+  await fs.chmod(
+    path.join(root, ".local/cf03/production/single-trial-upload-secret"),
+    0o644,
+  );
+  await assert.rejects(loadPrivacySecrets(root));
+});
+test("trial deployment refuses missing local upload secret before remote inspection", async (t) => {
+  const root = await fixture(t);
+  await assert.rejects(
+    deployApi({
+      root,
+      profile: "production",
+      singleTrial: true,
+      environment: env(),
+      identityChecker: () => assert.fail("missing secret"),
+      inspector: () => assert.fail("missing secret"),
+      runner: () => assert.fail("missing secret"),
+    }),
+    (e) => e.code === "secrets",
+  );
 });
 test("fixed profiles require separate databases and reject injected resources", () => {
   assert.deepEqual(validateDeployConfig(config()), config());

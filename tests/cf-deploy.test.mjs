@@ -519,6 +519,122 @@ test("explicit static rollback verifies and records the exact previous API bindi
     }),
   );
 });
+test("trial static rollback requires explicit private target and strips all runtime capabilities", async (t) => {
+  const { PROFILES, SINGLE_TRIAL_SECRET_NAMES, workerConfig } =
+      await import("../scripts/cf-api-deploy.mjs"),
+    { validateSingleTrialTarget } =
+      await import("../scripts/single-trial-config.mjs"),
+    { createHash } = await import("node:crypto");
+  const root = await fixture(t),
+    prodId = "22222222-2222-4222-8222-222222222222",
+    upload = Buffer.alloc(32, 47).toString("base64url"),
+    v = {
+      schemaVersion: 1,
+      mode: "first-book-20261023",
+      accountId: ACCOUNT,
+      bucket: "the-shelf-first-book-20261023",
+      worker: "the-shelf",
+      origin: PROFILES.production.origin,
+      uploadSecretSha256: createHash("sha256").update(upload).digest("hex"),
+    },
+    target = validateSingleTrialTarget(v, ACCOUNT, upload);
+  for (const dir of [".local", ".local/cf03", ".local/cf03/production"])
+    await fs.mkdir(path.join(root, dir), { mode: 0o700 });
+  await fs.writeFile(
+    path.join(root, ".local/cf03/deploy.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      profiles: {
+        check: {
+          databaseId: "11111111-1111-4111-8111-111111111111",
+          databaseName: PROFILES.check.databaseName,
+        },
+        production: {
+          databaseId: prodId,
+          databaseName: PROFILES.production.databaseName,
+        },
+      },
+    }),
+    { mode: 0o600 },
+  );
+  await fs.writeFile(
+    path.join(root, ".local/cf03/production/single-trial-target.json"),
+    JSON.stringify(v),
+    { mode: 0o600 },
+  );
+  await fs.writeFile(
+    path.join(root, ".local/cf03/production/single-trial-upload-secret"),
+    upload + "\n",
+    { mode: 0o600 },
+  );
+  const generated = workerConfig(
+      "production",
+      { databaseId: prodId },
+      ACCOUNT,
+      root,
+      { singleTrialTarget: target },
+    ),
+    settings = {
+      bindings: [
+        { name: "DB", type: "d1", id: prodId },
+        { name: "BOOKS", type: "r2_bucket", bucket_name: v.bucket },
+        { name: "ASSETS", type: "assets" },
+        ...SINGLE_TRIAL_SECRET_NAMES.map((name) => ({
+          name,
+          type: "secret_text",
+        })),
+        ...Object.entries(generated.vars).map(([name, text]) => ({
+          name,
+          text,
+          type: "plain_text",
+        })),
+      ],
+    };
+  await assert.rejects(
+    deploy({
+      root,
+      staticRollback: true,
+      environment: localEnvironment(),
+      inspector: async () => settings,
+      runner: () => assert.fail("unreviewed trial must not deploy"),
+    }),
+    safeError("remote"),
+  );
+  let calls = 0;
+  const result = await deploy({
+    root,
+    staticRollback: true,
+    singleTrial: true,
+    environment: localEnvironment(),
+    inspector: async () =>
+      calls === 0
+        ? settings
+        : {
+            bindings: settings.bindings.filter((b) =>
+              ["assets", "secret_text"].includes(b.type),
+            ),
+          },
+    runner: async (call) => {
+      calls++;
+      assert.ok(call.redactions.includes(upload));
+      if (call.args.includes("deploy")) {
+        const cfg = JSON.parse(
+          await fs.readFile(
+            call.args[call.args.indexOf("--config") + 1],
+            "utf8",
+          ),
+        );
+        assert.equal(cfg.main, undefined);
+        assert.equal(cfg.r2_buckets, undefined);
+        assert.equal(cfg.d1_databases, undefined);
+        assert.equal(cfg.vars, undefined);
+      }
+      return { code: 0 };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(calls, 3);
+});
 
 test("retained known secrets allow subsequent ordinary static publishing and postflight rejects leftover API bindings", async (t) => {
   const { SECRET_NAMES } = await import("../scripts/cf-api-deploy.mjs");

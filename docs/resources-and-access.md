@@ -2,6 +2,22 @@
 
 更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
 
+## 2026-10-23 已批准首本例外：发布准备
+
+用户已明确允许首本固定文件在账号用量/旧请求终态未知时的一次隔离试运行；下方未获答复的记录保留为历史。固定私有新桶为 `the-shelf-first-book-20261023`，使用binding-only能力及专用上传secret，不安装旧桶S3凭证；原唯一production D1 authority保留imported和旧unknown，新增单次许可/预留/结果。真实文件为24,582字节PDF，本机PDF.js实际解析1页。选择、target及专用secret只存在忽略目录，文件0600、目录0700；尚未创建桶或上传。
+
+Sol/high实现已交回，主Agent独立authority38项、runtime/deploy/auth59项、最终catalog/smoke58项专项通过；完整验证及发布仍以本轮日志和后续收据为准。待浏览器验收的七个前端文件保存在stash `0176cdca1be8bf25bb07888f18417ec23bd6831d`，本次不发布。Cloudflare实际运行、安全HTTP验证、浏览器渲染分别记录，静态/CI成功不代表私人阅读通过；auth close只撤销阅读会话，专用上传/对象入口须用显式trial静态回退关闭。
+
+本地最终全套838项Node、8项Python通过，零失败/取消/跳过；首次三项CLI fixture依赖遗漏已由Sol修复并由主Agent独立复验，生产逻辑未因测试放宽。日志`/tmp/shelf-single-trial-full-fixed-20261023.log`；disabled构建1280页、public1318文件、static1304资源及1509文件真实秘密扫描通过。云端状态尚不因此改变；后续bucket/secret/schema/catalog/permit/PUT/读取分别使用固定新run和私有durable收据，不重放历史动作。
+
+## 2026-10-23 接续验收：production 鉴权已初始化且保持关闭
+
+985136abb6fe37faa8b4d4b0640414a82f8d52a1两CI已由公开固定提交API核对为completed/success：Cloudflare39795268728，Pages39795268773；Pages真实raw开发计划与该提交字节一致，主站runtime schemaVersion=1/apiMode=disabled。初次gh连接仍失败；两项额外jobs GET因自动审核deadline超时未执行，不是被判定越界，也不将未执行请求视为证据。前轮CF部署step skipped的观察保留，不声称部署了业务API。
+
+在上述门槛后，仅执行一次固定production initialize-disabled，新私有收据为`.local/cf03/production-auth/auth-init-20261023-985136a.json`。实际4HTTP，其中1次INSERT；固定身份/schema/缺行前置通过，独立HTTP读回generation=1、enabled=0、unrevokedSessions=0、unresolvedMutations=0。仅使用原有本机秘密派生verifier，不创建/打印密钥、不执行旧auth-init.sql、不设置Worker secrets；主站静态业务入口继续关闭，尚未登录或上传书籍。回退保留disabled行和证据，不删除云数据。
+
+浏览器环境仍无可用browser，Chrome native连接cgWindowNotFound；前端七文件继续留本机待真实页面验收。本轮Sol/high只读复核明确：当前规则无法形成真实上传闭环，不能补造旧历史或把5分钟完整账号数据写成已知。已向用户提出仅首本<=20MB例外的具体选择；未取得答复前不改AGENTS规则、validator、ready、预算、桶或凭证。方案与风险见development-plan顶部。本轮没有新实现代码，未重跑完整测试；已验收代码的上一轮本地798 Node/8 Python与对应远端CI为各自原始证据。
+
 ## 2026-10-22 单书阅读准备：鉴权控制与HTTP验收工具
 
 新增固定production鉴权生命周期工具及单书HTTP验收runner，均默认preview零IO。主Agent独立review并通过auth最终23项和reading40项；前者初始化仅disabled、close递增generation并同事务撤销全部会话，后者验证匿名拒绝、登录、真实流SHA256/大小/MIME/ETag、CORS、Range和登出撤销。网络、落盘或结果处理未知均不重试；秘密、SQL参数、cookie、签名URL、书籍标识与正文不进入收据。auth历史unknown持续阻断enable，即使新close成功亦不删除历史，当前没有resolution动作。
@@ -11,6 +27,10 @@
 补充只读架构复核：官方GA Worker DELETE能避开Version兼容问题，但未找到它对已接收PATCH、旧isolate、独立Workflow及已发R2写入的可验证终止/排序保证，因此不执行删除，也不新增删除operator。未知和六guard保留；合格R2用量证据仍为独立上传前置。没有进行本轮CF01账号调用或修改计费。
 
 主Agent最终本地验收：冻结实现后完整798项Node、8项Python通过，零失败/取消/跳过；日志`/tmp/shelf-private-reading-final-20261022.log`。本地测试包含待浏览器验收、未纳入本次提交的1项前端专项；本次提交的远端代码应为797项Node，须以对应CI实际结果为准。随后disabled构建1280页，verify:public 1318文件、verify:static 1304资源通过；实际凭证扫描1502文件，matchedFiles=0、unsafeFiles=0，格式与diff检查通过。构建日志`/tmp/shelf-private-reading-build-20261022.log`。尚未真实执行production auth、读取对象或部署业务API；发布与只读status结果以对应新提交CI及私有收据为准。
+
+985136abb6fe37faa8b4d4b0640414a82f8d52a1已推送，CI39795268728/39795268773均queued时，按development-plan的时序调整执行一次固定production status。实际2HTTP/0云mutation通过，auth=null、unresolvedMutations=0，固定D1身份与两表/trigger精确契约符合；私有收据`.local/cf03/production-auth/auth-status-20261022-985136a.json`。新增本机state/receipt不包含secret/verifier/SQL/参数。未初始化、未开启登录、未部署业务API、未读取或上传书籍，云mutation仍等CI及各自门槛。本段及计划调整留在工作区，未纳入985136a。
+
+远端中间状态：Cloudflare固定job的test/build/public/static/artifact步骤均success、deploy skipped，但run尚in_progress；Pages build success、deploy queued。没有把这些中间步骤改记整轮成功。后续gh查询出现api.github.com连接失败，独立无凭证curl公开CI接口在30秒DNS解析超时，最终CI/Pages发布未验收，因此没有执行initialize-disabled。主站实际回读runtime disabled、health404；这只证明现有静态入口状态。网络恢复后先核对985136a两CI与Pages提交字节，再继续计划中的4HTTP disabled初始化；不重用status run、不重试任何云mutation。
 
 ## 2026-10-22 接续：版本响应分类与发布基线验收
 

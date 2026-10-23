@@ -53,6 +53,99 @@ const freezeDefinitions = [
 if (freezeDefinitions.length !== 11)
   throw new Error("storage_freeze_definition_invalid");
 const freezeSchemaHash = bytesSha256(json(freezeDefinitions));
+export const SINGLE_TRIAL_BUCKET = "the-shelf-first-book-20261023";
+const trialSql = readFileSync(
+  new URL(
+    "../cloudflare/library/migrations/005-single-trial.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+export const singleTrialSchemaDefinitions = Object.freeze(
+  [
+    ...trialSql.matchAll(
+      /CREATE TABLE [a-z_]+\b[\s\S]*?\n\);|CREATE TRIGGER [a-z_]+\b[\s\S]*?\nEND;/g,
+    ),
+  ]
+    .map((m) =>
+      Object.freeze({
+        name: m[0].match(/^CREATE (?:TABLE|TRIGGER) ([a-z_]+)/)[1],
+        sql: normalizeSql(m[0]),
+      }),
+    )
+    .sort((a, b) => order(a.name, b.name)),
+);
+if (singleTrialSchemaDefinitions.length !== 7)
+  throw new Error("single_trial_schema_invalid");
+export const singleTrialSchemaHash = bytesSha256(
+  json(singleTrialSchemaDefinitions),
+);
+export const singleTrialAdmissionSql = readFileSync(
+  new URL(
+    "../cloudflare/library/migrations/006-single-trial-admission.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+export const singleTrialAdmissionDefinition = Object.freeze({
+  name: "admission_private",
+  sql: normalizeSql(
+    singleTrialAdmissionSql.match(
+      /CREATE TRIGGER admission_private\b[\s\S]*?\nEND;/,
+    )[0],
+  ),
+});
+
+/** Configuration fingerprint records the reviewed operator configuration, not proof
+ * that capabilities were revoked. The operator must independently establish isolation. */
+export function singleTrialPermit(input, identity, now = Date.now()) {
+  const value = clone(input),
+    pinned = identityValue(clone(identity));
+  const keys = [
+    "schemaVersion",
+    "permitId",
+    "consentId",
+    "target",
+    "descriptor",
+    "isolatedTargetConfigSha256",
+    "issuedAt",
+    "expiresAt",
+  ];
+  if (
+    !value ||
+    Object.keys(value).sort().join() !== keys.sort().join() ||
+    value.schemaVersion !== 1 ||
+    !/^[a-zA-Z0-9_-]{1,100}$/.test(value.permitId ?? "") ||
+    value.consentId !== "2026-10-23-first-book" ||
+    !value.target ||
+    Object.keys(value.target).sort().join() !== "accountId,bucket" ||
+    value.target.accountId !== pinned.accountId ||
+    value.target.bucket !== SINGLE_TRIAL_BUCKET ||
+    !/^[a-f0-9]{64}$/.test(value.isolatedTargetConfigSha256 ?? "") ||
+    ![now, value.issuedAt, value.expiresAt].every(integer) ||
+    value.issuedAt > now ||
+    value.expiresAt <= value.issuedAt ||
+    value.expiresAt > value.issuedAt + 86400000
+  )
+    fail("single_trial_permit_invalid");
+  const descriptor = objectDescriptor(value.descriptor);
+  if (
+    descriptor.kind !== "original" ||
+    descriptor.scope !== "production" ||
+    !["PDF", "EPUB"].includes(descriptor.format)
+  )
+    fail("single_trial_permit_invalid");
+  return {
+    schemaVersion: 1,
+    permitId: value.permitId,
+    consentId: value.consentId,
+    target: { accountId: pinned.accountId, bucket: SINGLE_TRIAL_BUCKET },
+    descriptor,
+    isolatedTargetConfigSha256: value.isolatedTargetConfigSha256,
+    issuedAt: value.issuedAt,
+    expiresAt: value.expiresAt,
+  };
+}
 const PAGE = 100,
   MIGRATION_LIMIT = 1000,
   RESPONSE_LIMIT = 1_000_000;
@@ -339,6 +432,8 @@ export class RemoteStorageAuthority {
   #timeout;
   #verificationTimeout;
   #verifyClosure;
+  #trialSchema = null;
+  #trialEnabled = false;
   constructor({
     identity,
     credentials,
@@ -350,9 +445,11 @@ export class RemoteStorageAuthority {
     requestTimeoutMs = 30000,
     verificationTimeoutMs = 60000,
     verifyWriteClosure,
+    singleTrial = false,
   }) {
     this.#identity = identityValue(clone(identity));
     if (
+      typeof singleTrial !== "boolean" ||
       !/^[a-f0-9]{32}$/.test(credentials?.accountId ?? "") ||
       credentials.accountId !== this.#identity.accountId ||
       typeof credentials.token !== "string" ||
@@ -389,6 +486,7 @@ export class RemoteStorageAuthority {
     this.#timeout = requestTimeoutMs;
     this.#verificationTimeout = verificationTimeoutMs;
     this.#verifyClosure = verifyWriteClosure;
+    this.#trialEnabled = singleTrial;
   }
   #assert(identity) {
     if (json(identityValue(clone(identity))) !== json(this.#identity))
@@ -517,8 +615,9 @@ export class RemoteStorageAuthority {
     return this.inspect(identity);
   }
   async #audit() {
+    const trial = await this.#hasTrialSchema();
     const rows = await this.#query(
-      `SELECT a.*,COALESCE((SELECT sum(size_bytes) FROM shelf_storage_reservations WHERE state='confirmed'),0) AS actual_committed,COALESCE((SELECT sum(size_bytes) FROM shelf_storage_reservations WHERE state<>'confirmed'),0) AS actual_reserved FROM shelf_storage_authority a WHERE id=1`,
+      `SELECT a.*,COALESCE((SELECT sum(size_bytes) FROM shelf_storage_reservations WHERE state='confirmed'),0)${trial ? "+COALESCE((SELECT sum(size_bytes) FROM shelf_storage_single_trial WHERE state='confirmed'),0)" : ""} AS actual_committed,COALESCE((SELECT sum(size_bytes) FROM shelf_storage_reservations WHERE state<>'confirmed'),0)${trial ? "+COALESCE((SELECT sum(size_bytes) FROM shelf_storage_single_trial WHERE state<>'confirmed'),0)" : ""} AS actual_reserved FROM shelf_storage_authority a WHERE id=1`,
     );
     const s = rows[0];
     if (rows.length !== 1 || s.identity_json !== json(this.#identity))
@@ -529,6 +628,29 @@ export class RemoteStorageAuthority {
     )
       fail("storage_ledger_mismatch");
     return s;
+  }
+  async #hasTrialSchema(required = false) {
+    if (required) this.#trialEnabled = true;
+    if (!this.#trialEnabled) return false;
+    if (this.#trialSchema === null || (required && !this.#trialSchema)) {
+      const rows = await this.#query(
+        "SELECT name,sql FROM sqlite_master WHERE name='shelf_storage_single_trial' OR name GLOB 'shelf_single_trial_*' ORDER BY name LIMIT 9",
+        [],
+        "production",
+        "verify-single-trial-schema",
+      );
+      if (!rows.length) this.#trialSchema = false;
+      else if (
+        !same(
+          rows.map((r) => ({ name: r.name, sql: normalizeSql(r.sql) })),
+          singleTrialSchemaDefinitions,
+        )
+      )
+        fail("single_trial_schema_invalid");
+      else this.#trialSchema = true;
+    }
+    if (required && !this.#trialSchema) fail("single_trial_schema_required");
+    return this.#trialSchema;
   }
   async #ready(identity) {
     this.#assert(identity);
@@ -546,6 +668,193 @@ export class RemoteStorageAuthority {
       observedBytes: s.observed_bytes,
       migrationHash: s.migration_hash,
     };
+  }
+  #decodeTrial(row) {
+    if (!row) return null;
+    if (row.id !== 1 || row.authority_identity_json !== json(this.#identity))
+      fail("single_trial_identity_mismatch");
+    const permit = singleTrialPermit(
+      {
+        schemaVersion: 1,
+        permitId: row.permit_id,
+        consentId: row.consent_id,
+        target: JSON.parse(row.target_json),
+        descriptor: JSON.parse(row.descriptor_json),
+        isolatedTargetConfigSha256: row.isolated_target_config_sha256,
+        issuedAt: row.issued_at,
+        expiresAt: row.expires_at,
+      },
+      this.#identity,
+      this.#now(),
+    );
+    if (
+      row.size_bytes !== permit.descriptor.sizeBytes ||
+      !["reserved", "uploading", "uncertain", "confirmed"].includes(
+        row.state,
+      ) ||
+      ![0, 1].includes(row.put_attempted) ||
+      ![0, 1].includes(row.content_verified) ||
+      !integer(row.updated_at) ||
+      (row.state === "reserved"
+        ? row.put_attempted !== 0
+        : row.put_attempted !== 1) ||
+      (row.state === "confirmed"
+        ? row.content_verified !== 1 ||
+          typeof row.etag !== "string" ||
+          row.etag.length < 1 ||
+          row.etag.length > 256 ||
+          /[\r\n\x00]/.test(row.etag)
+        : row.content_verified !== 0 || row.etag !== null)
+    )
+      fail("single_trial_row_invalid");
+    return {
+      permit,
+      state: row.state,
+      putAttempted: !!row.put_attempted,
+      contentVerified: !!row.content_verified,
+      etag: row.etag,
+      updatedAt: row.updated_at,
+    };
+  }
+  async #trialRow() {
+    const rows = await this.#query(
+      "SELECT * FROM shelf_storage_single_trial WHERE id=1 LIMIT 2",
+      [],
+      "production",
+      "read-single-trial",
+    );
+    if (rows.length > 1) fail("single_trial_row_invalid");
+    return this.#decodeTrial(rows[0]);
+  }
+  async inspectSingleTrial(identity) {
+    this.#assert(identity);
+    await this.#hasTrialSchema(true);
+    await this.#audit();
+    return this.#trialRow();
+  }
+  async issueSingleTrial(identity, input) {
+    this.#assert(identity);
+    const permit = singleTrialPermit(input, this.#identity, this.#now());
+    await this.#hasTrialSchema(true);
+    const state = await this.#audit();
+    if (
+      state.phase !== "imported" ||
+      permit.issuedAt < this.#now() - 300000 ||
+      permit.expiresAt <= this.#now()
+    )
+      fail("single_trial_admission_invalid");
+    // Deliberately not idempotent: a lost issuance response is recovered by inspect,
+    // never by replaying INSERT (including OR REPLACE).
+    await this.#query(
+      "INSERT INTO shelf_storage_single_trial(id,permit_id,consent_id,authority_identity_json,target_json,descriptor_json,isolated_target_config_sha256,size_bytes,issued_at,expires_at,state,put_attempted,content_verified,etag,updated_at) VALUES(1,?,?,?,?,?,?,?,?,?,'reserved',0,0,NULL,?)",
+      [
+        permit.permitId,
+        permit.consentId,
+        json(this.#identity),
+        json(permit.target),
+        json(permit.descriptor),
+        permit.isolatedTargetConfigSha256,
+        permit.descriptor.sizeBytes,
+        permit.issuedAt,
+        permit.expiresAt,
+        permit.issuedAt,
+      ],
+      "production",
+      "issue-single-trial",
+    );
+    const saved = await this.#trialRow();
+    if (!saved || !same(saved.permit, permit) || saved.state !== "reserved")
+      fail("single_trial_conflict");
+    await this.#audit();
+    return saved;
+  }
+  async claimSingleTrialPut(identity, permitId, descriptor, bytes) {
+    this.#assert(identity);
+    const validated = await validateObjectBytes(descriptor, bytes);
+    const row = await this.inspectSingleTrial(identity);
+    if (
+      !row ||
+      row.permit.permitId !== permitId ||
+      !same(row.permit.descriptor, validated.descriptor)
+    )
+      fail("single_trial_conflict");
+    const changed = await this.#query(
+      "UPDATE shelf_storage_single_trial SET state='uploading',put_attempted=1,updated_at=? WHERE id=1 AND permit_id=? AND descriptor_json=? AND state='reserved' AND put_attempted=0 AND expires_at>CAST(unixepoch('subsec')*1000 AS INTEGER) RETURNING id",
+      [this.#now(), permitId, json(validated.descriptor)],
+      "production",
+      "claim-single-trial-put",
+    );
+    if (changed.length !== 1) fail("single_trial_put_already_claimed");
+    // The caller dispatches only after this entire method resolves. Losing CAS
+    // or readback response consumes the grant; inspect never grants dispatch.
+    const claimed = await this.#trialRow();
+    if (!claimed || claimed.state !== "uploading" || !claimed.putAttempted)
+      fail("single_trial_conflict");
+    return claimed;
+  }
+  async markSingleTrialUncertain(identity, permitId) {
+    const row = await this.inspectSingleTrial(identity);
+    if (!row || row.permit.permitId !== permitId) fail("single_trial_conflict");
+    if (row.state === "uploading" || row.state === "uncertain")
+      await this.#query(
+        "UPDATE shelf_storage_single_trial SET state='uncertain',updated_at=? WHERE id=1 AND permit_id=? AND state IN ('uploading','uncertain') AND put_attempted=1",
+        [this.#now(), permitId],
+        "production",
+        "uncertain-single-trial",
+      );
+    return this.#trialRow();
+  }
+  async reconcileSingleTrial(identity, permitId, adapter) {
+    const row = await this.inspectSingleTrial(identity);
+    if (!row || row.permit.permitId !== permitId || !row.putAttempted)
+      fail("single_trial_put_not_claimed");
+    const store = snapshotObjectStore(row.permit.target, adapter);
+    if (row.state === "confirmed") return row;
+    let timer;
+    const controller = new AbortController();
+    try {
+      const etag = await Promise.race([
+        verifyStoredObject(
+          row.permit.descriptor,
+          cancellableStore(store, controller.signal),
+        ),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(new StorageError("object_verification_timeout"));
+          }, this.#verificationTimeout);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (etag === null)
+        return {
+          ...(await this.markSingleTrialUncertain(identity, permitId)),
+          blockedReason: "object_absence_unresolved",
+        };
+      await this.#query(
+        "UPDATE shelf_storage_single_trial SET state='confirmed',content_verified=1,etag=?,updated_at=? WHERE id=1 AND permit_id=? AND descriptor_json=? AND state IN ('uploading','uncertain') AND put_attempted=1",
+        [etag, this.#now(), permitId, json(row.permit.descriptor)],
+        "production",
+        "confirm-single-trial",
+      );
+      const confirmed = await this.#trialRow();
+      if (confirmed?.state !== "confirmed" || confirmed.etag !== etag)
+        fail("object_changed");
+      await this.#audit();
+      return confirmed;
+    } catch (error) {
+      try {
+        await this.markSingleTrialUncertain(identity, permitId);
+      } catch {}
+      throw safeError(
+        error,
+        verificationErrorCodes,
+        "object_verification_unknown",
+      );
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
   }
   #decode(row) {
     if (!row) fail("storage_reservation_missing");
@@ -930,6 +1239,9 @@ export class RemoteStorageAuthority {
   }
   async #migrate(identity, input, activate) {
     this.#assert(identity);
+    if (await this.#hasTrialSchema()) {
+      if (await this.#trialRow()) fail("single_trial_keeps_imported");
+    }
     if (!Array.isArray(input) || input.length !== 2)
       fail("migration_incomplete");
     const snapshots = clone(input)

@@ -12,6 +12,11 @@ import {
   validateRemoteBindings,
 } from "./cf-api-deploy.mjs";
 import { createOwnerVerifier } from "../cloudflare/library/security.mjs";
+import {
+  validateSingleTrialTarget,
+  SINGLE_TRIAL_TARGET_PATH,
+  SINGLE_TRIAL_SECRET_PATH,
+} from "./single-trial-config.mjs";
 
 const ROOT = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 const POLICY = PROFILES.production;
@@ -453,9 +458,12 @@ function deployment(value, expected) {
     fail("worker_precondition_failed");
   return { deploymentId: d.id, versionId: expected };
 }
-function bindings(settings, databaseId, accountId) {
+function bindings(settings, databaseId, accountId, singleTrialTarget) {
   try {
-    validateRemoteBindings(settings, "production", databaseId, { accountId });
+    validateRemoteBindings(settings, "production", databaseId, {
+      accountId,
+      singleTrialTarget,
+    });
   } catch {
     fail("worker_precondition_failed");
   }
@@ -549,6 +557,7 @@ export async function runProductionAuth({
   fetchImpl = fetch,
   clock = Date.now,
   timeoutMs = AUTH_LIMITS.deadlineMs,
+  singleTrial = false,
 } = {}) {
   // Preview precedes all file/configuration/clock/network access.
   if (!execute)
@@ -606,6 +615,19 @@ export async function runProductionAuth({
       fail("configuration_invalid");
     }
     const resource = config.profiles.production;
+    let singleTrialTarget;
+    if (singleTrial) {
+      if (singleTrial !== true) fail("options_invalid");
+      try {
+        singleTrialTarget = validateSingleTrialTarget(
+          parse(await context.read(SINGLE_TRIAL_TARGET_PATH)),
+          credentials.accountId,
+          (await context.read(SINGLE_TRIAL_SECRET_PATH, { limit: 100 })).trim(),
+        );
+      } catch {
+        fail("configuration_invalid");
+      }
+    }
     const secretValues = [];
     for (const filename of [
       "owner-access-key",
@@ -674,6 +696,9 @@ export async function runProductionAuth({
       identitySha256,
       action,
       runId,
+      ...(singleTrialTarget
+        ? { singleTrialTargetSha256: singleTrialTarget.configSha256 }
+        : {}),
       requests: [],
       outcome: "running",
     };
@@ -851,6 +876,7 @@ export async function runProductionAuth({
         await request(workerBase + "/settings", `${prefix}-settings`),
         resource.databaseId,
         credentials.accountId,
+        singleTrialTarget,
       );
       const s = subdomain(
         await request(workerBase + "/subdomain", `${prefix}-subdomain`),
@@ -978,6 +1004,10 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       seen.add(key);
       if (key === "--execute") {
         parsed.execute = true;
+        continue;
+      }
+      if (key === "--single-trial") {
+        parsed.singleTrial = true;
         continue;
       }
       if (!names[key] || !args.length) fail("options_invalid");

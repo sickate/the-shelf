@@ -6,10 +6,15 @@ import { privatePath } from "./cf-library-data.mjs";
 import { objectDescriptor } from "../server/storage-authority.mjs";
 import { isCanonicalKey } from "../cloudflare/library/security.mjs";
 import { normalizedEtag } from "../cloudflare/library/core.mjs";
+import {
+  SINGLE_TRIAL_MODE,
+  SINGLE_TRIAL_BUCKET,
+} from "../cloudflare/library/single-trial.mjs";
 
 export const READING_ORIGIN = "https://the-shelf.iamzhutuo.workers.dev";
 export const READING_LIMITS = Object.freeze({
   requests: 11,
+  trialRequests: 15,
   timeoutMs: 30_000,
   objectBytes: 20_000_000,
   jsonBytes: 65_536,
@@ -61,6 +66,7 @@ function planValue(p) {
         "bucket",
         "descriptor",
         "etag",
+        ...(p?.mode === SINGLE_TRIAL_MODE ? ["mode"] : []),
       ]) ||
       p.schemaVersion !== 1 ||
       typeof p.profile !== "string" ||
@@ -70,7 +76,10 @@ function planValue(p) {
       typeof p.accountId !== "string" ||
       !/^[a-f0-9]{32}$/.test(p.accountId) ||
       typeof p.bucket !== "string" ||
-      p.bucket !== "the-shelf-books" ||
+      p.bucket !==
+        (p.mode === SINGLE_TRIAL_MODE
+          ? SINGLE_TRIAL_BUCKET
+          : "the-shelf-books") ||
       typeof p.etag !== "string" ||
       !normalizedEtag(p.etag)
     )
@@ -94,7 +103,7 @@ const same = (a, b) =>
 
 // privatePath provides the existing project private-path policy. Open handles and
 // inode pins additionally prevent parent replacement and receipt reuse during IO.
-async function journalValue(receipt) {
+async function journalValue(receipt, requestLimit = READING_LIMITS.requests) {
   const handles = [],
     files = [];
   let failed = false;
@@ -220,7 +229,7 @@ async function journalValue(receipt) {
     await write("run-start.json", {
       schemaVersion: 1,
       profile: "production",
-      requestLimit: READING_LIMITS.requests,
+      requestLimit,
     });
     return {
       write,
@@ -244,6 +253,18 @@ async function journalValue(receipt) {
 
 function signatureUrl(access, p, now) {
   try {
+    if (p.mode === SINGLE_TRIAL_MODE) {
+      if (
+        !own(access, ["url", "format", "expiresAt", "mode"]) ||
+        access.mode !== "local" ||
+        access.expiresAt !== null ||
+        access.format !== p.descriptor.format ||
+        access.url !==
+          `/api/files/${encodeURIComponent(p.descriptor.fileId)}/content`
+      )
+        fail("signature_invalid");
+      return READING_ORIGIN + access.url;
+    }
     if (
       !Number.isSafeInteger(now) ||
       !own(access, ["url", "format", "expiresAt", "mode"]) ||
@@ -334,12 +355,16 @@ const cancel = (body) => {
 /** Preview is zero IO. Execute accepts only explicitly loaded private inputs. */
 export async function runReadingSmoke(options = {}) {
   const p = planValue(options.plan);
+  const requestLimit =
+    p.mode === SINGLE_TRIAL_MODE
+      ? READING_LIMITS.trialRequests
+      : READING_LIMITS.requests;
   if (options.execute !== true)
     return {
       dryRun: true,
       profile: "production",
-      requests: 10,
-      requestLimit: 11,
+      requests: p.mode === SINGLE_TRIAL_MODE ? 14 : 10,
+      requestLimit,
       browserVerified: false,
     };
   const timeout = options.timeoutMs ?? READING_LIMITS.timeoutMs,
@@ -355,7 +380,7 @@ export async function runReadingSmoke(options = {}) {
   )
     fail("invalid_options");
   const fetcher = options.fetchImpl ?? fetch,
-    journal = await journalValue(options.receipt);
+    journal = await journalValue(options.receipt, requestLimit);
   let sequence = 0,
     cookie = null,
     csrf = null,
@@ -375,9 +400,11 @@ export async function runReadingSmoke(options = {}) {
       object = false,
       range = false,
       anonymous = false,
+      negativeOrigin = false,
+      negativeCsrf = false,
     } = {},
   ) {
-    if (++sequence > READING_LIMITS.requests) fail("request_budget");
+    if (++sequence > requestLimit) fail("request_budget");
     const ordinal = String(sequence).padStart(2, "0");
     await journal.write(`${ordinal}-intent.json`, {
       sequence,
@@ -405,6 +432,9 @@ export async function runReadingSmoke(options = {}) {
       const headers = object
         ? {
             Origin: READING_ORIGIN,
+            ...(p.mode === SINGLE_TRIAL_MODE && cookie
+              ? { Cookie: cookie }
+              : {}),
             ...(range
               ? {
                   Range: `bytes=0-${Math.min(31, p.descriptor.sizeBytes - 1)}`,
@@ -422,6 +452,9 @@ export async function runReadingSmoke(options = {}) {
                 }
               : {}),
           };
+      if (negativeOrigin)
+        headers.Origin = "https://shelf-reading-negative.invalid";
+      if (negativeCsrf) headers["X-CSRF-Token"] = "invalid-trial-csrf";
       const work = (async () => {
         const response = await fetcher(url, {
           method,
@@ -478,7 +511,7 @@ export async function runReadingSmoke(options = {}) {
           cancel(response.body);
           fail("object_mismatch");
         }
-        if (object) {
+        if (object && p.mode !== SINGLE_TRIAL_MODE) {
           const exposed = new Set(
             (response.headers.get("access-control-expose-headers") || "")
               .toLowerCase()
@@ -606,6 +639,15 @@ export async function runReadingSmoke(options = {}) {
     });
     if (denied.data?.error?.code !== "authentication_required")
       fail("authentication_invalid");
+    const contentPath = `${READING_ORIGIN}/api/files/${encodeURIComponent(p.descriptor.fileId)}/content`;
+    if (p.mode === SINGLE_TRIAL_MODE) {
+      const deniedContent = await send("anonymous-content", contentPath, {
+        expected: 401,
+        anonymous: true,
+      });
+      if (deniedContent.data?.error?.code !== "authentication_required")
+        fail("authentication_invalid");
+    }
     loginUnknown = true;
     const auth = await send("login", `${READING_ORIGIN}/api/login`, {
       method: "POST",
@@ -620,6 +662,15 @@ export async function runReadingSmoke(options = {}) {
       fail("authentication_invalid");
     csrf = auth.data.csrfToken;
     loginUnknown = false;
+    if (p.mode === SINGLE_TRIAL_MODE) {
+      const deniedCsrf = await send(
+        "invalid-csrf-logout",
+        `${READING_ORIGIN}/api/logout`,
+        { method: "POST", body: {}, expected: 403, negativeCsrf: true },
+      );
+      if (deniedCsrf.data?.error?.code !== "csrf_invalid")
+        fail("authentication_invalid");
+    }
     const session = await send(
       "authenticated-session",
       `${READING_ORIGIN}/api/session`,
@@ -652,6 +703,14 @@ export async function runReadingSmoke(options = {}) {
       fail("catalog_mismatch");
     const access = await send("file-access", accessPath),
       url = signatureUrl(access.data, p, now());
+    if (p.mode === SINGLE_TRIAL_MODE) {
+      const deniedOrigin = await send("wrong-origin-content", url, {
+        expected: 403,
+        negativeOrigin: true,
+      });
+      if (deniedOrigin.data?.error?.code !== "origin_forbidden")
+        fail("authentication_invalid");
+    }
     const full = await send("object-full", url, { object: true });
     signatureUrl(access.data, p, now()); // do not dispatch a Range using an expired URL
     const range = await send("object-range", url, {
@@ -675,6 +734,13 @@ export async function runReadingSmoke(options = {}) {
     const revoked = await send("revoked-access", accessPath, { expected: 401 });
     if (revoked.data?.error?.code !== "authentication_required")
       fail("authentication_invalid");
+    if (p.mode === SINGLE_TRIAL_MODE) {
+      const revokedContent = await send("revoked-content", contentPath, {
+        expected: 401,
+      });
+      if (revokedContent.data?.error?.code !== "authentication_required")
+        fail("authentication_invalid");
+    }
     revocationUnverified = false;
     ok = true;
   } catch (error) {

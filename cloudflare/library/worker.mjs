@@ -19,6 +19,12 @@ import {
   normalizedEtag,
   objectHeadMatches,
 } from "./core.mjs";
+import {
+  trialMode,
+  loadTrial,
+  trialOperatorRoute,
+  trialObjectHeaders,
+} from "./single-trial.mjs";
 
 const cookieName = "__Host-shelf_session";
 const headers = {
@@ -49,6 +55,7 @@ function configuration(env) {
     throw new LibraryError("service_unavailable", 503);
   if (env.OWNER_KEY_PEPPER === env.SESSION_SECRET)
     throw new LibraryError("service_unavailable", 503);
+  trialMode(env);
   return { scope: env.APP_SCOPE, origin: env.SITE_ORIGIN };
 }
 function dbError(error) {
@@ -178,7 +185,7 @@ async function bookInfo(env, scope, bookId) {
       ),
       prepare(
         env,
-        `SELECT file_id,book_id,format,size_bytes,state FROM file_registry WHERE scope=? AND book_id=? AND state='confirmed'`,
+        `SELECT file_id,book_id,format,size_bytes,state FROM ${registrySource(env)} WHERE scope=? AND book_id=? AND state='confirmed'`,
         scope,
         bookId,
       ),
@@ -199,6 +206,140 @@ async function bookInfo(env, scope, bookId) {
   } catch {
     throw new LibraryError("service_unavailable", 503);
   }
+}
+function registrySource(env) {
+  return trialMode(env)
+    ? `(SELECT json_extract(descriptor_json,'$.scope') AS scope,json_extract(descriptor_json,'$.fileId') AS file_id,json_extract(descriptor_json,'$.bookId') AS book_id,json_extract(descriptor_json,'$.format') AS format,size_bytes,state FROM shelf_storage_single_trial WHERE id=1 AND state='confirmed' AND content_verified=1 AND put_attempted=1 AND isolated_target_config_sha256='${env.SINGLE_TRIAL_TARGET_SHA256}' AND json_extract(target_json,'$.accountId')='${env.R2_ACCOUNT_ID}' AND json_extract(target_json,'$.bucket')='${env.R2_BUCKET}')`
+    : "file_registry";
+}
+async function trialFileAccess(request, env, context, session, id, content) {
+  const t = await query(() => loadTrial(env));
+  const file = t.file;
+  if (file.file_id !== id) throw new LibraryError("file_unavailable", 409);
+  let object,
+    range = null;
+  if (content && request.headers.has("range")) {
+    const match = /^bytes=(\d+)-(\d*)$/.exec(request.headers.get("range"));
+    if (!match) throw new LibraryError("range_not_satisfiable", 416);
+    const start = Number(match[1]),
+      end = match[2] ? Number(match[2]) : file.size_bytes - 1;
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      start >= file.size_bytes ||
+      end < start ||
+      end >= file.size_bytes
+    )
+      throw new LibraryError("range_not_satisfiable", 416);
+    range = { offset: start, length: end - start + 1 };
+  }
+  const expected = normalizedEtag(file.etag),
+    ifMatch = request.headers.get("if-match");
+  if (content && ifMatch !== null && normalizedEtag(ifMatch) !== expected)
+    throw new LibraryError("precondition_failed", 412);
+  try {
+    object =
+      content && request.method !== "HEAD"
+        ? await env.BOOKS.get(file.object_key, {
+            onlyIf: { etagMatches: expected },
+            ...(range ? { range } : {}),
+          })
+        : await env.BOOKS.head(file.object_key);
+  } catch {
+    throw new LibraryError("service_unavailable", 503);
+  }
+  const discard = () => {
+    try {
+      void Promise.resolve(object?.body?.cancel()).catch(() => {});
+    } catch {}
+  };
+  if (
+    !object ||
+    !objectHeadMatches(file, object) ||
+    (content &&
+      request.method !== "HEAD" &&
+      (!object.body ||
+        (range &&
+          (object.range?.offset !== range.offset ||
+            object.range?.length !== range.length))))
+  ) {
+    discard();
+    throw new LibraryError("file_changed", 409);
+  }
+  const now = Date.now();
+  // The external R2 await is followed by one primary D1 transaction checking
+  // the exact immutable trial, catalog candidate and current session generation.
+  let results;
+  try {
+    results = await query(() =>
+      env.DB.batch([
+        prepare(
+          env,
+          `INSERT INTO admissions(scope,request_id,kind,ip_key,created_at,session_hash,generation,file_id)
+      SELECT ?,?,'access',?,?,?,?,? WHERE EXISTS (
+        SELECT 1 FROM shelf_storage_single_trial t JOIN catalog_books b ON b.scope='production' AND b.book_id=json_extract(t.descriptor_json,'$.bookId') JOIN json_each(b.public_json,'$.files') j
+        WHERE t.id=1 AND t.state='confirmed' AND t.content_verified=1 AND t.put_attempted=1
+          AND t.permit_id=? AND t.target_json=? AND t.descriptor_json=? AND t.etag=? AND t.isolated_target_config_sha256=? AND t.authority_identity_json=?
+          AND json_extract(j.value,'$.id')=? AND json_extract(j.value,'$.format')=? AND json_extract(j.value,'$.sizeBytes')=? AND json_extract(j.value,'$.status')='candidate' AND json_extract(j.value,'$.visibility')='private' AND json_extract(j.value,'$.readable')=1
+      ) RETURNING request_id`,
+          context.scope,
+          randomKey(),
+          context.ip,
+          now,
+          session.session_hash,
+          session.generation,
+          id,
+          t.row.permit_id,
+          t.row.target_json,
+          t.row.descriptor_json,
+          t.row.etag,
+          t.row.isolated_target_config_sha256,
+          t.row.authority_identity_json,
+          id,
+          file.format,
+          file.size_bytes,
+        ),
+        prepare(
+          env,
+          `SELECT s.session_hash FROM sessions s JOIN auth_config a ON a.scope=s.scope WHERE s.scope=? AND s.session_hash=? AND s.generation=? AND s.revoked=0 AND s.expires_at>? AND a.generation=s.generation AND a.enabled=1 AND a.origin=?`,
+          context.scope,
+          session.session_hash,
+          session.generation,
+          now,
+          context.origin,
+        ),
+      ]),
+    );
+  } catch (e) {
+    discard();
+    throw e;
+  }
+  if (!results[1].results?.length) {
+    discard();
+    throw new LibraryError("authentication_required", 401);
+  }
+  if (!results[0].results?.length) {
+    discard();
+    throw new LibraryError("file_changed", 409);
+  }
+  if (!content)
+    return response(200, {
+      url: `/api/files/${encodeURIComponent(id)}/content`,
+      format: file.format,
+      expiresAt: null,
+      mode: "local",
+    });
+  const out = trialObjectHeaders(file);
+  if (range) {
+    out["Content-Length"] = String(range.length);
+    out["Content-Range"] =
+      `bytes ${range.offset}-${range.offset + range.length - 1}/${file.size_bytes}`;
+  }
+  return new Response(request.method === "HEAD" ? null : object.body, {
+    status: range ? 206 : 200,
+    headers: out,
+  });
 }
 async function fileAccess(env, context, session, id) {
   const file = await query(() =>
@@ -362,7 +503,7 @@ async function metadata(request, env, context, session, bookId) {
       WHERE metadata_overrides.version=? RETURNING version,
         (SELECT public_json FROM catalog_books WHERE scope=? AND book_id=?) AS public_json,
         (SELECT json_group_array(json_object('file_id',file_id,'book_id',book_id,'format',format,'size_bytes',size_bytes,'state',state))
-          FROM file_registry WHERE scope=? AND book_id=? AND state='confirmed') AS registry_json`,
+          FROM ${registrySource(env)} WHERE scope=? AND book_id=? AND state='confirmed') AS registry_json`,
         context.scope,
         bookId,
         JSON.stringify(patch),
@@ -410,6 +551,19 @@ async function metadata(request, env, context, session, bookId) {
 }
 async function route(request, env, context) {
   const { pathname: path } = new URL(request.url);
+  if (path.startsWith("/api/single-trial/")) {
+    if (
+      !trialMode(env) ||
+      !["/api/single-trial/upload", "/api/single-trial/object"].includes(path)
+    )
+      throw new LibraryError("not_found", 404);
+    if (
+      request.headers.get("origin") !== context.origin ||
+      request.headers.get("sec-fetch-site") === "cross-site"
+    )
+      throw new LibraryError("origin_forbidden", 403);
+    return trialOperatorRoute(request, env);
+  }
   if (request.method === "OPTIONS")
     throw new LibraryError("origin_forbidden", 403);
   if (!["GET", "POST", "HEAD"].includes(request.method))
@@ -454,8 +608,7 @@ async function route(request, env, context) {
       r2Configured: Boolean(
         env.BOOKS &&
         env.R2_ACCOUNT_ID &&
-        env.R2_ACCESS_KEY_ID &&
-        env.R2_SECRET_ACCESS_KEY,
+        (trialMode(env) || (env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY)),
       ),
       thresholdBytes: THRESHOLD,
       authScheme: "owner-access-key",
@@ -560,6 +713,18 @@ async function route(request, env, context) {
   if (match) {
     requireSession(session);
     const [, id, action] = match;
+    if (trialMode(env)) {
+      if (!["GET", "HEAD"].includes(request.method))
+        throw new LibraryError("method_not_allowed", 405);
+      return trialFileAccess(
+        request,
+        env,
+        context,
+        session,
+        id,
+        action === "content",
+      );
+    }
     if (action === "content")
       throw new LibraryError("local_files_disabled", 403);
     if (request.method !== "GET")

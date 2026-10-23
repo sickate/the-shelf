@@ -30,6 +30,17 @@ async function fixture(t, { legacy = false } = {}) {
     }
     await fs.writeFile(path.join(root, "scripts", name), source);
   }
+  // Deployment entrypoints share the trial target validator and its portable
+  // library dependencies even when this fixture exercises the regular CLI.
+  for (const name of [
+    "scripts/single-trial-config.mjs",
+    "cloudflare/library/single-trial.mjs",
+    "cloudflare/library/core.mjs",
+    "cloudflare/library/security.mjs",
+  ]) {
+    await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true });
+    await fs.copyFile(path.join(ROOT, name), path.join(root, name));
+  }
   await fs.writeFile(
     path.join(root, "wrangler.jsonc"),
     JSON.stringify({

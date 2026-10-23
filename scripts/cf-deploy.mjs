@@ -28,6 +28,8 @@ export const PRIVATE_KEYS = [
   "SHELF_CF_PRODUCTION_OWNER_ACCESS_KEY",
   "SHELF_CF_PRODUCTION_OWNER_KEY_PEPPER",
   "SHELF_CF_PRODUCTION_SESSION_SECRET",
+  "SINGLE_TRIAL_UPLOAD_SECRET",
+  "SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET",
   "SHELF_OAI_KEY",
   "SHELF_R2_ACCESS_KEY_ID",
   "SHELF_R2_SECRET_ACCESS_KEY",
@@ -294,6 +296,7 @@ export async function deploy({
   runner = runChild,
   inspector,
   staticRollback = false,
+  singleTrial = false,
 } = {}) {
   let runDirectory, credentials;
   let phase = "files";
@@ -322,6 +325,29 @@ export async function deploy({
     const config = validateConfig(source);
     const apiPolicy = await import("./cf-api-deploy.mjs");
     const privacySecrets = await apiPolicy.loadPrivacySecrets(repository);
+    let singleTrialTarget;
+    if (singleTrial) {
+      if (
+        singleTrial !== true ||
+        staticRollback !== true ||
+        typeof privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET !==
+          "string"
+      )
+        reject("config");
+      const trialPolicy = await import("./single-trial-config.mjs");
+      try {
+        singleTrialTarget = trialPolicy.validateSingleTrialTarget(
+          await apiPolicy.readPrivateJson(
+            repository,
+            trialPolicy.SINGLE_TRIAL_TARGET_PATH,
+          ),
+          credentials.accountId,
+          privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET,
+        );
+      } catch {
+        reject("config");
+      }
+    }
     credentials.privateValues.push(...Object.values(privacySecrets));
     phase = "remote";
     const settings = await (inspector || apiPolicy.readRemoteSettings)(
@@ -339,7 +365,7 @@ export async function deploy({
         settings,
         "production",
         resources.profiles.production.databaseId,
-        { accountId: credentials.accountId },
+        { accountId: credentials.accountId, singleTrialTarget },
       );
     } else if (staticRollback) reject("bindings");
     phase = "files";
@@ -469,10 +495,16 @@ export async function deploy({
 export async function main() {
   try {
     const argv = process.argv.slice(2);
-    if (argv.length && (argv.length !== 1 || argv[0] !== "--static-rollback"))
+    if (
+      argv.length &&
+      (![1, 2].includes(argv.length) ||
+        argv[0] !== "--static-rollback" ||
+        (argv.length === 2 && argv[1] !== "--single-trial"))
+    )
       reject("config");
     const result = await deploy({
       staticRollback: argv[0] === "--static-rollback",
+      singleTrial: argv[1] === "--single-trial",
     });
     console.log(`Cloudflare static deployment succeeded: ${result.url}`);
     console.log(`Private deployment log: ${result.logPath}`);

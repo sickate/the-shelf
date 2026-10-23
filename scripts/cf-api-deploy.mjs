@@ -4,6 +4,15 @@ import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { d1Client } from "./cf-library-clients.mjs";
 import {
+  SINGLE_TRIAL_MODE,
+  SINGLE_TRIAL_BUCKET,
+} from "../cloudflare/library/single-trial.mjs";
+import {
+  validateSingleTrialTarget,
+  SINGLE_TRIAL_TARGET_PATH,
+  SINGLE_TRIAL_SECRET_PATH,
+} from "./single-trial-config.mjs";
+import {
   selectCredentials,
   runChild,
   regularFile,
@@ -35,6 +44,11 @@ export const SECRET_NAMES = [
   "SESSION_SECRET",
   "R2_ACCESS_KEY_ID",
   "R2_SECRET_ACCESS_KEY",
+];
+export const SINGLE_TRIAL_SECRET_NAMES = [
+  "OWNER_KEY_PEPPER",
+  "SESSION_SECRET",
+  "SINGLE_TRIAL_UPLOAD_SECRET",
 ];
 const own = (v, keys) =>
   v &&
@@ -134,6 +148,21 @@ export async function loadPrivacySecrets(root) {
         if (error.code !== "ENOENT") throw error;
       }
     }
+  try {
+    await inspectParents(root, SINGLE_TRIAL_SECRET_PATH);
+    const filename = path.join(root, SINGLE_TRIAL_SECRET_PATH),
+      stat = await regularFile(filename);
+    if ((stat.mode & 0o777) !== 0o600 || stat.size > 100) fail("files");
+    const value = (await fs.readFile(filename, "utf8")).trim();
+    if (
+      !/^[A-Za-z0-9_-]{43}$/.test(value) ||
+      Buffer.from(value, "base64url").toString("base64url") !== value
+    )
+      fail("files");
+    result.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET = value;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   return result;
 }
 export async function readProjectEnvironment(root, environment = {}) {
@@ -190,12 +219,22 @@ export function safeStaticBindings(settings) {
     bindings.some(
       (b) =>
         !(b.name === "ASSETS" && b.type === "assets") &&
-        !(SECRET_NAMES.includes(b.name) && b.type === "secret_text"),
+        !(
+          [...SECRET_NAMES, ...SINGLE_TRIAL_SECRET_NAMES].includes(b.name) &&
+          b.type === "secret_text"
+        ),
     )
   )
     return false;
   const secrets = bindings.filter((b) => b.type === "secret_text");
-  return secrets.length === 0 || secrets.length === SECRET_NAMES.length;
+  const names = secrets.map((b) => b.name);
+  return (
+    names.length === 0 ||
+    [SECRET_NAMES, SINGLE_TRIAL_SECRET_NAMES].some(
+      (set) =>
+        names.length === set.length && set.every((n) => names.includes(n)),
+    )
+  );
 }
 export async function verifyDatabaseIdentity(credentials, resource, options) {
   await d1Client(credentials, resource, options).verify();
@@ -204,8 +243,25 @@ export function validateRemoteBindings(
   settings,
   profile,
   databaseId,
-  { requireSecrets = true, allowStatic = false, accountId } = {},
+  {
+    requireSecrets = true,
+    allowStatic = false,
+    accountId,
+    singleTrialTarget,
+  } = {},
 ) {
+  if (
+    singleTrialTarget &&
+    (profile !== "production" ||
+      singleTrialTarget.accountId !== accountId ||
+      singleTrialTarget.bucket !== SINGLE_TRIAL_BUCKET ||
+      !/^[a-f0-9]{64}$/.test(singleTrialTarget.configSha256 || ""))
+  )
+    fail("config");
+  const secretNames = singleTrialTarget
+    ? SINGLE_TRIAL_SECRET_NAMES
+    : SECRET_NAMES;
+  const bucket = singleTrialTarget ? SINGLE_TRIAL_BUCKET : "the-shelf-books";
   if (!settings) {
     if (requireSecrets) fail("secrets");
     return;
@@ -220,7 +276,13 @@ export function validateRemoteBindings(
     APP_SCOPE: PROFILES[profile].scope,
     SITE_ORIGIN: PROFILES[profile].origin,
     R2_ACCOUNT_ID: accountId,
-    R2_BUCKET: "the-shelf-books",
+    R2_BUCKET: bucket,
+    ...(singleTrialTarget
+      ? {
+          SINGLE_TRIAL_MODE,
+          SINGLE_TRIAL_TARGET_SHA256: singleTrialTarget.configSha256,
+        }
+      : {}),
   };
   const dynamic = bindings.filter(
     (b) => !["assets", "secret_text", "plain_text", "json"].includes(b.type),
@@ -233,7 +295,7 @@ export function validateRemoteBindings(
         (b.name === "ASSETS" &&
           b.type === "assets" &&
           profile === "production") ||
-        (b.type === "secret_text" && SECRET_NAMES.includes(b.name)),
+        (b.type === "secret_text" && secretNames.includes(b.name)),
     )
   )
     return;
@@ -245,14 +307,14 @@ export function validateRemoteBindings(
     db.id !== databaseId ||
     !books ||
     books.type !== "r2_bucket" ||
-    books.bucket_name !== "the-shelf-books"
+    books.bucket_name !== bucket
   )
     fail("bindings");
   for (const b of bindings) {
     if (b.name === "DB" || b.name === "BOOKS") continue;
     if (b.name === "ASSETS" && b.type === "assets" && profile === "production")
       continue;
-    if (SECRET_NAMES.includes(b.name) && b.type === "secret_text") continue;
+    if (secretNames.includes(b.name) && b.type === "secret_text") continue;
     if (
       Object.hasOwn(expectedVars, b.name) &&
       b.type === "plain_text" &&
@@ -263,19 +325,14 @@ export function validateRemoteBindings(
   }
   if (
     requireSecrets &&
-    SECRET_NAMES.some(
+    secretNames.some(
       (name) =>
         !bindings.some((b) => b.name === name && b.type === "secret_text"),
     )
   )
     fail("secrets");
   if (requireSecrets) {
-    const expected = {
-      APP_SCOPE: PROFILES[profile].scope,
-      SITE_ORIGIN: PROFILES[profile].origin,
-      R2_ACCOUNT_ID: accountId,
-      R2_BUCKET: "the-shelf-books",
-    };
+    const expected = expectedVars;
     for (const [name, value] of Object.entries(expected))
       if (
         !value ||
@@ -291,9 +348,24 @@ export function validateRemoteBindings(
       fail("bindings");
   }
 }
-export function workerConfig(profile, resource, accountId, root) {
+export function workerConfig(
+  profile,
+  resource,
+  accountId,
+  root,
+  { singleTrialTarget } = {},
+) {
   const p = PROFILES[profile];
   if (!p) fail("target");
+  if (
+    singleTrialTarget &&
+    (profile !== "production" ||
+      singleTrialTarget.accountId !== accountId ||
+      singleTrialTarget.bucket !== SINGLE_TRIAL_BUCKET ||
+      !/^[a-f0-9]{64}$/.test(singleTrialTarget.configSha256 || ""))
+  )
+    fail("config");
+  const bucket = singleTrialTarget ? SINGLE_TRIAL_BUCKET : "the-shelf-books";
   const config = {
     name: p.name,
     main: path.join(root, "cloudflare/library/worker.mjs"),
@@ -305,7 +377,13 @@ export function workerConfig(profile, resource, accountId, root) {
       APP_SCOPE: p.scope,
       SITE_ORIGIN: p.origin,
       R2_ACCOUNT_ID: accountId,
-      R2_BUCKET: "the-shelf-books",
+      R2_BUCKET: bucket,
+      ...(singleTrialTarget
+        ? {
+            SINGLE_TRIAL_MODE,
+            SINGLE_TRIAL_TARGET_SHA256: singleTrialTarget.configSha256,
+          }
+        : {}),
     },
     d1_databases: [
       {
@@ -314,7 +392,7 @@ export function workerConfig(profile, resource, accountId, root) {
         database_id: resource.databaseId,
       },
     ],
-    r2_buckets: [{ binding: "BOOKS", bucket_name: "the-shelf-books" }],
+    r2_buckets: [{ binding: "BOOKS", bucket_name: bucket }],
   };
   if (profile === "production")
     config.assets = {
@@ -333,6 +411,7 @@ export async function deployApi({
   runner = runChild,
   inspector = readRemoteSettings,
   identityChecker = verifyDatabaseIdentity,
+  singleTrial = false,
 } = {}) {
   let directory, credentials;
   let phase = "files";
@@ -342,6 +421,24 @@ export async function deployApi({
     const loaded = await readProjectEnvironment(root, environment);
     credentials = loaded.credentials;
     const privacySecrets = await loadPrivacySecrets(root);
+    let singleTrialTarget;
+    if (singleTrial) {
+      if (singleTrial !== true || profile !== "production") fail("target");
+      if (
+        typeof privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET !==
+        "string"
+      )
+        fail("secrets");
+      try {
+        singleTrialTarget = validateSingleTrialTarget(
+          await readPrivateJson(root, SINGLE_TRIAL_TARGET_PATH),
+          credentials.accountId,
+          privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET,
+        );
+      } catch {
+        fail("config");
+      }
+    }
     credentials.privateValues.push(...Object.values(privacySecrets));
     // API publication remains local until a separately reviewed CI deployment exists.
     if (credentials.ci) fail("ci");
@@ -360,13 +457,19 @@ export async function deployApi({
       requireSecrets: false,
       allowStatic: true,
       accountId: credentials.accountId,
+      singleTrialTarget,
     });
     // Fresh Worker secret placeholders may be installed before its first code upload.
     const names =
       before?.bindings
         ?.filter((b) => b.type === "secret_text")
         .map((b) => b.name) || [];
-    if (SECRET_NAMES.some((name) => !names.includes(name))) fail("secrets");
+    if (
+      (singleTrialTarget ? SINGLE_TRIAL_SECRET_NAMES : SECRET_NAMES).some(
+        (name) => !names.includes(name),
+      )
+    )
+      fail("secrets");
     if (profile === "production") {
       await inspectAssets(path.join(root, "dist"));
       const runtime = JSON.parse(
@@ -394,7 +497,9 @@ export async function deployApi({
     await privateFile(
       configPath,
       JSON.stringify(
-        workerConfig(profile, resource, credentials.accountId, root),
+        workerConfig(profile, resource, credentials.accountId, root, {
+          singleTrialTarget,
+        }),
         null,
         2,
       ),
@@ -452,14 +557,17 @@ export async function deployApi({
       await inspector(credentials, PROFILES[profile].name),
       profile,
       resource.databaseId,
-      { accountId: credentials.accountId },
+      { accountId: credentials.accountId, singleTrialTarget },
     );
     const receipt = {
       schemaVersion: 1,
       profile,
       worker: PROFILES[profile].name,
       databaseId: resource.databaseId,
-      bucket: "the-shelf-books",
+      bucket: singleTrialTarget ? SINGLE_TRIAL_BUCKET : "the-shelf-books",
+      ...(singleTrialTarget
+        ? { singleTrialTargetSha256: singleTrialTarget.configSha256 }
+        : {}),
       at: new Date().toISOString(),
     };
     await privateFile(
@@ -486,8 +594,16 @@ export async function deployApi({
 }
 export async function main(argv = process.argv.slice(2)) {
   try {
-    if (argv.length !== 2 || argv[0] !== "--profile") fail("target");
-    const r = await deployApi({ profile: argv[1] });
+    if (
+      ![2, 3].includes(argv.length) ||
+      argv[0] !== "--profile" ||
+      (argv.length === 3 && argv[2] !== "--single-trial")
+    )
+      fail("target");
+    const r = await deployApi({
+      profile: argv[1],
+      singleTrial: argv.length === 3,
+    });
     console.log(
       `Cloudflare API deployment succeeded: ${r.url}\nPrivate deployment log: ${r.logPath}`,
     );

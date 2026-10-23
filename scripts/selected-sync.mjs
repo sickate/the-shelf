@@ -182,7 +182,7 @@ async function directoryChain(root, target, create = false) {
   return target;
 }
 
-async function localSelection(root, environment, selection) {
+export async function loadSelectedLocalObject(root, environment, selection) {
   const actual = await fs.realpath(root);
   if (actual !== path.resolve(root)) fail("selected_project_path_unsafe");
   const config = getConfig(await localEnvironment(actual, environment), actual);
@@ -392,7 +392,7 @@ export async function runSelectedSync({
   if (trustedOperator !== undefined && typeof trustedOperator !== "function")
     fail("selected_invalid_arguments");
   try {
-    const local = await localSelection(root, environment, selection),
+    const local = await loadSelectedLocalObject(root, environment, selection),
       d = local.descriptor;
     const summary = {
       action,

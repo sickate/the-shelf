@@ -15,6 +15,7 @@ import {
   ProductionAuthError,
 } from "../scripts/cf-production-auth.mjs";
 import { createOwnerVerifier } from "../cloudflare/library/security.mjs";
+import { validateSingleTrialTarget } from "../scripts/single-trial-config.mjs";
 
 const SOURCE = fileURLToPath(new URL("../", import.meta.url));
 const ORIGIN = "https://the-shelf.iamzhutuo.workers.dev";
@@ -212,6 +213,76 @@ async function fixture(t) {
 import { createHash } from "node:crypto";
 const awaitHash = (v) =>
   createHash("sha256").update(JSON.stringify(v)).digest("hex");
+test("trial auth enable requires explicit target config and rejects retained legacy S3 secret", async (t) => {
+  const f = await fixture(t);
+  f.seed();
+  const upload = Buffer.alloc(32, 41).toString("base64url"),
+    v = {
+      schemaVersion: 1,
+      mode: "first-book-20261023",
+      accountId: ACCOUNT,
+      bucket: "the-shelf-first-book-20261023",
+      worker: "the-shelf",
+      origin: ORIGIN,
+      uploadSecretSha256: createHash("sha256").update(upload).digest("hex"),
+    },
+    target = validateSingleTrialTarget(v, ACCOUNT, upload);
+  await fs.writeFile(
+    path.join(f.root, ".local/cf03/production/single-trial-target.json"),
+    JSON.stringify(v),
+    { mode: 0o600 },
+  );
+  await fs.writeFile(
+    path.join(f.root, ".local/cf03/production/single-trial-upload-secret"),
+    upload + "\n",
+    { mode: 0o600 },
+  );
+  f.settings.bindings = f.settings.bindings.filter(
+    (b) => !["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"].includes(b.name),
+  );
+  f.settings.bindings.push(
+    { name: "SINGLE_TRIAL_UPLOAD_SECRET", type: "secret_text" },
+    { name: "SINGLE_TRIAL_MODE", type: "plain_text", text: v.mode },
+    {
+      name: "SINGLE_TRIAL_TARGET_SHA256",
+      type: "plain_text",
+      text: target.configSha256,
+    },
+  );
+  f.settings.bindings.find((b) => b.name === "BOOKS").bucket_name = v.bucket;
+  f.settings.bindings.find((b) => b.name === "R2_BUCKET").text = v.bucket;
+  await assert.rejects(
+    f.run({
+      action: "enable",
+      runId: "no-trial-flag",
+      expectedVersion: VERSION,
+      ...f.expected(),
+    }),
+    failCode("worker_precondition_failed"),
+  );
+  f.settings.bindings.push({ name: "R2_ACCESS_KEY_ID", type: "secret_text" });
+  await assert.rejects(
+    f.run({
+      action: "enable",
+      runId: "trial-old-secret",
+      expectedVersion: VERSION,
+      ...f.expected(),
+      singleTrial: true,
+    }),
+    failCode("worker_precondition_failed"),
+  );
+  f.settings.bindings = f.settings.bindings.filter(
+    (b) => b.name !== "R2_ACCESS_KEY_ID",
+  );
+  const result = await f.run({
+    action: "enable",
+    runId: "trial-enable",
+    expectedVersion: VERSION,
+    ...f.expected(),
+    singleTrial: true,
+  });
+  assert.equal(result.auth.row.enabled, 1);
+});
 
 test("preview and real CLI preview perform no file, clock, configuration or transport IO", async () => {
   const result = await runProductionAuth({
