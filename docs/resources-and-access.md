@@ -10,6 +10,14 @@ Sol/high实现已交回，主Agent独立authority38项、runtime/deploy/auth59�
 
 本地最终全套838项Node、8项Python通过，零失败/取消/跳过；首次三项CLI fixture依赖遗漏已由Sol修复并由主Agent独立复验，生产逻辑未因测试放宽。日志`/tmp/shelf-single-trial-full-fixed-20261023.log`；disabled构建1280页、public1318文件、static1304资源及1509文件真实秘密扫描通过。云端状态尚不因此改变；后续bucket/secret/schema/catalog/permit/PUT/读取分别使用固定新run和私有durable收据，不重放历史动作。
 
+47a551e8f9cdf07120d5f815203d87e23a1fa6b4已推送，两CI39887039702/39887039727均success、CF deploy skipped。其后实际受控production API部署成功，日志`.local/cf03/deploy-ktYov0/deploy.log`，BOOKS仅新桶、DB原production、三项专用secret回读通过。固定新桶6HTTP私有回读、旧key403一次、旧CF01仅旧桶binding一次通过；secret首次只读预检停止，修正/tmp helper并独立38项测试后新run3HTTP安装/回读。收据在`.local/single-trial-provision/`，不得重发bucket/secrets attempt。
+
+首本已真实上传并独立核验：`.local/single-trial/`下schema/catalog/issue/post-negative/upload/reconcile各`*-20261023-47a551e`run分别17/7/9/5/1/10HTTP；四次negative在`negative-negative-20261023-47a551e/`，确认观察在`observe-confirmed-confirmed-20261023-47a551e/`（4HTTP）。唯一24,582字节PDF经一次POST/一次R2 PUT、HEAD/全文SHA256/HEAD及原authority确认，保留permit/reservation/所有unknown；`confirmed.json`仅私有记录真实读回的描述和ETag。Auth status2HTTP仍generation1/enabled0；第一次enable在settings后4HTTP stopped、无CAS、无未决mutation。先解决严格配置契约差异再开启会话和reading smoke，不把对象上传成功称为浏览器在线阅读验收。
+
+后续两次固定settings只读诊断各1HTTP，收据在`.local/single-trial-provision/production-settings-shape-settings-shape-20261023-47a551e/`及`production-d1-shape-d1-shape-20261023-47a551e/`。实际DB包含官方database_id和弃用id、值严格相同、无其他未知字段；未输出标识/秘密或原始响应。Sol仅对auth operator做精确双别名兼容并新增9项，33项专项通过，保留原对象hash和CAS前后全部校验。当前已部署Worker和已确认对象不改；待修复提交CI及后续真实enable/reading收据后记录登录与阅读状态。
+
+主Agent修复最终验收：104项鉴权/部署/CLI/reading专项全部通过，日志`/tmp/shelf-trial-auth-alias-main-20261023.log`；disabled构建1280页、public1318文件、static1304资源及1509文件实际秘密扫描通过，格式与diff通过。上一功能提交838项Node/8项Python全套证据保留；本次新增9项由专项覆盖，远端全套以新CI实际结果为准。不把当前本机构建的disabled包部署到已工作的API上。
+
 ## 2026-10-23 接续验收：production 鉴权已初始化且保持关闭
 
 985136abb6fe37faa8b4d4b0640414a82f8d52a1两CI已由公开固定提交API核对为completed/success：Cloudflare39795268728，Pages39795268773；Pages真实raw开发计划与该提交字节一致，主站runtime schemaVersion=1/apiMode=disabled。初次gh连接仍失败；两项额外jobs GET因自动审核deadline超时未执行，不是被判定越界，也不将未执行请求视为证据。前轮CF部署step skipped的观察保留，不声称部署了业务API。

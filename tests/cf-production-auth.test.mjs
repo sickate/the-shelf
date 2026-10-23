@@ -874,3 +874,106 @@ test("receipts/state retain neither secrets, verifier, SQL, session hash nor pro
     assert.equal((await fs.stat(path.join(dir, filename))).mode & 0o777, 0o600);
   assert.equal((await fs.stat(dir)).mode & 0o777, 0o700);
 });
+
+test("enable accepts matching official D1 database_id and legacy id aliases", async (t) => {
+  const f = await fixture(t);
+  f.seed();
+  f.settings.bindings.find((binding) => binding.name === "DB").database_id =
+    DATABASE;
+  const result = await f.run({
+    action: "enable",
+    expectedVersion: VERSION,
+    ...f.expected(),
+  });
+  assert.equal(result.requests, 11);
+  assert.equal(result.auth.row.enabled, 1);
+});
+
+for (const [label, value] of [
+  ["conflicting", "55555555-5555-4555-8555-555555555555"],
+  ["number", 1],
+  ["null", null],
+  ["object", { id: DATABASE }],
+])
+  test(`enable rejects ${label} D1 database_id alias before CAS`, async (t) => {
+    const f = await fixture(t);
+    f.seed();
+    f.settings.bindings.find((binding) => binding.name === "DB").database_id =
+      value;
+    await assert.rejects(
+      f.run({ action: "enable", expectedVersion: VERSION, ...f.expected() }),
+      failCode("worker_precondition_failed"),
+    );
+    assert.equal(
+      f.db.prepare("SELECT enabled FROM auth_config").get().enabled,
+      0,
+    );
+    assert.ok(
+      f.calls.every(
+        (call) =>
+          !call.init.body || JSON.parse(call.init.body).sql !== AUTH_SQL.enable,
+      ),
+    );
+  });
+
+test("matching D1 aliases still reject unknown binding keys before CAS", async (t) => {
+  const f = await fixture(t);
+  f.seed();
+  Object.assign(
+    f.settings.bindings.find((binding) => binding.name === "DB"),
+    {
+      database_id: DATABASE,
+      unexpected: "synthetic-extra-field",
+    },
+  );
+  await assert.rejects(
+    f.run({ action: "enable", expectedVersion: VERSION, ...f.expected() }),
+    failCode("worker_precondition_failed"),
+  );
+  assert.equal(
+    f.db.prepare("SELECT enabled FROM auth_config").get().enabled,
+    0,
+  );
+});
+
+for (const drift of ["added", "removed", "changed"])
+  test(`enable rejects D1 alias ${drift} between full Worker observations`, async (t) => {
+    const f = await fixture(t);
+    f.seed();
+    if (drift !== "added")
+      f.settings.bindings.find((binding) => binding.name === "DB").database_id =
+        DATABASE;
+    let observations = 0;
+    f.intercept((url) => {
+      if (!url.endsWith("/settings")) return;
+      if (++observations !== 2) return;
+      const after = structuredClone(f.settings);
+      const db = after.bindings.find((binding) => binding.name === "DB");
+      if (drift === "removed") delete db.database_id;
+      else
+        db.database_id =
+          drift === "changed"
+            ? "55555555-5555-4555-8555-555555555555"
+            : DATABASE;
+      return response(after);
+    });
+    await assert.rejects(
+      f.run({ action: "enable", expectedVersion: VERSION, ...f.expected() }),
+      failCode("worker_precondition_failed"),
+    );
+    assert.equal(observations, 2);
+    assert.equal(
+      f.calls.filter(
+        (call) =>
+          call.init.body && JSON.parse(call.init.body).sql === AUTH_SQL.enable,
+      ).length,
+      1,
+    );
+    const state = JSON.parse(
+      await fs.readFile(
+        path.join(f.root, ".local/cf03/production-auth-state.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(state.unresolved.length, 1);
+  });

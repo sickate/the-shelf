@@ -470,6 +470,13 @@ function bindings(settings, databaseId, accountId, singleTrialTarget) {
   const normalized = settings.bindings
     .map((b) => {
       if (b.name === "DB" && exact(b, ["name", "type", "id"])) return b;
+      if (
+        b.name === "DB" &&
+        exact(b, ["name", "type", "id", "database_id"]) &&
+        b.id === databaseId &&
+        b.database_id === databaseId
+      )
+        return b;
       if (b.name === "BOOKS" && exact(b, ["name", "type", "bucket_name"]))
         return b;
       if (b.type === "secret_text" && exact(b, ["name", "type"])) return b;

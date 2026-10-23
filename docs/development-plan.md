@@ -26,6 +26,12 @@
 
 运维预算细化：旧桶凭证仅对固定新目标一次HEAD，必须实际403；secret安装为固定Worker settings GET、一次secrets-bulk PATCH、独立settings GET，共3HTTP，精确三项且无旧R2秘密，不假定批量PATCH原子。四个负向POST固定错误secret、Origin、大小和同大小全零错误hash；随后原status只读确认仍reserved/未attempt。reconcile成功后另一次有界observe-confirmed（正常4/cap5HTTP）只读原authority，独占保存已确认descriptor/etag供14/cap15HTTP reading smoke使用，不手写云事实。各次mutation和negative全局attempt不可重发，逐请求durable intent；所有操作工具及测试先由主Agent独立审阅/验证，不产生第二份余额。
 
+真实云检查点（功能提交47a551e）：Cloudflare CI39887039702与Pages CI39887039727均success，前者deploy明确skipped。新桶6HTTP私有/生命周期回读通过，旧key一次HEAD403；追加固定旧CF01 settings一次GET确认全部R2 binding仍只指向旧桶，不据此改判旧unknown。secret首次仅1GET因临时helper强制ASSETS而停止、0PATCH；现有静态配置确实允许无ASSETS binding。Sol修正仅/tmp helper允许0/1并严格保持前后非secret projection，主Agent独立38项合成后，新run3HTTP一次PATCH及回读通过。schema17HTTP/9DDL、catalog7HTTP/3mutations精确回读通过，受控API部署及新桶/原D1/三secret绑定回读通过。issue9HTTP签发唯一许可；真实negative4HTTP通过，status5HTTP独立确认reserved且未attempt；唯一upload1HTTP后reconcile10HTTP真实HEAD/全文hash/HEAD通过，原authority confirmed/putAttempted/contentVerified均真。observe-confirmed4HTTP独立只读验证并私存ETag。仍无第二PUT、对象删除、旧账清除、AI或计费变更。
+
+阅读接续：auth最新status2HTTP为generation1/enabled0、未撤销会话0、无未决mutation；enable在第4HTTP settings检查后stopped、没有CAS，仍关闭。Sol/high先以新临时固定settings shape只读诊断（cap1）核对严格binding exact与实际平台合法字段差异，仅输出有限字段类型/默认匹配布尔和unknown数量；对照已安装官方契约后再实施最小operator兼容，不猜默认、不丢完整settings hash、不放宽未知字段/实际version/subdomain/两轮比较。主Agentreview、适用专项/构建/隐私及提交CI通过后继续新enable和14HTTP reading，不重初始化、不重传原书。真实浏览器仍不可用，HTTP结果与页面渲染分别报告。
+
+配置契约核对及修复：两次独立cap1/实际1HTTP有限诊断分别定位DB唯一额外字段、确认其为官方`database_id`且与旧`id`严格相同，其他未知字段0；不涉及R2 jurisdiction。固定官方OpenAPI的workers_binding_kind_d1明确记录id已弃用并重命名database_id。Sol/high仅修改auth operator的7行映射：保留旧精确三字段形式，新增精确四字段且两个ID均等于固定production D1；返回原binding参与normalized和完整settings hash，未知键/类型错/冲突仍拒绝。新增9项覆盖成功、CAS前拒绝和CAS后别名增删/漂移保留unknown；Sol专项33项通过，主Agent已逐项review并独立复验相关部署/鉴权/读取套件。Worker源及API部署validator未改，不重新上传或部署对象；修复提交CI通过后以新run接续enable及reading。
+
 部署与回退：保留当前静态站，业务默认关闭；复用已初始化generation1/enabled0鉴权，不重复初始化。新schema为增量，旧SQL不改写。发布失败关闭新API/auth并撤销会话，保留许可、对象、预留、收据及unknown；不恢复旧写能力，不删除历史，不以重新上传代替恢复。仅在设计和验收门槛满足后执行已授权的单本试运行，无需重复征求同一许可。
 
 ## 2026-10-23 接续：恢复验收与上传阻塞决策

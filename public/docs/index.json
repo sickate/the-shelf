@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-23T01:57:46.720Z",
-  "version": "e44faed6f281bcf7ff982562675d43c19ffc4604beed13a02fb6bd5d5ea2adb7",
+  "generatedAt": "2026-10-23T02:29:55.041Z",
+  "version": "aeb770644cc8cfc7d3edb0023e42cd0d7727807cbaaeae5053ae82345f1c35d4",
   "basePath": "/",
   "documents": [
     {
@@ -107,7 +107,7 @@
       "title": "The Shelf 开发计划",
       "description": "目标：用户明确回复“允许”后，完成首本<=20MB私人文件的一次上传和在线阅读闭环。该次允许账号用量/旧请求终态未知及实际总量可能超过8GB；不伪造完整证据，不修改计费，不扩大为后续上传许可。此前“待用户决策/未获授权”段落保留为历史，以本节为准。",
       "updatedAt": "2026-10-22",
-      "version": "7f6657c4dde2b4c369728358365318fefe80e23a75585a5bd9ae6f9ddee41200",
+      "version": "8d0ac78a3094a7ac069c97d855e8d6b203c8bb34895bcab45f9908800403d8a6",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",
