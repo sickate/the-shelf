@@ -3,7 +3,9 @@ import {
   bookTitle,
   canSubmitUploadBytes,
   managementCapabilityText,
+  managementIdentifyCapabilityText,
   managementUploadStatus,
+  filenameTitle,
   validateUploadFile,
 } from "../lib/manage-ui.mjs";
 import { canAccessFile } from "../lib/file-availability.mjs";
@@ -189,27 +191,321 @@ export function initManage() {
   const submit = byId<HTMLButtonElement>("upload-submit");
   const preview = byId<HTMLParagraphElement>("file-preview");
   const uploadStatus = byId<HTMLSpanElement>("upload-status");
+  const identifyStatus = byId<HTMLParagraphElement>("identify-status");
+  const metadataPreview = byId<HTMLParagraphElement>("metadata-preview");
   const booksStatus = byId<HTMLParagraphElement>("books-status");
   const booksList = byId<HTMLDivElement>("books-list");
   const trashList = byId<HTMLDivElement>("trash-list");
+  const loginCta = byId<HTMLAnchorElement>("manage-login-cta");
+  const titleInput = byId<HTMLInputElement>("book-title");
+  const authorInput = byId<HTMLInputElement>("book-author");
+  const categoryInput = byId<HTMLInputElement>("book-category");
+  const metadataInputs = [titleInput, authorInput, categoryInput];
   let uploadReady = false;
+  let authenticated = false;
+  let authEpoch = 0;
+  let sessionChecked = false;
+  let identifyConfig: any = null;
   let busy = false;
+  let identifyPending = false;
   let requiresRefresh = false;
+  let selectionGeneration = 0;
+  let currentFileKey = "";
+  let currentFile: File | null = null;
+  let activeIdentifyKey = "";
+  const dirtyFields = new Set<HTMLInputElement>();
+  const identificationRequests = new Map<string, Promise<any>>();
   let uploadFormats = ["PDF", "EPUB", "MOBI", "AZW", "AZW3"];
   let maxUploadBytes = 20_000_000;
+
+  const keyForFile = (file: File) =>
+    `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
+
+  const updateMetadataPreview = () => {
+    if (!currentFile) {
+      metadataPreview.textContent = "";
+      return;
+    }
+    const title = titleInput.value.trim() || filenameTitle(currentFile.name);
+    const extras = [
+      authorInput.value.trim(),
+      categoryInput.value.trim(),
+    ].filter(Boolean);
+    metadataPreview.textContent = [title, ...extras].join(" · ");
+  };
+
+  const updateSubmit = () => {
+    const fileError = validateUploadFile(
+      fileInput.files?.[0],
+      uploadFormats,
+      maxUploadBytes,
+    );
+    submit.textContent = !sessionChecked
+      ? "正在核对登录状态…"
+      : !authenticated
+        ? "先登录后上传"
+        : !uploadReady
+          ? "上传暂不可用"
+          : identifyPending
+            ? "正在识别…"
+            : "登记并上传 →";
+    submit.disabled =
+      !sessionChecked ||
+      !authenticated ||
+      !uploadReady ||
+      busy ||
+      identifyPending ||
+      requiresRefresh ||
+      Boolean(fileError);
+    fileInput.disabled = busy;
+    for (const input of metadataInputs) input.disabled = busy;
+  };
 
   const showFile = () => {
     const file = fileInput.files?.[0];
     if (!file) {
       preview.textContent =
-        "支持 PDF、EPUB、MOBI、AZW、AZW3。文件留在本机，直到服务端明确开放普通上传。";
+        "支持 PDF、EPUB、MOBI、AZW、AZW3。选择文件后仅发送文件名用于识别，不发送文件正文。";
+      updateSubmit();
       return;
     }
+    const fileError = validateUploadFile(file, uploadFormats, maxUploadBytes);
     preview.textContent =
-      validateUploadFile(file, uploadFormats, maxUploadBytes) ||
-      `${file.name} · ${formatBytes(file.size)} · ${uploadReady ? "待上传" : "服务端当前关闭上传，文件仍只在本机"}`;
+      fileError ||
+      `${file.name} · ${formatBytes(file.size)} · ${uploadReady ? "待上传" : "原文件内容留在设备；文件名将用于AI识别"}`;
+    updateSubmit();
   };
-  fileInput.addEventListener("change", showFile);
+
+  const applyFallbackTitle = (file: File) => {
+    if (!dirtyFields.has(titleInput))
+      titleInput.value = filenameTitle(file.name).slice(0, 240);
+    updateMetadataPreview();
+  };
+
+  const applyIdentification = (file: File, result: any) => {
+    const metadata = result?.metadata || {};
+    const title =
+      typeof metadata.title === "string" ? metadata.title.trim() : "";
+    const author =
+      typeof metadata.author === "string" ? metadata.author.trim() : "";
+    const category =
+      typeof metadata.category === "string" ? metadata.category.trim() : "";
+    if (!dirtyFields.has(titleInput))
+      titleInput.value = (title || filenameTitle(file.name)).slice(0, 240);
+    if (!dirtyFields.has(authorInput)) authorInput.value = author.slice(0, 160);
+    if (!dirtyFields.has(categoryInput))
+      categoryInput.value = category.slice(0, 80);
+    identifyStatus.textContent = title
+      ? result.cached
+        ? "已使用缓存的AI识别结果，可在下方修改。"
+        : "AI已根据文件名识别，可在下方修改。"
+      : "AI未提供书名，文件名暂作书名；可在下方修改。";
+    updateMetadataPreview();
+  };
+
+  const identifyFile = async (file: File, requestId: string, epoch: number) => {
+    if (!authenticated || epoch !== authEpoch)
+      throw Object.assign(new Error("登录状态已失效。"), {
+        code: "authentication_required",
+      });
+    const started = await api("/api/manage/identify", {
+      filename: file.name,
+      requestId,
+    });
+    const canonicalId = started.requestId;
+    if (
+      typeof canonicalId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        canonicalId,
+      )
+    )
+      throw new Error("识别请求编号无效，状态待核对。");
+    if (started.status === "completed") return started;
+    const expectedPollUrl = `/api/manage/identify/${canonicalId}`;
+    if (
+      started.status !== "pending" ||
+      started.pollUrl !== expectedPollUrl ||
+      !/^\/api\/manage\/identify\/[0-9a-f-]{36}$/i.test(started.pollUrl)
+    )
+      throw new Error("识别任务地址无效，状态待核对。");
+
+    const timeout = Math.min(
+      60_000,
+      Number.isSafeInteger(identifyConfig?.timeoutMs)
+        ? identifyConfig.timeoutMs
+        : 60_000,
+    );
+    const deadline = Date.now() + timeout;
+    for (let count = 0; count < 35 && Date.now() < deadline; count++) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(2000, Math.max(0, deadline - Date.now()))),
+      );
+      if (Date.now() >= deadline) break;
+      if (!authenticated || epoch !== authEpoch)
+        throw Object.assign(new Error("登录状态已失效。"), {
+          code: "authentication_required",
+        });
+      const status = await api(expectedPollUrl);
+      if (status.requestId !== canonicalId)
+        throw new Error("识别请求编号不匹配，状态待核对。");
+      if (status.status === "completed") return status;
+      if (status.status !== "pending")
+        throw new Error("识别任务返回了无法确认的状态。");
+    }
+    const timeoutError = new Error(
+      "识别仍在处理中，状态待核对；页面不会重新提交。文件名暂作书名。",
+    );
+    Object.assign(timeoutError, { code: "identify_pending" });
+    throw timeoutError;
+  };
+
+  const maybeIdentifyCurrentFile = () => {
+    const file = currentFile;
+    const key = currentFileKey;
+    const generation = selectionGeneration;
+    if (!file || !key || busy) return;
+    if (!sessionChecked) {
+      identifyPending = false;
+      identifyStatus.textContent =
+        "正在核对登录状态；文件名暂作书名，不会发送文件名或原文件内容。";
+      return;
+    }
+    if (!authenticated) {
+      identifyPending = false;
+      identifyStatus.textContent =
+        "文件名暂作书名；先登录所有者账号，再识别文件名。原文件内容不会发送。";
+      return;
+    }
+    if (!identifyConfig) {
+      identifyPending = false;
+      identifyStatus.textContent = "正在核对文件名识别能力…";
+      return;
+    }
+    if (identifyConfig.enabled !== true) {
+      identifyPending = false;
+      identifyStatus.textContent = `${managementIdentifyCapabilityText(identifyConfig)} 文件名暂作书名，可在下方修改。`;
+      return;
+    }
+    const fileError = validateUploadFile(file, uploadFormats, maxUploadBytes);
+    if (fileError) {
+      identifyPending = false;
+      identifyStatus.textContent = `${fileError} 文件名未发送。`;
+      return;
+    }
+    const maxCharacters = Number.isSafeInteger(
+      identifyConfig.maxFilenameCharacters,
+    )
+      ? identifyConfig.maxFilenameCharacters
+      : 255;
+    if (Array.from(file.name).length > maxCharacters) {
+      identifyPending = false;
+      identifyStatus.textContent = `文件名超过 ${maxCharacters} 个字符，无法识别；可修改书籍信息后继续。`;
+      applyFallbackTitle(file);
+      return;
+    }
+
+    if (activeIdentifyKey && activeIdentifyKey !== key) {
+      identifyPending = true;
+      identifyStatus.textContent =
+        "等待前一本识别结束…只保留当前文件，不会排队重发旧文件名。";
+      updateSubmit();
+      return;
+    }
+
+    let request = identificationRequests.get(key);
+    if (!request) {
+      const requestId = crypto.randomUUID();
+      identifyPending = true;
+      activeIdentifyKey = key;
+      updateSubmit();
+      request = identifyFile(file, requestId, authEpoch);
+      identificationRequests.set(key, request);
+    } else {
+      identifyPending = true;
+      updateSubmit();
+    }
+    identifyStatus.textContent =
+      "正在根据文件名识别书名、作者和分类…只发送文件名，不发送文件正文。";
+    request
+      .then(
+        (result) => {
+          if (
+            generation !== selectionGeneration ||
+            key !== currentFileKey ||
+            !currentFile ||
+            busy
+          )
+            return;
+          identifyPending = false;
+          applyIdentification(file, result);
+          updateSubmit();
+        },
+        (error) => {
+          const code = (error as any)?.code;
+          if (code === "unauthorized" || code === "authentication_required") {
+            authenticated = false;
+            authEpoch++;
+            loginCta.hidden = false;
+            capability.textContent = "登录状态已失效。请重新登录后再操作。";
+            updateSubmit();
+          }
+          if (
+            generation !== selectionGeneration ||
+            key !== currentFileKey ||
+            !currentFile ||
+            busy
+          )
+            return;
+          identifyPending = false;
+          applyFallbackTitle(file);
+          if (code === "unauthorized" || code === "authentication_required") {
+            identifyStatus.textContent =
+              "登录状态已失效，请先登录；原文件内容未发送。";
+            updateSubmit();
+            return;
+          }
+          identifyStatus.textContent =
+            code === "identify_reconciliation_required" ||
+            code === "identify_pending"
+              ? `${errorText(error)} 文件名暂作书名，可编辑后继续。`
+              : `AI识别未完成：${errorText(error)} 文件名暂作书名，可编辑后继续。`;
+          updateSubmit();
+        },
+      )
+      .finally(() => {
+        if (activeIdentifyKey === key) {
+          activeIdentifyKey = "";
+          if (currentFile && currentFileKey !== key) maybeIdentifyCurrentFile();
+        }
+      });
+  };
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0] || null;
+    if (busy) return;
+    const key = file ? keyForFile(file) : "";
+    if (key && key === currentFileKey) return;
+    selectionGeneration++;
+    identifyPending = false;
+    currentFile = file;
+    currentFileKey = key;
+    dirtyFields.clear();
+    for (const input of metadataInputs) input.value = "";
+    if (file) applyFallbackTitle(file);
+    updateMetadataPreview();
+    uploadStatus.textContent = "";
+    showFile();
+    if (!file) {
+      identifyStatus.textContent = "选择文件后识别书名、作者和分类。";
+      return;
+    }
+    maybeIdentifyCurrentFile();
+  });
+  for (const input of metadataInputs)
+    input.addEventListener("input", () => {
+      dirtyFields.add(input);
+      updateMetadataPreview();
+    });
 
   const loadBooks = async () => {
     const result = await api("/api/manage");
@@ -238,9 +534,15 @@ export function initManage() {
       );
     capability.textContent = managementCapabilityText(upload);
     capability.classList.toggle("notice-blocked", !uploadReady);
+    identifyConfig = result.identify || {
+      enabled: false,
+      code: "identify_unavailable",
+    };
+    identifyStatus.textContent =
+      managementIdentifyCapabilityText(identifyConfig);
     requiresRefresh = false;
-    submit.disabled = !uploadReady || busy || requiresRefresh;
     showFile();
+    maybeIdentifyCurrentFile();
   };
 
   byId<HTMLButtonElement>("manage-reload").addEventListener(
@@ -255,9 +557,18 @@ export function initManage() {
       } catch (error) {
         booksStatus.textContent = `${errorText(error)} 书库状态仍未确认。`;
         requiresRefresh = true;
+        if (
+          (error as any)?.code === "unauthorized" ||
+          (error as any)?.code === "authentication_required"
+        ) {
+          authEpoch++;
+          authenticated = false;
+          loginCta.hidden = false;
+          capability.textContent = "登录状态已失效。请重新登录后再操作。";
+        }
       } finally {
         button.disabled = false;
-        submit.disabled = !uploadReady || busy || requiresRefresh;
+        updateSubmit();
       }
     },
   );
@@ -265,24 +576,49 @@ export function initManage() {
   void (async () => {
     try {
       const current = await api("/api/session");
+      sessionChecked = true;
       if (current.authenticated !== true) {
+        authEpoch++;
+        authenticated = false;
         booksStatus.textContent =
           "私人书库需要所有者登录。请先登录后再打开管理页。";
-        capability.textContent = "尚未登录。上传、列表与回收站均保持关闭。";
+        capability.textContent = "先登录所有者账号后才能识别文件名或上传。";
+        loginCta.hidden = false;
+        updateSubmit();
+        maybeIdentifyCurrentFile();
         return;
       }
+      authenticated = true;
+      loginCta.hidden = true;
+      updateSubmit();
       await loadBooks();
     } catch (error) {
+      sessionChecked = true;
+      authenticated = false;
       booksStatus.textContent = `${errorText(error)} 私人书库未加载，管理操作保持关闭。`;
       capability.textContent =
         "暂时无法确认后端能力；文件不会发送。请从账户页检查登录与连接。";
+      loginCta.hidden = false;
+      updateSubmit();
+      maybeIdentifyCurrentFile();
     }
   })();
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (identifyPending) {
+      uploadStatus.textContent =
+        "正在识别文件名，请稍候；识别完成前不会登记上传。";
+      return;
+    }
+    if (!authenticated) {
+      uploadStatus.textContent = "请先登录所有者账号。文件未发送。";
+      loginCta.hidden = false;
+      return;
+    }
     if (!uploadReady || busy) {
-      uploadStatus.textContent = "服务端尚未确认上传条件，文件未发送。";
+      uploadStatus.textContent =
+        "上传暂不可用；文件未发送。请查看上方具体原因。";
       return;
     }
     if (requiresRefresh) {
@@ -296,20 +632,19 @@ export function initManage() {
       uploadStatus.textContent = fileError;
       return;
     }
-    const title = byId<HTMLInputElement>("book-title").value.trim();
-    if (!title) {
-      uploadStatus.textContent = "请填写书名。";
-      return;
-    }
+    const title = (titleInput.value.trim() || filenameTitle(file!.name)).slice(
+      0,
+      240,
+    );
     busy = true;
-    submit.disabled = true;
+    updateSubmit();
     uploadStatus.textContent = "正在本机计算文件校验值；尚未发送文件内容…";
     try {
       const sha256 = await hashFile(file!);
       const descriptor = await api("/api/manage/uploads", {
         title,
-        author: byId<HTMLInputElement>("book-author").value.trim() || null,
-        category: byId<HTMLInputElement>("book-category").value.trim(),
+        author: authorInput.value.trim() || null,
+        category: categoryInput.value.trim(),
         file: {
           name: file!.name,
           format: file!.name.split(".").at(-1)?.toUpperCase(),
@@ -322,6 +657,13 @@ export function initManage() {
         uploadStatus.textContent =
           "这份文件已有确认记录，未再次发送内容。书库已刷新。";
         form.reset();
+        selectionGeneration++;
+        currentFile = null;
+        currentFileKey = "";
+        dirtyFields.clear();
+        identifyStatus.textContent = "选择文件后识别书名、作者和分类。";
+        identifyPending = false;
+        updateMetadataPreview();
         try {
           await loadBooks();
         } catch (error) {
@@ -343,6 +685,12 @@ export function initManage() {
         if (result.upload?.state === "confirmed") {
           uploadStatus.textContent = "文件已确认入库。";
           form.reset();
+          selectionGeneration++;
+          currentFile = null;
+          currentFileKey = "";
+          dirtyFields.clear();
+          identifyStatus.textContent = "选择文件后识别书名、作者和分类。";
+          updateMetadataPreview();
           requiresRefresh = false;
           try {
             await loadBooks();
@@ -355,6 +703,15 @@ export function initManage() {
         }
       }
     } catch (error) {
+      if (
+        (error as any)?.code === "unauthorized" ||
+        (error as any)?.code === "authentication_required"
+      ) {
+        authEpoch++;
+        authenticated = false;
+        loginCta.hidden = false;
+        capability.textContent = "登录状态已失效。请重新登录后再操作。";
+      }
       uploadStatus.textContent = `${errorText(error)} 如请求状态不确定，请先刷新书库核对，页面不会自动重试。`;
       if (
         uploadStatus.textContent.includes("不确定") ||
@@ -364,8 +721,9 @@ export function initManage() {
         requiresRefresh = true;
     } finally {
       busy = false;
-      submit.disabled = !uploadReady || requiresRefresh;
+      updateSubmit();
       showFile();
+      maybeIdentifyCurrentFile();
     }
   });
 }

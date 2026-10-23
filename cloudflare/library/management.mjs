@@ -9,6 +9,7 @@ import {
   objectHeadMatches,
 } from "./core.mjs";
 import { trialSha256 } from "./single-trial.mjs";
+import { identifyCapability, identifyRoute } from "./identify.mjs";
 const FORMATS = ["PDF", "EPUB", "MOBI", "AZW", "AZW3"];
 const fail = (code, status = 400) => {
   throw new LibraryError(code, status);
@@ -624,6 +625,11 @@ async function lifecycle(request, env, context, session, bookId, trashed, d) {
 }
 export async function managementRoute(request, env, context, session, d) {
   const path = new URL(request.url).pathname;
+  if (
+    path === "/api/manage/identify" ||
+    path.startsWith("/api/manage/identify/")
+  )
+    return identifyRoute(request, env, context, session, d);
   if (path === "/api/manage" && request.method === "GET") {
     const result = await d.query(() =>
       env.DB.batch([
@@ -674,8 +680,9 @@ export async function managementRoute(request, env, context, session, d) {
       }
     }
     const upload = await uploadCapability(env, context, d);
+    const identify = await identifyCapability(env, d);
     await assertCurrent(env, context, session, d);
-    return d.response(200, { books, upload });
+    return d.response(200, { books, upload, identify });
   }
   if (path === "/api/manage/uploads" && request.method === "POST")
     return intent(request, env, context, session, d);

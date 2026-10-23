@@ -1,5 +1,26 @@
 # The Shelf 开发计划
 
+## 2026-10-23 上传可用性与文件名 AI 识别
+
+目标：修正管理页必须手填元数据的流程。用户选择文件后，仅把文件名发送给所有者鉴权的AI识别服务，自动填充书名、作者、分类；结果可修改，不外送文件正文。明确区分“识别资料”和“上传原件”的能力、进度和失败。当前生产普通上传仍关闭（trial隔离目标、authority imported和过期/未知用量），本需求不豁免8GB/20MB和旧未知证据门槛；不能只解除disabled或重置首本一次许可。
+
+方案与范围：复核现有AI任务服务的最新guide、真实Key及部署契约，优先复用现有命名任务和持久调用预算/去重；AI边界、模型输出严格白名单/长度校验、会话/Origin/CSRF、超时无自动重试和私有元数据均由Sol实现。上线前须有真实合成文件名调用验收，不能用本地文件名规则冒充AI。文件选择优先展示，识别结果默认填入可选编辑区，不要求用户手填；空缺与AI不可用给出明确状态/可编辑回退；换文件迟到响应不能覆盖新文件或用户修改。上传关闭时显示具体原因与不可用按钮文案，允许独立识别但不发送字节。复核普通上传实际缺项，只在既有证据门槛真实满足时迁移，不扩读其他业务数据、不新增上传例外、不改计费。
+
+分工与依赖：主Agent负责计划、接口评审、集成、独立验收与发布。A1由既有manage_api（gpt-6.1-sol/high）先只读设计上传缺项及AI后端/密钥/持久预算/部署最小方案；收到主Agent契约确认后实施安全后端与合成测试，不自行云调用、迁移或部署。A2由既有manage_ui（gpt-6-luna/medium）在契约确认后负责文件优先、自动识别、可选修改、并发与不可用状态及浏览器fixture；不修改API鉴权/预算。主Agent不以子Agent自报替代验收，指定模型不可用时明确暂停该分工。
+
+实施契约补充：新增严格POST /api/manage/identify {filename,requestId(UUID)}，仅basename/支持格式/255字符及1024UTF8字节；同步60秒，不重试POST。D1对contract+文件名hash永久去重及私有结果缓存，单一全项目持久在途claim、UTC每日20次，未知也占用次数及claim，崩溃/超时不自动租约释放。重复pending只返回202固定同源GET pollUrl，已完成200 metadata三字段（可null），未知409并阻止新调用；外部await后复核会话。服务固定gpt-luna/low/json_object及固定HTTPS任务入口，禁止redirect/正文外送/模型改端点。UI按选择代次忽略迟到响应并保护手改字段；无法识别的标题可明确以文件名暂代，用户不必填写。A3新增gpt-6.1-sol/high identify_deploy，负责受控显式--filename-ai部署模式、FILENAME_AI_MODE=filename-v1及FILENAME_AI_KEY secret安装/严格回读/静态回退与隐私扫描；依赖A1环境契约，和A1/A2独立文件范围实施。secret安装默认零IO预览，固定项目Worker和持久意图，unknown不重发，不因GET名称存在声称值验证。
+
+验收：无登录/错误Origin与CSRF不能调用AI；仅文件名进提示，不含文件内容/path/key；未知模型输出拒绝、不插HTML；重复/并发及超时不会重复调用，调用上限和恢复持久。换文件/手动修改/识别失败/关闭上传/正常单次上传/未知不重传均通过合成浏览器。主Agent独立review、适用专项和完整Node/Python、disabled及same-origin构建、verify:public/static与实际凭证扫描。真实AI只使用合成文件名，固定有界请求清单在执行前追加；无有效凭证或服务契约不能上线时记录确切阻塞并完成独立前端改进。
+
+发布与回退：本地验收通过后commit→push→两CI→受控same-origin trial部署→HTTP及真实浏览器验证；不得将disabled产物覆盖生产API。新增secret/schema须独立精确目标/请求预算/回读设计，不扩大现有部署validator或把线上AI未经验证记为已接通。失败保留旧Worker、旧账本、未知与全部对象/首本许可；回退使用保留回收站访问复核的既有575abdb特性或显式静态回退及会话撤销，不退回缺失生命周期检查的代码。
+
+
+本轮生产执行清单：主Agent已独立通过识别核心15项、008工具7项、部署/secret及私有恢复54项、真实合成runner8项、UI7项专项；适用全套/构建/浏览器最终结果另记。008固定SHA为`a2d6f76e54365eff03361902f1484373e80c6c8350d50fb71dd0f4c8cee0fe15`，原base/007不变。所有本地门槛及该提交两CI通过后，依次固定production 008 status（<=10HTTP/0DDL）→apply（<=24HTTP/6DDL）→独立status（<=10HTTP/0DDL），核对原schema/authority/trial/auth/registry/007行前后指纹；未知DDL不重放。secret安装器先零IO preview/纯本地prepare，然后唯一install（4HTTP/1secret PUT；D1身份、旧settings、新secret、严格过渡态settings），unknown仅允许单独review的recover（2GET/0PUT），不把名称存在当值验证。受控部署为`--profile production --single-trial --filename-ai`，postflight只接受固定原DB、隔离BOOKS、原三secret加一AIsecret及精确mode；部署结果未知不重复deploy，必要时钉本次私有log SHA/UUID后用已review的2GET恢复helper独立确认。保留原production会话generation，不安装旧R2写key、不新增PUT许可。
+
+上线验收仅固定3项公开资源GET并对比same-origin本地字节、最多11业务HTTP的合成filename runner（匿名/登录/能力/CSRF/Origin拒绝、单次真实识别、同名缓存与GET结果、日预算仅减1、登出与撤销），最多1个上游AI任务，无重试、无书籍正文/真实书目变动/上传字节。随后复用既有14HTTP/硬上限15的固定PDF只读验收；不为证明按钮而上传新书。浏览器分别观察生产匿名登录入口及本机17个合成DOM场景，生产AI实际结果以HTTP收据为证，不将mock称生产浏览器闭环。任何失败停止受影响动作并保留unknown/receipt；必要静态回退命令增加显式`--single-trial --filename-ai`，保留4secret、008和全部存储/识别责任，另按原会话撤销方案关闭阅读入口。最终结果仅写非公开运维交接，不自动发布新运维文档。
+
+本轮本地最终验收：主Agent独立完整931项Node及8项Python通过，零失败/取消/跳过；Chrome Tuo真实浏览器17个合成管理页场景全部PASS，另独立展开编辑区确认手改书名被保留。部署/secret最终23项通过。首次完整回归的既有fsync密集测试在默认文件并发下超时，保留失败记录；仅将Node测试文件并发限制为4，未改超时、断言或生产行为，随后全套通过。最终same-origin构建、公开/静态/真实凭证扫描及本提交CI仍在发布门槛中，生产AI尚未执行。
+
 ## 2026-10-23 新需求：网页上传、删除与多格式阅读
 
 目标：所有者可在网页逐文件选择、校验、上传书籍并取得可阅读条目；可将书移入回收站并恢复；PDF、EPUB、无DRM的MOBI/AZW/AZW3可在浏览器阅读。接续未提交的详情文件动态按钮，保留现有首本PDF阅读。当前线上只有固定首本试运行，通用上传和上述管理尚未上线；不得将本计划或前端按钮写成云功能已验收。

@@ -14,6 +14,22 @@ const messages: Record<string, string> = {
   text_unavailable: "此书尚未准备可用正文，暂时无法回答书内问题。",
   author_unknown: "目录未标注作者，无法整理作者资料。",
   call_budget_exceeded: "本次或今日调用额度已用完。",
+  identify_reconciliation_required:
+    "识别状态待核对；为避免重复调用，页面不会自动重新提交。",
+  identify_failed: "文件名识别失败，可编辑信息后继续。",
+  identify_unavailable: "文件名识别服务暂不可用。",
+  identify_unconfigured: "AI识别服务尚未配置。",
+  identify_daily_budget: "今日文件名识别额度已用完。",
+  identify_busy: "文件名识别服务正忙，请稍后检查状态。",
+  identify_schema_unavailable: "文件名识别配置暂不可用。",
+  invalid_identify: "文件名识别请求无效，请重新选择文件。",
+  identify_request_conflict:
+    "文件名识别请求与已有任务冲突；状态待核对，不会自动重发。",
+  identify_claim_unverified:
+    "识别任务状态暂时无法核实；不会自动重新提交，请稍后核对。",
+  identify_upstream_failed: "文件名识别服务暂时失败，可编辑书籍信息后继续。",
+  identify_invalid_output: "识别结果未通过格式检查，可编辑书籍信息后继续。",
+  invalid_identify_request: "文件名识别请求无效，请重新选择文件。",
 };
 Object.assign(messages, {
   csrf_invalid: "会话校验已失效，请重新登录。",

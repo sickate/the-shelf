@@ -53,8 +53,30 @@ export function managementCapabilityText(upload) {
   if (upload?.enabled === true && upload.code === "ready")
     return "上传能力已就绪。文件将逐本登记并写入私人书库。";
   if (reasons.length)
-    return `目前不能上传：${reasons.map((reason) => labels[reason] || "上传条件尚未满足").join("；")}。文件不会离开此设备。`;
-  return "目前不能上传：服务端尚未确认普通上传条件。文件不会离开此设备。";
+    return `上传暂不可用：${reasons.map((reason) => labels[reason] || "上传条件尚未满足").join("；")}。原文件内容不会发送。`;
+  return "上传暂不可用：服务端尚未确认普通上传条件。原文件内容不会发送。";
+}
+
+export function managementIdentifyCapabilityText(identify) {
+  const messages = {
+    identify_unconfigured: "AI识别服务尚未配置。",
+    ai_unconfigured: "AI识别服务尚未配置。",
+    identify_daily_budget: "今日文件名识别额度已用完。",
+    call_budget_exceeded: "今日文件名识别额度已用完。",
+    identify_busy: "文件名识别服务正忙，请稍后再试。",
+    identify_reconciliation_required:
+      "已有识别任务状态待核对；页面不会自动重新提交。",
+    identify_schema_unavailable: "文件名识别配置暂不可用。",
+    identify_unavailable: "文件名识别服务暂不可用。",
+  };
+  if (identify?.enabled === true) return "文件名识别已就绪。";
+  return `文件名识别暂不可用：${messages[identify?.code] || "服务端尚未开放识别。"}`;
+}
+
+export function filenameTitle(filename = "") {
+  const name = String(filename).split(/[\\/]/).pop() || "";
+  const title = name.replace(/\.[^.]+$/, "").trim();
+  return title || "未命名书籍";
 }
 
 export function bookTitle(book) {

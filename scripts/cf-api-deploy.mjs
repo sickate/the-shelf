@@ -50,6 +50,12 @@ export const SINGLE_TRIAL_SECRET_NAMES = [
   "SESSION_SECRET",
   "SINGLE_TRIAL_UPLOAD_SECRET",
 ];
+export const FILENAME_AI_SECRET_NAME = "FILENAME_AI_KEY";
+export const FILENAME_AI_MODE = "filename-v1";
+export const FILENAME_AI_SECRET_NAMES = [
+  ...SINGLE_TRIAL_SECRET_NAMES,
+  FILENAME_AI_SECRET_NAME,
+];
 const own = (v, keys) =>
   v &&
   typeof v === "object" &&
@@ -208,7 +214,7 @@ export async function readRemoteSettings(credentials, name, fetcher = fetch) {
     fail("remote");
   return data.result;
 }
-export function safeStaticBindings(settings) {
+export function safeStaticBindings(settings, { filenameAi = false } = {}) {
   const bindings = settings?.bindings;
   if (
     !Array.isArray(bindings) ||
@@ -220,8 +226,11 @@ export function safeStaticBindings(settings) {
       (b) =>
         !(b.name === "ASSETS" && b.type === "assets") &&
         !(
-          [...SECRET_NAMES, ...SINGLE_TRIAL_SECRET_NAMES].includes(b.name) &&
-          b.type === "secret_text"
+          [
+            ...SECRET_NAMES,
+            ...SINGLE_TRIAL_SECRET_NAMES,
+            ...(filenameAi ? [FILENAME_AI_SECRET_NAME] : []),
+          ].includes(b.name) && b.type === "secret_text"
         ),
     )
   )
@@ -229,10 +238,16 @@ export function safeStaticBindings(settings) {
   const secrets = bindings.filter((b) => b.type === "secret_text");
   const names = secrets.map((b) => b.name);
   return (
-    names.length === 0 ||
-    [SECRET_NAMES, SINGLE_TRIAL_SECRET_NAMES].some(
+    (!filenameAi && names.length === 0) ||
+    (filenameAi
+      ? [FILENAME_AI_SECRET_NAMES]
+      : [SECRET_NAMES, SINGLE_TRIAL_SECRET_NAMES]
+    ).some(
       (set) =>
-        names.length === set.length && set.every((n) => names.includes(n)),
+        names.length === set.length &&
+        set.every((n) => names.includes(n)) &&
+        (!filenameAi ||
+          bindings.some((b) => b.name === "ASSETS" && b.type === "assets")),
     )
   );
 }
@@ -248,6 +263,8 @@ export function validateRemoteBindings(
     allowStatic = false,
     accountId,
     singleTrialTarget,
+    filenameAi = false,
+    allowFilenameAiTransition = false,
   } = {},
 ) {
   if (
@@ -258,9 +275,16 @@ export function validateRemoteBindings(
       !/^[a-f0-9]{64}$/.test(singleTrialTarget.configSha256 || ""))
   )
     fail("config");
-  const secretNames = singleTrialTarget
-    ? SINGLE_TRIAL_SECRET_NAMES
-    : SECRET_NAMES;
+  if (
+    filenameAi !== false &&
+    (filenameAi !== true || !singleTrialTarget || profile !== "production")
+  )
+    fail("config");
+  const secretNames = filenameAi
+    ? FILENAME_AI_SECRET_NAMES
+    : singleTrialTarget
+      ? SINGLE_TRIAL_SECRET_NAMES
+      : SECRET_NAMES;
   const bucket = singleTrialTarget ? SINGLE_TRIAL_BUCKET : "the-shelf-books";
   if (!settings) {
     if (requireSecrets) fail("secrets");
@@ -277,6 +301,7 @@ export function validateRemoteBindings(
     SITE_ORIGIN: PROFILES[profile].origin,
     R2_ACCOUNT_ID: accountId,
     R2_BUCKET: bucket,
+    ...(filenameAi ? { FILENAME_AI_MODE } : {}),
     ...(singleTrialTarget
       ? {
           SINGLE_TRIAL_MODE,
@@ -290,6 +315,12 @@ export function validateRemoteBindings(
   if (
     allowStatic &&
     !dynamic.length &&
+    (!filenameAi ||
+      (bindings.length === FILENAME_AI_SECRET_NAMES.length + 1 &&
+        FILENAME_AI_SECRET_NAMES.every((name) =>
+          bindings.some((b) => b.name === name && b.type === "secret_text"),
+        ) &&
+        bindings.some((b) => b.name === "ASSETS" && b.type === "assets"))) &&
     bindings.every(
       (b) =>
         (b.name === "ASSETS" &&
@@ -333,7 +364,14 @@ export function validateRemoteBindings(
     fail("secrets");
   if (requireSecrets) {
     const expected = expectedVars;
-    for (const [name, value] of Object.entries(expected))
+    for (const [name, value] of Object.entries(expected)) {
+      if (
+        allowFilenameAiTransition &&
+        filenameAi &&
+        name === "FILENAME_AI_MODE" &&
+        !bindings.some((b) => b.name === name)
+      )
+        continue;
       if (
         !value ||
         !bindings.some(
@@ -341,6 +379,7 @@ export function validateRemoteBindings(
         )
       )
         fail("bindings");
+    }
     if (
       profile === "production" &&
       !bindings.some((b) => b.type === "assets" && b.name === "ASSETS")
@@ -353,7 +392,7 @@ export function workerConfig(
   resource,
   accountId,
   root,
-  { singleTrialTarget } = {},
+  { singleTrialTarget, filenameAi = false } = {},
 ) {
   const p = PROFILES[profile];
   if (!p) fail("target");
@@ -363,6 +402,11 @@ export function workerConfig(
       singleTrialTarget.accountId !== accountId ||
       singleTrialTarget.bucket !== SINGLE_TRIAL_BUCKET ||
       !/^[a-f0-9]{64}$/.test(singleTrialTarget.configSha256 || ""))
+  )
+    fail("config");
+  if (
+    filenameAi !== false &&
+    (filenameAi !== true || !singleTrialTarget || profile !== "production")
   )
     fail("config");
   const bucket = singleTrialTarget ? SINGLE_TRIAL_BUCKET : "the-shelf-books";
@@ -378,6 +422,7 @@ export function workerConfig(
       SITE_ORIGIN: p.origin,
       R2_ACCOUNT_ID: accountId,
       R2_BUCKET: bucket,
+      ...(filenameAi ? { FILENAME_AI_MODE } : {}),
       ...(singleTrialTarget
         ? {
             SINGLE_TRIAL_MODE,
@@ -412,11 +457,19 @@ export async function deployApi({
   inspector = readRemoteSettings,
   identityChecker = verifyDatabaseIdentity,
   singleTrial = false,
+  filenameAi = false,
 } = {}) {
   let directory, credentials;
   let phase = "files";
   try {
-    if (!PROFILES[profile]) fail("target");
+    if (
+      !PROFILES[profile] ||
+      (filenameAi !== false &&
+        (filenameAi !== true ||
+          profile !== "production" ||
+          singleTrial !== true))
+    )
+      fail("target");
     root = await fs.realpath(root);
     const loaded = await readProjectEnvironment(root, environment);
     credentials = loaded.credentials;
@@ -454,10 +507,12 @@ export async function deployApi({
     phase = "bindings";
     const before = await inspector(credentials, PROFILES[profile].name);
     validateRemoteBindings(before, profile, resource.databaseId, {
-      requireSecrets: false,
+      requireSecrets: filenameAi,
       allowStatic: true,
       accountId: credentials.accountId,
       singleTrialTarget,
+      filenameAi,
+      allowFilenameAiTransition: filenameAi,
     });
     // Fresh Worker secret placeholders may be installed before its first code upload.
     const names =
@@ -465,9 +520,12 @@ export async function deployApi({
         ?.filter((b) => b.type === "secret_text")
         .map((b) => b.name) || [];
     if (
-      (singleTrialTarget ? SINGLE_TRIAL_SECRET_NAMES : SECRET_NAMES).some(
-        (name) => !names.includes(name),
-      )
+      (filenameAi
+        ? FILENAME_AI_SECRET_NAMES
+        : singleTrialTarget
+          ? SINGLE_TRIAL_SECRET_NAMES
+          : SECRET_NAMES
+      ).some((name) => !names.includes(name))
     )
       fail("secrets");
     if (profile === "production") {
@@ -499,6 +557,7 @@ export async function deployApi({
       JSON.stringify(
         workerConfig(profile, resource, credentials.accountId, root, {
           singleTrialTarget,
+          filenameAi,
         }),
         null,
         2,
@@ -557,7 +616,7 @@ export async function deployApi({
       await inspector(credentials, PROFILES[profile].name),
       profile,
       resource.databaseId,
-      { accountId: credentials.accountId, singleTrialTarget },
+      { accountId: credentials.accountId, singleTrialTarget, filenameAi },
     );
     const receipt = {
       schemaVersion: 1,
@@ -568,6 +627,7 @@ export async function deployApi({
       ...(singleTrialTarget
         ? { singleTrialTargetSha256: singleTrialTarget.configSha256 }
         : {}),
+      ...(filenameAi ? { filenameAiMode: FILENAME_AI_MODE } : {}),
       at: new Date().toISOString(),
     };
     await privateFile(
@@ -595,14 +655,17 @@ export async function deployApi({
 export async function main(argv = process.argv.slice(2)) {
   try {
     if (
-      ![2, 3].includes(argv.length) ||
+      ![2, 3, 4].includes(argv.length) ||
       argv[0] !== "--profile" ||
-      (argv.length === 3 && argv[2] !== "--single-trial")
+      (argv.length >= 3 && argv[2] !== "--single-trial") ||
+      (argv.length === 4 &&
+        (argv[1] !== "production" || argv[3] !== "--filename-ai"))
     )
       fail("target");
     const r = await deployApi({
       profile: argv[1],
-      singleTrial: argv.length === 3,
+      singleTrial: argv.length >= 3,
+      filenameAi: argv.length === 4,
     });
     console.log(
       `Cloudflare API deployment succeeded: ${r.url}\nPrivate deployment log: ${r.logPath}`,

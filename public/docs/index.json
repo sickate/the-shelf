@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-23T04:35:23.682Z",
-  "version": "26b37ac4aaec01a1af383b8e3376c3d9b076a07b956a0a9e9a3d7ab68e238f08",
+  "generatedAt": "2026-10-23T06:27:39.213Z",
+  "version": "1a4cba83aae7940f5b33649e7fdb5878fd435523d9b91a870023491759b1bd44",
   "basePath": "/",
   "documents": [
     {
@@ -105,9 +105,9 @@
     {
       "id": "development-plan",
       "title": "The Shelf 开发计划",
-      "description": "目标：所有者可在网页逐文件选择、校验、上传书籍并取得可阅读条目；可将书移入回收站并恢复；PDF、EPUB、无DRM的MOBI/AZW/AZW3可在浏览器阅读。接续未提交的详情文件动态按钮，保留现有首本PDF阅读。当前线上只有固定首本试运行，通用上传和上述管理尚未上线；不得将本计划或前端按钮写成云功能已验收。",
+      "description": "目标：修正管理页必须手填元数据的流程。用户选择文件后，仅把文件名发送给所有者鉴权的AI识别服务，自动填充书名、作者、分类；结果可修改，不外送文件正文。明确区分“识别资料”和“上传原件”的能力、进度和失败。当前生产普通上传仍关闭（trial隔离目标、authority imported和过期/未知用量），本需求不豁免8GB/20MB和旧未知证据门槛；不能只解除disabled或重置首本一次许可。",
       "updatedAt": "2026-10-22",
-      "version": "7d3ec3c9bd5db4c5d4c6a36541a9ef7421fdfb8b93de84dbe4e767b8448766ad",
+      "version": "978bf631be8bce59853d8c1ff31059c062007d671890977eda5d1056a5c494b5",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",

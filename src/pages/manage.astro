@@ -26,40 +26,15 @@ import { path } from "../lib/data";
         </div>
         <span class="manage-limit">单文件最多 20 MB</span>
       </div>
-      <p id="manage-capability" class="notice" role="status">
-        正在核对私人书库与上传条件…
-      </p>
+      <div class="manage-access-status">
+        <p id="manage-capability" class="notice" role="status">
+          正在核对私人书库与上传条件…
+        </p>
+        <a id="manage-login-cta" class="button" href={path("account/")} hidden>
+          先登录所有者账号 ↗
+        </a>
+      </div>
       <form id="upload-form" class="manage-form">
-        <div class="manage-fields">
-          <label>
-            书名 <span aria-hidden="true">*</span>
-            <input
-              id="book-title"
-              name="title"
-              maxlength="240"
-              required
-              placeholder="例如：海边的卡夫卡"
-            />
-          </label>
-          <label>
-            作者
-            <input
-              id="book-author"
-              name="author"
-              maxlength="160"
-              placeholder="可留空"
-            />
-          </label>
-          <label>
-            分类
-            <input
-              id="book-category"
-              name="category"
-              maxlength="80"
-              placeholder="例如：小说"
-            />
-          </label>
-        </div>
         <label class="manage-file">
           选择书籍文件
           <input
@@ -67,13 +42,57 @@ import { path } from "../lib/data";
             name="file"
             type="file"
             accept=".pdf,.epub,.mobi,.azw,.azw3,application/pdf,application/epub+zip"
-            required
           />
         </label>
         <p id="file-preview" class="muted">
           支持
-          PDF、EPUB、MOBI、AZW、AZW3。文件留在本机，直到服务端明确开放普通上传。
+          PDF、EPUB、MOBI、AZW、AZW3。选择文件后将只发送文件名用于识别，不会发送文件正文。
         </p>
+        <p
+          id="identify-status"
+          class="status-text"
+          role="status"
+          aria-live="polite"
+        >
+          选择文件后识别书名、作者和分类。
+        </p>
+        <p
+          id="metadata-preview"
+          class="manage-metadata-preview"
+          aria-live="polite"
+        ></p>
+        <details id="metadata-editor" class="manage-metadata-editor">
+          <summary>查看或修改书籍信息</summary>
+          <div class="manage-fields">
+            <label>
+              书名
+              <input
+                id="book-title"
+                name="title"
+                maxlength="240"
+                placeholder="将根据文件名识别"
+              />
+            </label>
+            <label>
+              作者
+              <input
+                id="book-author"
+                name="author"
+                maxlength="160"
+                placeholder="识别后可修改，也可留空"
+              />
+            </label>
+            <label>
+              分类
+              <input
+                id="book-category"
+                name="category"
+                maxlength="80"
+                placeholder="识别后可修改，也可留空"
+              />
+            </label>
+          </div>
+        </details>
         <div class="manage-actions">
           <button id="upload-submit" class="primary" type="submit" disabled>
             登记并上传 →

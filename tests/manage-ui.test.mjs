@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   bookTitle,
   canSubmitUploadBytes,
+  filenameTitle,
   formatForFilename,
   managementCapabilityText,
+  managementIdentifyCapabilityText,
   managementUploadStatus,
   validateUploadFile,
 } from "../src/lib/manage-ui.mjs";
@@ -34,15 +36,35 @@ test("upload capability text explains blocked server reasons and never claims re
       enabled: false,
       reasons: ["authority_not_ready", "storage_target_mismatch"],
     }),
-    /存储用量核对.*普通上传存储/,
+    /上传暂不可用：.*存储用量核对.*普通上传存储/,
   );
   assert.match(
     managementCapabilityText({ enabled: false, reasons: [] }),
-    /不会离开此设备/,
+    /原文件内容不会发送/,
   );
   assert.match(
     managementCapabilityText({ enabled: true, code: "ready" }),
     /已就绪/,
+  );
+});
+
+test("filename title fallback and identify capability stay explicit", () => {
+  assert.equal(filenameTitle("/books/海边的卡夫卡.EPUB"), "海边的卡夫卡");
+  assert.equal(filenameTitle(".pdf"), "未命名书籍");
+  assert.match(managementIdentifyCapabilityText({ enabled: true }), /已就绪/);
+  assert.match(
+    managementIdentifyCapabilityText({
+      enabled: false,
+      code: "identify_unconfigured",
+    }),
+    /AI识别服务尚未配置/,
+  );
+  assert.match(
+    managementIdentifyCapabilityText({
+      enabled: false,
+      code: "identify_daily_budget",
+    }),
+    /额度已用完/,
   );
 });
 

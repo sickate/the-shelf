@@ -473,6 +473,19 @@ main {
 .manage-form {
   margin-top: 24px;
 }
+.manage-access-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.manage-access-status .notice {
+  flex: 1 1 320px;
+  margin: 0;
+}
+.manage-access-status a[hidden] {
+  display: none;
+}
 .manage-fields {
   display: grid;
   grid-template-columns: 1.4fr 1fr 1fr;
@@ -486,6 +499,27 @@ main {
   width: 100%;
   margin-top: 8px;
   padding: 14px;
+}
+.manage-metadata-preview {
+  min-height: 1.4em;
+  margin: 12px 0;
+  font-weight: 600;
+}
+.manage-metadata-editor {
+  margin: 14px 0 20px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.manage-metadata-editor summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.manage-metadata-editor .manage-fields {
+  margin-top: 16px;
+}
+#identify-status {
+  margin: 8px 0;
 }
 .manage-actions {
   display: flex;

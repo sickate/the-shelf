@@ -31,6 +31,7 @@ export const PRIVATE_KEYS = [
   "SINGLE_TRIAL_UPLOAD_SECRET",
   "SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET",
   "SHELF_OAI_KEY",
+  "FILENAME_AI_KEY",
   "SHELF_R2_ACCESS_KEY_ID",
   "SHELF_R2_SECRET_ACCESS_KEY",
   "SHELF_OWNER_PASSWORD",
@@ -297,10 +298,13 @@ export async function deploy({
   inspector,
   staticRollback = false,
   singleTrial = false,
+  filenameAi = false,
 } = {}) {
   let runDirectory, credentials;
   let phase = "files";
   try {
+    if (filenameAi !== false && (filenameAi !== true || singleTrial !== true))
+      reject("config");
     const repository = await fs.realpath(root);
     let fileEnvironment = {};
     const envPath = path.join(repository, ".env");
@@ -355,7 +359,9 @@ export async function deploy({
       "the-shelf",
     );
     const bindings = settings?.bindings || [];
-    const hasApi = !apiPolicy.safeStaticBindings(settings || { bindings: [] });
+    const hasApi = !apiPolicy.safeStaticBindings(settings || { bindings: [] }, {
+      filenameAi,
+    });
     if (hasApi) {
       if (!staticRollback) reject("bindings");
       const resources = apiPolicy.validateDeployConfig(
@@ -365,9 +371,14 @@ export async function deploy({
         settings,
         "production",
         resources.profiles.production.databaseId,
-        { accountId: credentials.accountId, singleTrialTarget },
+        {
+          accountId: credentials.accountId,
+          singleTrialTarget,
+          filenameAi,
+          allowFilenameAiTransition: filenameAi && staticRollback,
+        },
       );
-    } else if (staticRollback) reject("bindings");
+    } else if (staticRollback && !filenameAi) reject("bindings");
     phase = "files";
     const assets = path.join(repository, "dist");
     await inspectAssets(assets);
@@ -461,7 +472,7 @@ export async function deploy({
       credentials,
       "the-shelf",
     );
-    if (!deployed || !apiPolicy.safeStaticBindings(deployed))
+    if (!deployed || !apiPolicy.safeStaticBindings(deployed, { filenameAi }))
       reject("bindings");
     return {
       ok: true,
@@ -497,14 +508,16 @@ export async function main() {
     const argv = process.argv.slice(2);
     if (
       argv.length &&
-      (![1, 2].includes(argv.length) ||
+      (![1, 2, 3].includes(argv.length) ||
         argv[0] !== "--static-rollback" ||
-        (argv.length === 2 && argv[1] !== "--single-trial"))
+        (argv.length >= 2 && argv[1] !== "--single-trial") ||
+        (argv.length === 3 && argv[2] !== "--filename-ai"))
     )
       reject("config");
     const result = await deploy({
       staticRollback: argv[0] === "--static-rollback",
       singleTrial: argv[1] === "--single-trial",
+      filenameAi: argv[2] === "--filename-ai",
     });
     console.log(`Cloudflare static deployment succeeded: ${result.url}`);
     console.log(`Private deployment log: ${result.logPath}`);
