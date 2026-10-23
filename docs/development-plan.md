@@ -1,5 +1,23 @@
 # The Shelf 开发计划
 
+## 2026-10-23 识别失败隔离与有限诊断
+
+目标：真实首个合成文件名识别返回未知后，纠正“任何未知都会永久阻止所有其他文件识别”的调度设计。主Agent和两个Sol独立复核确认，这不是AGENTS对AI的硬性要求；不得把上传authority的未知阻断类推为所有独立AI推理不可继续。原调用仍未知、没有结果，绝不删除/改判/重发；普通上传及旧存储未知边界完全保留。
+
+方案与范围：永久保留每个规范化文件名的hash去重及所有结果/失败/unknown，unknown继续计入其原UTC日20次新调用预算。仅pending继续占全项目当前发送资格；本轮不自动回收崩溃pending、不按时间证明上游终止。已持久uncertain不再阻止真正不同文件名的新任务。新任务仍原子准入、固定gpt-luna/low、文件名长度限制、60秒、最多一次POST；不宣称此本地锁控制其他项目或证明旧上游停止。网关并发1/无队列由服务方控制；新任务遇busy/其他unknown仍保留责任，不自动排队或重试。次数与输入上界不是金额封顶，必要的一次新probe在既有本项目合理费用授权内。
+
+新增独立009迁移，008原文件/hash不改、旧识别行逐字保留；只精确更换准入trigger的uncertain总闸，并新增私有不可删除诊断表，以同一终态事务记录新调用的有限观测。观测仅固定失败阶段、100–599状态或null、有界耗时/字节/块数、静态类型与校验布尔，request-id只接受32hex/canonical UUID，否则仅形状布尔；不存原始响应、任意错误文本/字段名、URL、文件名、key或书籍正文。缺少旧诊断仍缺失，不补造。服务端、API capability与UI一致表达：旧文件待核对，其他独立文件可识别；同名缓存/uncertain永不重发，绝不靠换ID/contract绕过。
+
+分工依赖：A4 manage_api由gpt-6.1-sol/high实现009精确SQL、准入/观测事务、服务端与竞争/未知/隐私测试；先交付schema/观测契约供A5。A5 identify_deploy由gpt-6.1-sol/high实现独立固定production迁移operator（默认0IO、有限HTTP/DDL、不可覆盖意图与未知不重放），保护原schema/authority/trial/auth/007及全部008数据指纹；新独立合成验收runner最多11业务HTTP/1额外上游任务，旧runner/attempt不改。A6 manage_ui由gpt-6-luna/medium检查旧文件uncertain后换独立文件的准入/提示/过期响应及17场景不退化，仅必要UI/fixture调整，不改后端。主Agent负责最终契约、独立review、集成和验收。
+
+验收：合成验证uncertain保留且仍计费/同名不可调、不同文件可原子准入、两个pending只胜一个、崩溃pending仍阻断、无新预算/旧unknown清理；诊断无secret/rawbody且终态与观测原子一致，维护会话不受历史记录影响。主Agent专项及适用全套Node/Python、disabled/same-origin构建、public/static/实际秘密扫描、真实浏览器（工具可用时）验收；浏览器不可用不得声称线上DOM通过。之后commit→push→两CI→009 status/apply/独立status→受控filename-ai部署→固定日志绑定/活动版本回读→3个公开资源GET→新独立合成probe及固定PDF只读回归。迁移准确HTTP/DDL预算与新probe输入须由主Agentreview后、执行前补充；不重发secret、不改计费。
+
+本轮AI任务累计最多2个：旧1个已unknown且验收失败，新1个用于新版不同合成资料的诊断与功能验证；使用新固定requestId、不同语义合成书名，不重做旧书名或借改名恢复旧结果。新probe无论成功/失败/unknown都不追加第三个任务。失败保留全部责任、完成登出和只读记录；代码回退保留009与原008/所有数据，可关闭识别但保留现有阅读，完全静态关闭仍按显式trial/filename-ai回退与会话撤销。未通过真实验收仍不得宣称AI已接通；旧首本许可、上传关闭和存储未知不受本修订影响。
+
+执行清单补充：009 status正常9HTTP/硬10/0DDL，apply正常25HTTP/硬26/6DDL，独立status同前；三步正常43HTTP/硬46/6DDL。先建诊断表及三个保护trigger，再建admit_v2，额外精确回读全部新对象及仍在的旧guard后才DROP旧guard；中间双guard只会更保守，不存在无准入保护窗口，不假定REST多语句原子。未知DDL不重放，原schema/authority/trial/auth/registries/007及全部008行前后指纹一致。新固定probe文件名为“书名：雨后山谷_作者：示例编辑_分类：自然随笔.epub”，requestId为`c2d6ff51-834a-4a65-a021-b179dc0cf676`；最多11业务HTTP，其中失败时只读GET诊断并登出/撤销、无第二POST。旧attempt/unknown不变，准确迁移SHA及实际验收结果在执行前后分别记录。
+
+主Agent发布前独立验收：009冻结SHA256为`46607c049ca3d16afc2a50fa6f27cf01c7aba6b5fa7073616c2461d9c19bebcd`；专项56项、完整953项Node及8项Python全部通过，零失败/取消/跳过。第二独立合成验收runner经review修正failed→502诊断读取及状态映射，14项合成测试全部通过，仍最多1额外AI/11业务HTTP。Chrome Tuo真实浏览器18个管理页合成场景全部通过，包括同名不重试、旧unknown后新文件识别、手改保护、上传及回收站恢复。真实AI执行和发布结果在后续记录，不能把合成通过记为AI接通。
+
 ## 2026-10-23 上传可用性与文件名 AI 识别
 
 目标：修正管理页必须手填元数据的流程。用户选择文件后，仅把文件名发送给所有者鉴权的AI识别服务，自动填充书名、作者、分类；结果可修改，不外送文件正文。明确区分“识别资料”和“上传原件”的能力、进度和失败。当前生产普通上传仍关闭（trial隔离目标、authority imported和过期/未知用量），本需求不豁免8GB/20MB和旧未知证据门槛；不能只解除disabled或重置首本一次许可。

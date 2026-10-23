@@ -1,0 +1,373 @@
+#!/usr/bin/env node
+// Fixed 009 observation/admission migration only. No upload, arbitrary SQL, retry or auth mutation.
+import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
+import { loadMigrationContext } from "./storage-migrate.mjs";
+import { d1Client } from "./cf-library-clients.mjs";
+import { boundedControlResponse } from "./cf-filename-ai-secret.mjs";
+import { SINGLE_TRIAL_PRIVATE_IO as IO } from "./single-trial.mjs";
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
+const sha = (v) =>
+  createHash("sha256")
+    .update(typeof v === "string" ? v : JSON.stringify(v))
+    .digest("hex");
+export const IDENTIFY_OBSERVATION_MIGRATION_SHA256 =
+  "46607c049ca3d16afc2a50fa6f27cf01c7aba6b5fa7073616c2461d9c19bebcd";
+const shaSource = (name) =>
+  readFileSync(
+    new URL("../cloudflare/library/migrations/" + name, import.meta.url),
+    "utf8",
+  );
+const baseline = shaSource("008-filename-identification.sql");
+if (
+  sha(baseline) !==
+  "a2d6f76e54365eff03361902f1484373e80c6c8350d50fb71dd0f4c8cee0fe15"
+)
+  throw Error("observation_schema_baseline_changed");
+const source = shaSource("009-filename-identification-observations.sql");
+if (sha(source) !== IDENTIFY_OBSERVATION_MIGRATION_SHA256)
+  throw Error("observation_schema_source_changed");
+const db = new DatabaseSync(":memory:");
+db.exec(baseline);
+const oldGuard = Object.freeze({
+  ...db
+    .prepare(
+      "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name='filename_identification_admit'",
+    )
+    .get(),
+});
+db.exec(source);
+const NEW_NAMES = [
+  "filename_identification_observations",
+  "filename_identification_observation_admit",
+  "filename_identification_observation_immutable",
+  "filename_identification_observation_retain",
+  "filename_identification_admit_v2",
+];
+export const IDENTIFY_OBSERVATION_SCHEMA = Object.freeze(
+  NEW_NAMES.map((name) =>
+    Object.freeze({
+      ...db
+        .prepare(
+          "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name=?",
+        )
+        .get(name),
+    }),
+  ),
+);
+db.close();
+export const IDENTIFY_OBSERVATION_DROP_SQL =
+  "DROP TRIGGER filename_identification_admit";
+const QUOTED = [...NEW_NAMES, oldGuard.name].map((n) => `'${n}'`).join(",");
+export const IDENTIFY_OBSERVATION_SCHEMA_SQL = Object.freeze({
+  schema: `SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name IN (${QUOTED}) ORDER BY type,name LIMIT 7`,
+  oldSchema: `SELECT type,name,tbl_name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT IN (${QUOTED},'_cf_KV','d1_migrations') AND name NOT GLOB 'sqlite_*' ORDER BY type,name LIMIT 129`,
+  authority: "SELECT * FROM shelf_storage_authority WHERE id=1 LIMIT 2",
+  trial: "SELECT * FROM shelf_storage_single_trial WHERE id=1 LIMIT 2",
+  auth: "SELECT * FROM auth_config WHERE scope='production' LIMIT 2",
+  registries:
+    "SELECT 'reservation' AS kind,reservation_id AS id,json_object('reservation_id',reservation_id,'logical_key',logical_key,'object_key',object_key,'descriptor_json',descriptor_json,'size_bytes',size_bytes,'state',state,'put_attempted',put_attempted,'content_verified',content_verified,'etag',etag,'created_at',created_at,'updated_at',updated_at) AS data FROM shelf_storage_reservations UNION ALL SELECT 'registry',logical_key,json_object('logical_key',logical_key,'reservation_id',reservation_id,'descriptor_json',descriptor_json,'etag',etag,'enabled',enabled) FROM shelf_storage_original_registry UNION ALL SELECT 'text',logical_key,json_object('logical_key',logical_key,'reservation_id',reservation_id,'descriptor_json',descriptor_json,'etag',etag,'enabled',enabled) FROM shelf_storage_text_registry ORDER BY kind,id LIMIT 10001",
+  management:
+    "SELECT 'management' AS kind,book_id AS id,json_object('scope',scope,'book_id',book_id,'visibility',visibility,'trashed',trashed,'version',version,'updated_at',updated_at) AS data FROM book_management UNION ALL SELECT 'upload',upload_id,json_object('scope',scope,'upload_id',upload_id,'book_id',book_id,'reservation_id',reservation_id,'descriptor_json',descriptor_json,'created_at',created_at) FROM browser_uploads ORDER BY kind,id LIMIT 20001",
+  identifications:
+    "SELECT * FROM filename_identifications ORDER BY scope,request_id LIMIT 20001",
+  counts:
+    "SELECT count(*) AS observations FROM filename_identification_observations",
+});
+export const IDENTIFY_OBSERVATION_SCHEMA_BUDGET = Object.freeze({
+  apply: { http: 26, ddl: 6 },
+  status: { http: 10, ddl: 0 },
+});
+const fail = (code) => {
+  const e = new Error(code);
+  e.code = code;
+  throw e;
+};
+const normalize = (rows) =>
+  rows.map((r) => ({
+    type: r.type,
+    name: r.name,
+    tbl_name: r.tbl_name,
+    sql: r.sql.trim().replace(/;$/, "").replace(/\s+/g, " "),
+  }));
+const schemaState = (rows) => {
+  if (rows.length > 6 || new Set(rows.map((r) => r.name)).size !== rows.length)
+    fail("observation_schema_invalid");
+  for (const row of rows) {
+    const expected =
+      row.name === oldGuard.name
+        ? oldGuard
+        : IDENTIFY_OBSERVATION_SCHEMA.find((e) => e.name === row.name);
+    if (!expected || sha(normalize([row])) !== sha(normalize([expected])))
+      fail("observation_schema_invalid");
+  }
+  const old = rows.some((r) => r.name === oldGuard.name);
+  if (old && rows.length === 1) return "original";
+  if (old && rows.length === 6) return "both_guards";
+  if (
+    !old &&
+    rows.length === 5 &&
+    NEW_NAMES.every((name) => rows.some((r) => r.name === name))
+  )
+    return "complete";
+  return "partial";
+};
+export async function runIdentifyObservationSchema({
+  action = "status",
+  execute = false,
+  runId,
+  root = ROOT,
+  environment = process.env,
+  fetchImpl = fetch,
+  requestTimeoutMs = 30000,
+  context: injectedContext,
+} = {}) {
+  if (
+    !["apply", "status"].includes(action) ||
+    typeof execute !== "boolean" ||
+    !Number.isSafeInteger(requestTimeoutMs) ||
+    requestTimeoutMs < 1 ||
+    requestTimeoutMs > 30000
+  )
+    fail("observation_schema_arguments");
+  if (!execute)
+    return {
+      mode: "preview",
+      action,
+      requests: 0,
+      budget: IDENTIFY_OBSERVATION_SCHEMA_BUDGET[action],
+      migrationSha256: IDENTIFY_OBSERVATION_MIGRATION_SHA256,
+      uploadAllowed: false,
+    };
+  if (!/^[A-Za-z0-9][\w-]{0,79}$/.test(runId || ""))
+    fail("observation_schema_run_required");
+  const context =
+    injectedContext || (await loadMigrationContext({ root, environment }));
+  root = context.root;
+  if (
+    context.identity.accountId !== context.credentials.accountId ||
+    context.identity.bucket !== "the-shelf-books" ||
+    context.resources.profiles.production.databaseId !==
+      context.identity.legacyDatabases.production ||
+    context.resources.profiles.production.databaseName !== "the-shelf-library"
+  )
+    fail("observation_schema_target_invalid");
+  const directory = path.join(root, ".local/identify-observation-schema");
+  await IO.privateDirectory(root, directory, true);
+  const run = path.join(directory, runId);
+  await fs.mkdir(run, { mode: 0o700 });
+  await IO.writeImmutable(root, path.join(run, "run.json"), {
+    schemaVersion: 1,
+    action,
+    identity: context.identity,
+    migrationSha256: IDENTIFY_OBSERVATION_MIGRATION_SHA256,
+    budget: IDENTIFY_OBSERVATION_SCHEMA_BUDGET[action],
+  });
+  let count = 0,
+    writes = 0,
+    controller;
+  const client = d1Client(
+    context.credentials,
+    context.resources.profiles.production,
+    {
+      fetchImpl: (url, options) =>
+        boundedControlResponse(
+          fetchImpl,
+          url,
+          { ...options, signal: controller?.signal ?? options.signal },
+          requestTimeoutMs,
+        ),
+    },
+  );
+  const request = async (sql, mutating = false) => {
+    if (
+      ++count > IDENTIFY_OBSERVATION_SCHEMA_BUDGET[action].http ||
+      (mutating && ++writes > IDENTIFY_OBSERVATION_SCHEMA_BUDGET[action].ddl)
+    )
+      fail("observation_schema_request_budget");
+    const n = String(count).padStart(3, "0");
+    await IO.writeImmutable(root, path.join(run, n + "-intent.json"), {
+      sequence: count,
+      method: sql ? "POST" : "GET",
+      mutating,
+      sqlSha256: sql ? sha(sql) : null,
+    });
+    try {
+      controller = new AbortController();
+      let timer;
+      const operation = sql ? client.query(sql) : client.verify();
+      let result;
+      try {
+        result = await Promise.race([
+          operation,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              controller.abort();
+              reject(Error("deadline"));
+            }, requestTimeoutMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      await IO.writeImmutable(root, path.join(run, n + "-outcome.json"), {
+        state: "response-validated",
+      });
+      return result;
+    } catch {
+      await IO.writeImmutable(root, path.join(run, n + "-outcome.json"), {
+        state: mutating ? "unknown" : "read-failed",
+      });
+      fail(
+        mutating
+          ? "observation_schema_write_unknown"
+          : "observation_schema_read_failed",
+      );
+    }
+  };
+  const facts = async () => {
+    const old = await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.oldSchema);
+    if (old.length >= 129) fail("observation_schema_old_schema_limit");
+    const authority = await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.authority),
+      trial = await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.trial),
+      auth = await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.auth),
+      registries = await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.registries),
+      management = await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.management),
+      identifications = await request(
+        IDENTIFY_OBSERVATION_SCHEMA_SQL.identifications,
+      );
+    if (
+      authority.length !== 1 ||
+      authority[0].identity_json !== JSON.stringify(context.identity) ||
+      authority[0].phase !== "imported" ||
+      trial.length !== 1 ||
+      trial[0].state !== "confirmed" ||
+      trial[0].put_attempted !== 1 ||
+      trial[0].content_verified !== 1 ||
+      trial[0].consent_id !== "2026-10-23-first-book" ||
+      auth.length !== 1 ||
+      auth[0].scope !== "production" ||
+      registries.length >= 10001 ||
+      management.length >= 20001 ||
+      identifications.length >= 20001
+    )
+      fail("observation_schema_protected_facts_invalid");
+    return sha({
+      old,
+      authority,
+      trial,
+      auth,
+      registries,
+      management,
+      identifications,
+    });
+  };
+  try {
+    await request();
+    let state = schemaState(
+      await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.schema),
+    );
+    const before = await facts();
+    if (action === "status") {
+      const result = {
+        mode: "executed",
+        action,
+        schema: state,
+        requests: count,
+        protectedFactsSha256: before,
+        uploadAllowed: false,
+      };
+      await IO.writeImmutable(root, path.join(run, "result.json"), result);
+      return result;
+    }
+    if (!["original", "complete"].includes(state))
+      fail("observation_schema_partial_requires_review");
+    if (state === "original") {
+      // Global immutable claim is saved before any DDL. A new run cannot replay unknown writes.
+      await IO.writeImmutable(root, path.join(directory, "apply-claim.json"), {
+        schemaVersion: 1,
+        runId,
+        migrationSha256: IDENTIFY_OBSERVATION_MIGRATION_SHA256,
+        protectedFactsSha256: before,
+        identity: context.identity,
+      });
+      for (const statement of IDENTIFY_OBSERVATION_SCHEMA)
+        await request(statement.sql, true);
+      if (
+        schemaState(await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.schema)) !==
+        "both_guards"
+      )
+        fail("observation_schema_dual_guard_unverified");
+      await request(IDENTIFY_OBSERVATION_DROP_SQL, true);
+    }
+    state = schemaState(await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.schema));
+    if (state !== "complete") fail("observation_schema_incomplete");
+    const after = await facts();
+    if (after !== before) fail("observation_schema_protected_facts_changed");
+    const counts = await request(IDENTIFY_OBSERVATION_SCHEMA_SQL.counts);
+    if (
+      counts.length !== 1 ||
+      !Number.isSafeInteger(counts[0].observations) ||
+      counts[0].observations < 0 ||
+      counts[0].observations !== 0
+    )
+      fail("observation_schema_diagnostics_invalid");
+    const result = {
+      mode: "executed",
+      action,
+      schema: state,
+      requests: count,
+      ddl: writes,
+      protectedFactsSha256: after,
+      uploadAllowed: false,
+    };
+    await IO.writeImmutable(root, path.join(run, "result.json"), result);
+    return result;
+  } catch (error) {
+    try {
+      await IO.writeImmutable(root, path.join(run, "result.json"), {
+        state: "stopped",
+        code: /^observation_schema_/.test(error?.code || "")
+          ? error.code
+          : "observation_schema_private_io_failed",
+        requests: count,
+        ddl: writes,
+        uploadAllowed: false,
+      });
+    } catch {}
+    throw error;
+  }
+}
+export async function main(args = process.argv.slice(2)) {
+  const action = args[0] || "status",
+    execute = args.includes("--execute"),
+    runIndex = args.indexOf("--run");
+  if (
+    args.some(
+      (a, i) =>
+        i !== 0 && a !== "--execute" && a !== "--run" && i !== runIndex + 1,
+    ) ||
+    args.filter((a) => a === "--run").length > 1 ||
+    args.filter((a) => a === "--execute").length > 1
+  )
+    fail("observation_schema_arguments");
+  return runIdentifyObservationSchema({
+    action,
+    execute,
+    runId: runIndex >= 0 ? args[runIndex + 1] : undefined,
+  });
+}
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+)
+  main()
+    .then((v) => console.log(JSON.stringify(v)))
+    .catch(() => {
+      console.error(JSON.stringify({ code: "observation_schema_stopped" }));
+      process.exitCode = 1;
+    });

@@ -220,6 +220,7 @@ export function initManage() {
 
   const keyForFile = (file: File) =>
     `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
+  const identifyKeyForFile = (file: File) => file.name.normalize("NFC").trim();
 
   const updateMetadataPreview = () => {
     if (!currentFile) {
@@ -315,9 +316,7 @@ export function initManage() {
     const canonicalId = started.requestId;
     if (
       typeof canonicalId !== "string" ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        canonicalId,
-      )
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(canonicalId)
     )
       throw new Error("识别请求编号无效，状态待核对。");
     if (started.status === "completed") return started;
@@ -325,7 +324,9 @@ export function initManage() {
     if (
       started.status !== "pending" ||
       started.pollUrl !== expectedPollUrl ||
-      !/^\/api\/manage\/identify\/[0-9a-f-]{36}$/i.test(started.pollUrl)
+      !/^\/api\/manage\/identify\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
+        started.pollUrl,
+      )
     )
       throw new Error("识别任务地址无效，状态待核对。");
 
@@ -404,7 +405,8 @@ export function initManage() {
       return;
     }
 
-    if (activeIdentifyKey && activeIdentifyKey !== key) {
+    const identifyKey = identifyKeyForFile(file);
+    if (activeIdentifyKey && activeIdentifyKey !== identifyKey) {
       identifyPending = true;
       identifyStatus.textContent =
         "等待前一本识别结束…只保留当前文件，不会排队重发旧文件名。";
@@ -412,14 +414,14 @@ export function initManage() {
       return;
     }
 
-    let request = identificationRequests.get(key);
+    let request = identificationRequests.get(identifyKey);
     if (!request) {
       const requestId = crypto.randomUUID();
       identifyPending = true;
-      activeIdentifyKey = key;
+      activeIdentifyKey = identifyKey;
       updateSubmit();
       request = identifyFile(file, requestId, authEpoch);
-      identificationRequests.set(key, request);
+      identificationRequests.set(identifyKey, request);
     } else {
       identifyPending = true;
       updateSubmit();
@@ -473,9 +475,10 @@ export function initManage() {
         },
       )
       .finally(() => {
-        if (activeIdentifyKey === key) {
+        if (activeIdentifyKey === identifyKey) {
           activeIdentifyKey = "";
-          if (currentFile && currentFileKey !== key) maybeIdentifyCurrentFile();
+          if (currentFile && identifyKeyForFile(currentFile) !== identifyKey)
+            maybeIdentifyCurrentFile();
         }
       });
   };

@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-23T06:36:14.356Z",
-  "version": "0979edc2292368ea22f183a835ab252d798b98752abc95c7009bdfa5f752c2be",
+  "generatedAt": "2026-10-23T07:27:31.510Z",
+  "version": "4721affb3497ea969bbd0bff26eec89ac974193d462582bb3e26da5328d1eed1",
   "basePath": "/",
   "documents": [
     {
@@ -105,9 +105,9 @@
     {
       "id": "development-plan",
       "title": "The Shelf 开发计划",
-      "description": "目标：修正管理页必须手填元数据的流程。用户选择文件后，仅把文件名发送给所有者鉴权的AI识别服务，自动填充书名、作者、分类；结果可修改，不外送文件正文。明确区分“识别资料”和“上传原件”的能力、进度和失败。当前生产普通上传仍关闭（trial隔离目标、authority imported和过期/未知用量），本需求不豁免8GB/20MB和旧未知证据门槛；不能只解除disabled或重置首本一次许可。",
+      "description": "目标：真实首个合成文件名识别返回未知后，纠正“任何未知都会永久阻止所有其他文件识别”的调度设计。主Agent和两个Sol独立复核确认，这不是AGENTS对AI的硬性要求；不得把上传authority的未知阻断类推为所有独立AI推理不可继续。原调用仍未知、没有结果，绝不删除/改判/重发；普通上传及旧存储未知边界完全保留。",
       "updatedAt": "2026-10-22",
-      "version": "4901d9f423cd07c58879248b8784f10c49a80864bfd777f3d0d52afa90a05ddc",
+      "version": "d5af8948edc044c9259ca2cf81bf8bf69d903659ec17d2272873d9dd011c829a",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",

@@ -31,7 +31,7 @@ const result = await build({
             const mock = window.__manageMock = {
               mode, calls: [], bytes: 0, descriptors: 0, trashed: false, uploadState: "", identifyBodies: [], polls: 0, identifyActive: 0, maxIdentifyActive: 0,
             };
-            const canonicalId = "123e4567-e89b-42d3-a456-426614174000";
+            const canonicalId = "123e4567-e89b-12d3-a456-426614174000";
             const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
             const file = (id, reason) => ({id,format:"PDF",sizeBytes:15,status:"candidate",reason,visibility:"private",readable:true});
             const book = () => ({id:"book_fixture",title:"合成测试书",author:"合成作者",category:"测试",categoryId:"fixture",tags:[],description:"fixture",files:[file("file_confirmed","uploaded"),file("file_pending","not_uploaded")]});
@@ -57,7 +57,7 @@ const result = await build({
                   throw Object.assign(new Error("识别服务正忙"), {code:"identify_busy",status:503});
                 if (mode === "identify-fail")
                   throw Object.assign(new Error("文件名识别失败"), {code:"identify_failed",status:502});
-                if (mode === "identify-uncertain")
+                if (mode === "identify-uncertain" || (mode === "identify-uncertain-new" && body.filename === "uncertain.pdf"))
                   throw Object.assign(new Error("识别状态待核对"), {code:"identify_reconciliation_required",status:409});
                 if (mode === "identify-edit") await delay(80);
                 if (mode === "identify-submit") await delay(80);
@@ -121,7 +121,7 @@ const frame = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>�
   const mode = new URLSearchParams(location.search).get("case");
   const wait = async (check, label) => { for(let n=0;n<300;n++){if(check()) return; await new Promise(r=>setTimeout(r,20));} throw Error("timeout:"+label); };
   const assert = (condition, message) => { if(!condition) throw Error(message); };
-  const setFile = (name="fixture.pdf") => { const transfer=new DataTransfer(); transfer.items.add(new File(["synthetic local bytes"],name,{type:name.endsWith("epub")?"application/epub+zip":"application/pdf",lastModified:1})); const input=document.getElementById("book-file"); input.files=transfer.files; input.dispatchEvent(new Event("change",{bubbles:true})); };
+  const setFile = (name="fixture.pdf",lastModified=1,content="synthetic local bytes") => { const transfer=new DataTransfer(); transfer.items.add(new File([content],name,{type:name.endsWith("epub")?"application/epub+zip":"application/pdf",lastModified})); const input=document.getElementById("book-file"); input.files=transfer.files; input.dispatchEvent(new Event("change",{bubbles:true})); };
   const submit = () => document.getElementById("upload-form").dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}));
   const clickText = (root, text) => { const button=[...root.querySelectorAll("button")].find(el=>el.textContent.trim()===text); if(!button) throw Error("missing button:"+text); button.click(); return button; };
   const status = () => document.getElementById("identify-status").textContent;
@@ -170,6 +170,16 @@ const frame = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>�
       await new Promise(r=>setTimeout(r,30));
       assert(m.identifyBodies.length===1,"failed/uncertain identify was automatically retried");
       assert(document.getElementById("book-title").value==="手工修改","fallback was not editable");
+    } else if(mode==="identify-uncertain-new") {
+      setFile("uncertain.pdf");
+      await wait(()=>status().includes("识别状态待核对"),"uncertain file status");
+      setFile("uncertain.pdf",2,"synthetic local bytes with different size");
+      assert(m.identifyBodies.length===1,"same normalized filename with changed file metadata was retried");
+      setFile("fresh.pdf");
+      await wait(()=>status().includes("AI已根据文件名识别") && document.getElementById("book-title").value==="AI识别书目","new filename after uncertain history");
+      await new Promise(r=>setTimeout(r,30));
+      assert(m.identifyBodies.length===2 && m.identifyBodies[0].filename==="uncertain.pdf" && m.identifyBodies[1].filename==="fresh.pdf","independent filename did not get exactly one request");
+      assert(document.getElementById("book-title").value==="AI识别书目","old uncertain result overwrote new filename result");
     } else if(mode==="identify-edit") {
       setFile();
       document.getElementById("book-title").value="我手改的书名";
@@ -253,7 +263,7 @@ const frame = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>�
 </script><p id="result" role="status">运行中…</p></body></html>`;
 
 const runner = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>书库管理真实 DOM 夹具</title><style>body{font:16px system-ui;max-width:760px;margin:40px auto;padding:0 20px;color:#282820}li{padding:6px}iframe{position:absolute;left:-10000px;width:900px;height:900px}</style><h1>书库管理浏览器夹具</h1><p>合成书名与本机内存文件；API 完全替换为本地 mock，没有线上请求。</p><ol id="results"></ol><iframe id="case-frame"></iframe><script type="module">
-const cases=["early-select","unauth","blocked","identify-disabled","identify-pending","identify-fail","identify-uncertain","identify-edit","identify-submit","identify-null","identify-race","ready","upload-lock","duplicate","uncertain","trash","restore-error"],list=document.getElementById("results"),frame=document.getElementById("case-frame");
+const cases=["early-select","unauth","blocked","identify-disabled","identify-pending","identify-fail","identify-uncertain","identify-uncertain-new","identify-edit","identify-submit","identify-null","identify-race","ready","upload-lock","duplicate","uncertain","trash","restore-error"],list=document.getElementById("results"),frame=document.getElementById("case-frame");
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 for(const name of cases){const row=document.createElement("li");row.textContent=name+"：运行中…";list.append(row);await new Promise(resolve=>{frame.onload=resolve;frame.src="/frame?case="+encodeURIComponent(name)});for(let i=0;i<400&&frame.contentDocument.body.dataset.result==="running";i++)await delay(20);const result=frame.contentDocument.body.dataset.result;row.textContent=frame.contentDocument.getElementById("result").textContent;row.dataset.result=result;if(result!=="pass")break;}
 document.body.dataset.result=[...list.children].length===cases.length&&[...list.children].every(row=>row.dataset.result==="pass")?"pass":"fail";
