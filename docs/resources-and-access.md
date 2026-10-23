@@ -1,6 +1,14 @@
 # The Shelf 资源、权限与开发配置
 
-更新日期：2026 年 10 月 15 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。现有资源验证记录来自 10 月 14 日；本次补充当前工作区说明。
+更新日期：2026 年 10 月 23 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。历史按轮次保留，当前状态以最新交付记录及对应私有收据为准。
+
+## 2026-10-23 当前交付：首本上传及私人HTTP阅读通过
+
+功能提交47a551e的两CI39887039702/39887039727、运维兼容提交717c3e1e67ed40dfa609c6a6f33d8f1ad63faa51的两CI39890024940/39890024962均completed/success。主站运行的是已验收47a551e Worker及same-origin静态包；717c3e1仅修本机auth operator和记录，未重发Worker或对象。Cloudflare CI自动部署仍关闭，实际发布来自`.local/cf03/deploy-ktYov0/deploy.log`所记录受控发布。
+
+兼容修复CI后，auth enable新run `.local/cf03/production-auth/auth-enable-20261023-717c3e1.json`实际11HTTP通过，generation1/enabled1、unresolvedMutations0，CAS前后实际部署UUID、绑定（含严格相等D1双别名）及入口配置均符合。随后`.local/cf03/reading-smoke-reading-20261023-717c3e1/`实际14HTTP全部通过：匿名access/content401，登录，错误CSRF403且会话保持，实际单本目录/access，错误Origin403，全文大小/MIME/ETag/SHA256、Range206，登出和旧cookie session/access/content拒绝。generationRevocationRequired=false；测试会话已登出，所有者可用原本机访问密钥重新登录。
+
+首本24,582字节PDF已确认，一次PUT许可永久消耗；没有第二上传、对象删除、旧账清除、AI或计费变更。账号用量/旧请求终态及CPU数值仍unknown，authority仍imported；成功只覆盖用户批准的单本例外。浏览器surface不可用，browserVerified=false；动态文件按钮七文件仍待真实浏览器验收，不在已部署资源中。访问密钥仍仅在原忽略目录0600文件，不写网站/日志/Git。普通阅读通过不意味着operator secret入口已关闭；需要关闭时按明确trial静态回退，保留所有数据责任。
 
 ## 2026-10-23 已批准首本例外：发布准备
 

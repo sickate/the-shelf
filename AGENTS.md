@@ -8,6 +8,8 @@
 
 使用旧CF01能力不能访问的项目私有隔离存储和专用凭证；由现有唯一远端authority持久记录单次许可、预留及结果，保留原imported、全部unknown、guard和历史责任。许可绑定账号、固定文件/hash/key/大小和期限；最多一次PUT，未知时停止并保留预留，不换key、不自动重试或删除。设计、代码review及验证通过后才执行真实上传与私人阅读验收。
 
+本次许可已使用：固定24,582字节PDF已执行唯一PUT，独立HEAD/全文hash/HEAD及原authority确认成功；putAttempted/contentVerified均为true。不得再次issue/upload、换文件/key或重置许可。生产auth已在实际版本/配置及CAS核验后启用（generation1），14项真实私人HTTP阅读验收通过；浏览器渲染仍未验收。其他上传继续关闭；当前状态和私有收据见docs/resources-and-access.md。保留旧unknown、guard、imported及全部对象/账本/收据，关闭operator入口须显式trial静态回退，不能仅auth close。
+
 ### 2026-10-17 开发费用决策
 
 用户决定优先推进功能，优先使用免费资源；确有必要时可承担仅属于 The Shelf 的合理超额费用。本轮不实际开通付费套餐或修改计费，不承诺费用封顶。该决定不扩大账号级 Workers/D1 汇总读取权限，也不改变既有条件性 R2 汇总授权边界。8 GB 上传总预算、20 MB 单文件门槛、逐文件策略和隐私安全规则继续有效；真实上传与生产安全验收仍须满足各自证据门槛。
@@ -61,9 +63,9 @@
 
 ## 开发与部署
 
-当前工作区就是 paw 上的项目开发目录。默认直接在当前工作区执行，不额外 SSH 到 paw 或重复同步副本；跨机操作仍按具体任务需要和既有授权判断。生产后端部署位置尚未选定，不自行将开发配置改为常驻生产部署。
+当前工作区就是 paw 上的项目开发目录。默认直接在当前工作区执行，不额外 SSH 到 paw 或重复同步副本；跨机操作仍按具体任务需要和既有授权判断。生产仅启用下述受控Workers首本试运行，不自行将Node开发后端或paw改为常驻生产部署。
 
-当前公开网页由 Astro + Cloudflare Workers Static Assets 部署，主站为 `https://the-shelf.iamzhutuo.workers.dev/`；GitHub Pages 工作流和站点保留为回退。Cloudflare 工作流默认构建并保存 artifact；单 Worker 专用部署凭证尚未配置，因此 CI 自动部署保持关闭，本机受控发布可用。当前后端仍为 Node.js HTTP + SQLite，文件存储为私有 R2。Workers API、D1、登录、私人阅读与 Workflows 尚未迁移上线；AI 接入现有命名任务服务，真实 Key 的签发与验证独立处理。不得把静态站上线描述为业务后端上线，也不得把 paw 改为生产服务器。
+当前公开网页由 Astro + Cloudflare Workers Static Assets 部署，主站为 `https://the-shelf.iamzhutuo.workers.dev/`；GitHub Pages 工作流和站点保留为disabled回退。Cloudflare 工作流默认构建并保存 artifact；单 Worker 专用部署凭证尚未配置，因此 CI 自动部署保持关闭，本机受控发布可用。2026-10-23主站已部署受控首本Workers API，使用原production D1和私有隔离R2绑定，所有者登录及固定PDF全文/Range、Origin/CSRF和登出撤销的真实HTTP验收通过，浏览器渲染仍待验收；不是通用上传或全库迁移完成。Node.js HTTP + SQLite继续作为开发后端；Workflows和线上AI尚未迁移验收，真实AI Key独立处理。不得把静态站上线描述为业务后端上线，也不得把paw改为生产服务器。
 
 运维资源、凭证位置和验证结果见 `docs/resources-and-access.md`。这个文件不在网站文档发布清单内。公开文档以 `scripts/export-docs.mjs` 的固定清单为准，不自动公开新文档。
 
