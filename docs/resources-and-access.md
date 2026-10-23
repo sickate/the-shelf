@@ -2,6 +2,24 @@
 
 更新日期：2026 年 10 月 23 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。历史按轮次保留，当前状态以最新交付记录及对应私有收据为准。
 
+## 2026-10-23 当前交付：文件名识别流程已发布，真实AI未验收
+
+功能提交`5db33b3abe39b813c09f46d840c08eca2b5db7a7`及跨平台测试修正`055627008e744007d3c1435a7cc565b1aad7c354`已推送。首个提交两CI在macOS临时路径硬编码处失败，历史保留；修正后Cloudflare CI `39912666518`整轮success（自动部署仍skipped），Pages CI `39912666641`build/deploy success。主Agent独立完整932项Node及8项Python通过，零失败/取消/跳过；22项跨平台专项、最终23项部署/secret专项、18项固定日志恢复专项通过。disabled及same-origin构建1281页，public1325文件、static1310资源通过；实际秘密扫描1552文件零命中/不安全文件。Chrome Tuo真实17项合成DOM通过，手改书名保留；最终线上浏览器复核时CUA再次cgWindowNotFound，不能记生产浏览器验收完成。
+
+生产008实际安装并独立回读：`.local/filename-identification-schema/`下`identify008-pre-0556270-20261023`8HTTP、`identify008-apply-0556270-20261023`22HTTP/6DDL、`identify008-post-0556270-20261023`8HTTP。schema complete，全部受保护原表/authority/trial/auth/registry/007事实指纹前后一致；原base与007未改，check库不迁移。
+
+AI secret唯一安装记录`.local/cf03/production/filename-ai-secret/install-vRTrmT/`在第3请求PUT返回unknown，`attempt.json`保留，未重发PUT、未伪造accepted/verified；后续recover仅2GET确认原D1与精确staged四secret绑定，结果unknown_binding_present，不证明secret值或与本地Key相等。该unknown继续禁止安装重试。当前真实识别失败也不能作为凭证可用证明。
+
+受控发布日志`.local/cf03/deploy-29Q2gu/deploy.log`显示唯一新版本已上传及triggers发布；工具最后settings回读remote失败，没有重新deploy。钉本次日志SHA/UUID后，私有恢复helper经主Agent18项独立测试，仅2GET确认精确完整filename-v1配置及该版本唯一100%活动；收据`.local/cf03/filename-ai-deploy-recovery-postflight-0556270-20261023/receipt.json`。线上runtime、manage、read共3GET与本地same-origin包逐字一致。
+
+真实AI合成验收`.local/single-trial/filename-identify-acceptance-identify-live-0556270-20261023/`共8业务HTTP，第6项唯一识别POST返回409，未通过；aiTasksAttempted=1、aiReconciliationRequired=true。匿名/错误CSRF/错误Origin均按预期拒绝，所有者会话已登出且旧cookie拒绝，generationRevocationRequired=false。无第二AI请求、无上传字节、无真实书目修改。系统保留识别claim/次数并暂停新识别，不把文件名回退称为AI结果。新流程和登录/按钮原因提示已发布，不能宣称AI已接通。
+
+原PDF只读回归`.local/cf03/reading-smoke-reading-after-identify-0556270-20261023/`实际14HTTP通过全文大小/MIME/ETag/SHA256、Range及会话/Origin/CSRF/撤销保护，generationRevocationRequired=false。普通上传仍关闭，已消耗首本许可不重置；原imported、旧unknown、对象和账本保留，未改计费。
+
+下一步只读诊断计划：Sol/high提交固定synthetic requestId的D1有限投影，主Agentreview/合成测试通过后，仅一次固定production身份GET+唯一SELECT共2HTTP、0DDL/0账本更新。只输出状态/error固定枚举、时间/耗时、内容存在布尔和调用计数，不读文件名/hash/session/metadata/usage正文。默认preview零IO，独立30秒/16KiB/4096块边界及0700/0600不可覆写意图/收据，无重试。此查询只能确认持久状态，不能补造丢失的上游HTTP状态/rid、证明未执行或解除claim；若仍未知，保留关闭状态并说明阻塞。
+
+诊断已由主Agent独立review及8项合成测试后执行，收据`.local/single-trial/identify-state-observation-identify-state-0556270-20261023/result.json`；实际2HTTP/0AI/0账本写入。唯一行state=uncertain、error_code=identify_upstream_uncertain、elapsed_ms=69、result/usage均NULL、contract_matches=1；不是等待60秒造成的未完成投影。只能证明服务端已持久记录未知，不能确认上游HTTP状态/失败点或是否曾执行，因为本次adapter没有保留这些诊断字段。guide无任务状态查询/恢复接口，亦未留上游rid；本轮没有可证安全的自动解锁路线，不清claim、不追加AI任务、不重发secret、不重置许可。普通上传与AI识别仍各自关闭，现有阅读保留；后续须单独解决上游终态和普通上传授权/证据边界，不能把本次发布称为需求全部完成。
+
 ## 2026-10-23 当前交付：网页管理与多格式文字阅读
 
 功能提交`575abdb8cec006aa603b9ec66dc8daf951a853a7`已推送；Cloudflare CI `39901317669`测试/构建/隐私/静态检查及artifact成功、自动部署skipped，Pages CI `39901317725`构建/部署成功。主Agent独立完整898项Node及8项Python通过；disabled和same-origin构建均1281页，public/static检查与实际秘密扫描通过。Chrome tuo配置本机CUA曾恢复：合成EPUB/MOBI/AZW/KF8解析、CSP/净化、目录/导航/字号/主题/进度及清理全部PASS，手动切章正文正常；管理页匿名、上传关闭、正常单次提交、重复意图、未知不重传、回收站确认、恢复冲突七项真实DOM全部PASS。此前未发布的动态文件按钮已一并集成。
