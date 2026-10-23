@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-23T06:27:39.213Z",
-  "version": "1a4cba83aae7940f5b33649e7fdb5878fd435523d9b91a870023491759b1bd44",
+  "generatedAt": "2026-10-23T06:36:14.356Z",
+  "version": "0979edc2292368ea22f183a835ab252d798b98752abc95c7009bdfa5f752c2be",
   "basePath": "/",
   "documents": [
     {
@@ -107,7 +107,7 @@
       "title": "The Shelf 开发计划",
       "description": "目标：修正管理页必须手填元数据的流程。用户选择文件后，仅把文件名发送给所有者鉴权的AI识别服务，自动填充书名、作者、分类；结果可修改，不外送文件正文。明确区分“识别资料”和“上传原件”的能力、进度和失败。当前生产普通上传仍关闭（trial隔离目标、authority imported和过期/未知用量），本需求不豁免8GB/20MB和旧未知证据门槛；不能只解除disabled或重置首本一次许可。",
       "updatedAt": "2026-10-22",
-      "version": "978bf631be8bce59853d8c1ff31059c062007d671890977eda5d1056a5c494b5",
+      "version": "4901d9f423cd07c58879248b8784f10c49a80864bfd777f3d0d52afa90a05ddc",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",

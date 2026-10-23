@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import {
   identifyRoute,
   identifyCapability,
@@ -84,7 +85,8 @@ class D1 {
 }
 async function fixture(t, { file = false } = {}) {
   let directory;
-  if (file) directory = await fs.mkdtemp("/private/tmp/shelf-identify-db-");
+  if (file)
+    directory = await fs.mkdtemp(path.join(tmpdir(), "shelf-identify-db-"));
   const sql = new DatabaseSync(
     file ? path.join(directory, "test.sqlite") : ":memory:",
   );
