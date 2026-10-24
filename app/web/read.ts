@@ -352,6 +352,120 @@ async function readEpub() {
   book.ready.then(() => book.locations.generate(1600)).catch(() => {});
 }
 
+// ---------------- MOBI / AZW / AZW3 ----------------
+const MOBI_UNSUPPORTED = "该文件受 DRM 保护或格式不受支持，请下载原文件。";
+
+/** Stylesheet injected into each foliate section: theme colours consistent with the EPUB reader. */
+function mobiCss(fontPct: number, dark: boolean): string {
+  const fg = dark ? "#e6e2d6" : "#282820";
+  return `
+    html { color-scheme: ${dark ? "dark" : "light"}; }
+    html, body { color: ${fg} !important; background: transparent !important; }
+    body { font-size: ${fontPct}% !important; }
+    ${dark ? "font[color] { color: inherit !important; }" : ""}
+    p, li, blockquote, dd { line-height: 1.7; }
+    a[href], a[href] * { color: ${dark ? "#9cc3e6" : "#2f5d8a"} !important; }
+    img, svg { max-width: 100%; height: auto; }
+    pre { white-space: pre-wrap !important; }
+  `;
+}
+
+async function readMobi(format: string) {
+  const [{ openMobi }, buf] = await Promise.all([import("./lib/mobi"), fetchFile(` ${format.toUpperCase()}`)]);
+  setStage(`正在解析 ${format.toUpperCase()}…`);
+  let book: any;
+  try {
+    book = await openMobi(new File([buf], `book.${format}`, { type: "application/x-mobipocket-ebook" }));
+  } catch (e) {
+    console.warn(e);
+    showError(MOBI_UNSUPPORTED);
+    return;
+  }
+  setStage("正在加载阅读器…");
+  // @ts-ignore -- defines <foliate-view>
+  await import("foliate-js/view.js");
+  const area = el("div", { class: "epub-area mobi-area" });
+  const fv = document.createElement("foliate-view") as any;
+  area.append(fv);
+  view.replaceChildren(area);
+  await fv.open(book);
+  const r = fv.renderer;
+  r.setAttribute("flow", "paginated");
+  r.setAttribute("max-column-count", "1");
+  r.setAttribute("margin", "24px");
+  r.setAttribute("gap", "5%");
+
+  const dark = window.matchMedia("(prefers-color-scheme: dark)");
+  let fontPct = Number(store.get("shelf:epub-font")) || 100;
+  const applyStyles = () => r.setStyles?.(mobiCss(fontPct, dark.matches));
+  applyStyles();
+  dark.addEventListener?.("change", applyStyles);
+  const setFont = (d: number) => {
+    fontPct = Math.min(200, Math.max(60, fontPct + d));
+    store.set("shelf:epub-font", String(fontPct));
+    applyStyles();
+  };
+
+  const tocSelect = el("select", { "aria-label": "目录", hidden: "" });
+  const loc = el("span", { class: "muted small" });
+  toolbar.replaceChildren(
+    button("‹", "上一页", () => fv.goLeft()),
+    button("›", "下一页", () => fv.goRight()),
+    el("span", { class: "sep" }),
+    button("A−", "缩小字号", () => setFont(-10)),
+    button("A+", "放大字号", () => setFont(10)),
+    tocSelect,
+    loc,
+  );
+  toolbar.hidden = false;
+
+  fv.addEventListener("relocate", (ev: CustomEvent) => {
+    const { cfi, fraction, tocItem } = ev.detail || {};
+    if (cfi) store.set(posKey, cfi);
+    if (typeof fraction === "number") loc.textContent = `${Math.round(fraction * 100)}%`;
+    if (tocItem?.label) loc.title = String(tocItem.label).trim();
+  });
+  const onKey = (ev: KeyboardEvent) => {
+    const tag = (ev.target as HTMLElement)?.tagName;
+    if (tag === "SELECT" || tag === "INPUT") return;
+    if (ev.key === "ArrowLeft" || ev.key === "PageUp") fv.goLeft();
+    else if (ev.key === "ArrowRight" || ev.key === "PageDown") fv.goRight();
+    else return;
+    ev.preventDefault();
+  };
+  document.addEventListener("keydown", onKey);
+  // Keys pressed while focus is inside a section iframe.
+  fv.addEventListener("load", (ev: CustomEvent) => ev.detail?.doc?.addEventListener("keydown", onKey));
+
+  setStage("正在排版…");
+  const saved = store.get(posKey);
+  try {
+    await fv.init({ lastLocation: saved && saved.startsWith("epubcfi(") ? saved : null, showTextStart: !saved });
+  } catch {
+    await fv.goToTextStart().catch(() => fv.next());
+  }
+  hideLoading();
+
+  const opts: HTMLOptionElement[] = [el("option", { value: "" }, "目录")];
+  const walk = (items: any[], depth: number) => {
+    for (const it of items || []) {
+      if (opts.length > 2000) return;
+      if (it.href) opts.push(el("option", { value: it.href }, `${"　".repeat(depth)}${String(it.label || "").trim()}`));
+      walk(it.subitems, depth + 1);
+    }
+  };
+  walk(book.toc, 0);
+  if (opts.length > 1) {
+    tocSelect.replaceChildren(...opts);
+    tocSelect.hidden = false;
+    tocSelect.addEventListener("change", () => {
+      const href = tocSelect.value;
+      tocSelect.value = "";
+      if (href) fv.goTo(href).catch(() => {});
+    });
+  }
+}
+
 // ---------------- TXT / MD ----------------
 function decode(buf: ArrayBuffer): string {
   try {
@@ -437,6 +551,7 @@ async function readText() {
   try {
     if (f === "pdf") await readPdf(Number(book.sizeBytes) || 0);
     else if (f === "epub") await readEpub();
+    else if (f === "mobi" || f === "azw3" || f === "azw") await readMobi(f);
     else if (f === "txt" || f === "md") await readText();
     else showError(`不支持在线阅读 ${f.toUpperCase() || "该"} 格式，请下载。`);
   } catch (e: any) {

@@ -289,6 +289,8 @@ body.reader { min-height: 100vh; display: flex; flex-direction: column; }
 .pdf-wrap { flex: 1; overflow: auto; padding: 12px 8px; text-align: center; background: var(--reader-bg); }
 .pdf-page { background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); display: inline-block; }
 .epub-area { flex: none; height: calc(100vh - 110px); height: calc(100dvh - 110px); max-width: 900px; width: 100%; margin: 0 auto; padding: 8px 16px; }
+.mobi-area { padding: 0; }
+.mobi-area foliate-view { display: block; width: 100%; height: 100%; }
 .text-view { display: block; }
 .text-body {
   max-width: 42em; margin: 0 auto; padding: 24px 16px 64px;

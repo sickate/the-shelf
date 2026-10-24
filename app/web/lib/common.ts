@@ -59,7 +59,7 @@ export function humanSize(n: number): string {
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
-export const READABLE = new Set(["pdf", "epub", "txt", "md"]);
+export const READABLE = new Set(["pdf", "epub", "mobi", "azw3", "azw", "txt", "md"]);
 
 export function fmt(b: Pick<Book, "format">): string {
   return String(b.format || "").toLowerCase().replace(/^\./, "");
