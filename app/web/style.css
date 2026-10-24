@@ -265,6 +265,46 @@ main { max-width: 1500px; margin: auto; padding: 52px 5vw 70px; }
 #file-login { margin-top: 20px; }
 #file-login .login { max-width: 420px; }
 
+/* ---------- AI book info (owner only) ---------- */
+.detail-info { margin-top: 45px; max-width: 900px; }
+.info-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 22px; }
+.info-head .section-title { margin: 0; }
+.info-badge { font-size: 10px; letter-spacing: 1px; color: var(--muted); }
+.info-status:empty { display: none; }
+.info-status { margin-bottom: 20px; }
+.info-progress, .info-msg { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; line-height: 1.7; padding: 14px 16px; background: var(--notice); border-radius: 4px; }
+.info-msg.error { color: var(--err); }
+.info-msg.note { color: var(--muted); font-size: 12px; }
+.info-msg button { font-size: 12px; padding: 7px 14px; }
+.info-msg button:not(.primary) { color: var(--ink); }
+.info-elapsed { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; margin-left: auto; }
+.spinner { width: 14px; height: 14px; flex: none; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+.info-empty p { font-size: 13px; line-height: 1.9; color: var(--muted); margin: 0 0 18px; max-width: 640px; }
+.info-caution { border-left: 3px solid var(--local); background: color-mix(in srgb, var(--local) 10%, var(--paper)); padding: 12px 16px; font-size: 13px; line-height: 1.8; margin-bottom: 24px; border-radius: 0 4px 4px 0; }
+.info-caution strong { color: var(--local); margin-right: 10px; }
+.info-lead { font: 18px/1.8 Georgia, "Songti SC", serif; margin: 0 0 28px; overflow-wrap: anywhere; }
+.info-block { margin: 0 0 26px; }
+.info-block h3 { font-size: 11px; letter-spacing: 2px; color: var(--muted); font-weight: 600; margin: 0 0 10px; }
+.info-block p, .info-block li { font-size: 14px; line-height: 1.9; overflow-wrap: anywhere; }
+.info-block > p { margin: 0; }
+.info-authors, .info-related { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.info-authors strong { font-size: 14px; }
+.info-authors p, .info-related p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.info-points, .info-sources { margin: 0; padding-left: 1.3em; }
+.info-points li, .info-sources li { margin-bottom: 4px; }
+.info-tags { margin-top: 0; }
+.info-tags .tag { font-size: 11px; padding: 4px 8px; }
+.info-related .info-related-title { font-weight: 600; font-size: 14px; }
+.info-related a.info-related-title { border-bottom: 1px solid var(--accent); }
+.info-related .tag { margin-left: 8px; vertical-align: 2px; }
+.info-sources a { border-bottom: 1px solid var(--line); }
+.info-sources .muted { font-size: 12px; }
+.info-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.8; }
+.info-regen { font-size: 12px; white-space: nowrap; }
+.info-regen.armed { color: var(--err); font-weight: 600; }
+
 footer { border-top: 1px solid var(--line); padding: 28px 5vw; display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
 .center { max-width: 420px; margin: 40px auto; padding: 0 16px; text-align: center; }
 .center .login { justify-content: center; }
@@ -360,6 +400,10 @@ body.reader { min-height: 100vh; display: flex; flex-direction: column; }
   .facts { grid-column: 1 / -1; }
   .file-row { flex-direction: column; align-items: stretch; }
   .file-actions { justify-content: start; }
+  .detail-info { margin-top: 32px; }
+  .info-lead { font-size: 16px; }
+  .info-block p, .info-block li { font-size: 13px; }
+  .info-elapsed { margin-left: 0; flex-basis: 100%; }
   footer { gap: 20px; line-height: 1.7; flex-direction: column; }
   input[type="search"], input[type="password"] { font-size: 16px; }
   .reader-top { padding: 0 10px; gap: 8px; }
