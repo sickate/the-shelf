@@ -6,6 +6,10 @@ export interface Book {
   sizeBytes: number;
   status: "uploaded" | "local_only";
   createdAt?: string;
+  /** Owner-only fields (absent for visitors). */
+  hasCover?: boolean;
+  hasInfo?: boolean;
+  authors?: string[];
 }
 
 export class ApiError extends Error {
@@ -97,6 +101,9 @@ const ERROR_TEXT: Record<string, string> = {
   hash_mismatch: "SHA-256 校验不一致",
   bad_path: "路径无效",
   rate_limited: "请求过于频繁，请稍后重试",
+  unsupported_type: "不支持的图片类型",
+  bad_image: "图片格式校验失败",
+  bad_dimensions: "图片尺寸无效",
 };
 
 export function errorText(e: unknown): string {
@@ -166,8 +173,38 @@ export function coverColor(id: string | number): string {
   return COVER_COLORS[Array.from(String(id)).reduce((a, c) => a + c.charCodeAt(0), 0) % COVER_COLORS.length];
 }
 
-/** CSS-generated typographic cover. */
-export function coverEl(b: Book, opts: { num?: string; footer?: string } = {}): HTMLDivElement {
+/** Cover URL with a per-browser version so a regenerated cover bypasses the 1-day private cache. */
+export function coverUrl(id: string | number): string {
+  const v = store.get(`shelf:cover-v:${id}`) || "1";
+  return `/api/books/${encodeURIComponent(String(id))}/cover?v=${encodeURIComponent(v)}`;
+}
+
+/**
+ * Overlays a real thumbnail on a CSS cover. If the image fails to load it is removed, leaving
+ * the typographic cover in place, and `onError` runs.
+ */
+export function addCoverImg(cover: HTMLElement, src: string, onError?: () => void, lazy = true): HTMLImageElement {
+  cover.querySelector("img.cover-img")?.remove();
+  const img = el("img", { class: "cover-img", loading: lazy ? "lazy" : "eager", decoding: "async", alt: "", src });
+  img.addEventListener("load", () => cover.classList.add("has-img"), { once: true });
+  img.addEventListener(
+    "error",
+    () => {
+      img.remove();
+      cover.classList.remove("has-img");
+      onError?.();
+    },
+    { once: true },
+  );
+  cover.append(img);
+  return img;
+}
+
+/** CSS-generated typographic cover, optionally with a real thumbnail (`img` URL) on top. */
+export function coverEl(
+  b: Book,
+  opts: { num?: string; footer?: string; img?: string; onImgError?: () => void; eager?: boolean } = {},
+): HTMLDivElement {
   const { main } = splitTitle(b.title);
   const cover = el(
     "div",
@@ -177,6 +214,7 @@ export function coverEl(b: Book, opts: { num?: string; footer?: string } = {}): 
   );
   if (opts.num) cover.append(el("span", { class: "cover-num" }, opts.num));
   cover.append(el("span", { class: "cover-author" }, opts.footer ?? (fmt(b).toUpperCase() || "—")));
+  if (opts.img) addCoverImg(cover, opts.img, opts.onImgError, !opts.eager);
   return cover;
 }
 

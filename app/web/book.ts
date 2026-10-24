@@ -16,6 +16,8 @@ import {
   renderAuthBox,
   splitTitle,
 } from "./lib/common";
+import { addCoverImg, coverUrl } from "./lib/common";
+import { canThumb, ensureThumb } from "./lib/thumb";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const id = new URLSearchParams(location.search).get("id") || "";
@@ -48,7 +50,52 @@ $<HTMLAnchorElement>("back").addEventListener("click", (ev) => {
 function setOwner(next: boolean) {
   owner = next;
   renderAuthBox(authBox, owner, setOwner);
-  if (book) renderActions();
+  if (book) {
+    renderCover();
+    renderActions();
+  }
+}
+
+/** CSS cover; for the owner the stored thumbnail on top, or a "生成缩略图" button when missing. */
+function renderCover() {
+  const slot = $("cover-slot");
+  const { series } = splitTitle(book.title);
+  // Covers are owner-only and are only generated for formats thumb.ts can parse.
+  const showImg = owner && canThumb(book);
+  const cover = coverEl(book, {
+    footer: series || "THE SHELF",
+    img: showImg ? coverUrl(book.id) : undefined,
+    eager: true,
+    onImgError: () => {
+      if (owner) slot.append(thumbButton(cover));
+    },
+  });
+  slot.replaceChildren(cover);
+}
+
+function thumbButton(cover: HTMLElement): HTMLElement {
+  const btn = el("button", { type: "button", class: "link-btn" }, "生成缩略图");
+  const msg = el("span", { class: "muted small", role: "status" });
+  const box = el("div", { class: "thumb-make" }, btn, msg);
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    msg.textContent = "正在生成…";
+    try {
+      const r = await ensureThumb(book);
+      if (r.ok) {
+        addCoverImg(cover, coverUrl(book.id), undefined, false);
+        box.remove();
+      } else {
+        msg.textContent = r.reason === "no_cover" ? "这本书没有可用的封面。" : "解析失败，无法生成缩略图。";
+      }
+    } catch (e) {
+      msg.textContent = `生成失败：${errorText(e)}`;
+      if (e instanceof ApiError && e.status === 401) setOwner(false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  return box;
 }
 
 function fact(term: string, value: string) {
@@ -63,7 +110,7 @@ function renderBook() {
   const crumb = $<HTMLAnchorElement>("crumb-category");
   crumb.textContent = categoryName(book.category);
   crumb.href = `/?category=${encodeURIComponent(book.category)}`;
-  $("cover-slot").replaceChildren(coverEl(book, { footer: series || "THE SHELF" }));
+  renderCover();
   $("book-title").textContent = main;
   const seriesEl = $("book-series");
   seriesEl.textContent = series ? `系列 / ${series}` : "";

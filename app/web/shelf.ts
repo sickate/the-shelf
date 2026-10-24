@@ -13,6 +13,8 @@ import {
   renderAuthBox,
   splitTitle,
 } from "./lib/common";
+import { addCoverImg, coverUrl } from "./lib/common";
+import { mountThumbPanel } from "./lib/thumb-batch";
 
 const MAX_BYTES = 20_000_000;
 const PAGE = 60;
@@ -74,10 +76,14 @@ window.addEventListener("pagehide", saveState);
 
 // ---------------- Auth / budget ----------------
 function setOwner(next: boolean) {
+  const changed = next !== owner;
   owner = next;
   renderAuthBox(authBox, owner, setOwner);
   ownerPanel.hidden = !owner;
   if (owner) loadBudget();
+  // Owner-only fields (hasCover, ...) come with the session, so reload the list after login.
+  if (changed && owner && byTitle.length && !byTitle.some((b) => "hasCover" in b)) loadBooks();
+  else thumbs.refresh();
 }
 
 async function loadBudget() {
@@ -113,6 +119,7 @@ async function loadBooks() {
     );
     categoryList.replaceChildren(...categories.map((c) => el("option", { value: c })));
     renderStats();
+    thumbs.refresh();
   } catch (e) {
     listError.textContent = `书目加载失败：${errorText(e)}`;
     listError.hidden = false;
@@ -167,12 +174,16 @@ function card(b: Entry, i: number): HTMLElement {
   const link = el(
     "a",
     { href: bookUrl(b.id) },
-    coverEl(b, { num: String(i + 1).padStart(2, "0"), footer: b._series || `${f} · ${humanSize(b.sizeBytes)}` }),
+    coverEl(b, {
+      num: String(i + 1).padStart(2, "0"),
+      footer: b._series || `${f} · ${humanSize(b.sizeBytes)}`,
+      img: b.hasCover ? coverUrl(b.id) : undefined,
+    }),
     el("h3", { class: "book-title", title: b.title }, b._main),
   );
   return el(
     "article",
-    { class: "book-card" },
+    { class: "book-card", "data-id": String(b.id) },
     link,
     el("div", { class: "book-meta" }, b._series ? `${b._series} · ${categoryName(b.category)}` : categoryName(b.category)),
     el(
@@ -237,6 +248,17 @@ $("clear").addEventListener("click", () => {
   update();
 });
 moreBtn.addEventListener("click", () => render(false));
+
+// ---------------- Thumbnails ----------------
+const thumbPanel = $<HTMLDivElement>("thumb-panel");
+const thumbs = mountThumbPanel(thumbPanel, {
+  books: () => (owner ? byTitle : []),
+  onCover: (b) => {
+    const cover = grid.querySelector<HTMLElement>(`article[data-id="${CSS.escape(String(b.id))}"] .cover`);
+    if (cover) addCoverImg(cover, coverUrl(b.id));
+  },
+  onUnauthorized: () => setOwner(false),
+});
 
 // ---------------- Upload ----------------
 const uploadForm = $<HTMLFormElement>("upload-form");
