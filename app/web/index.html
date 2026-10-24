@@ -72,7 +72,7 @@
         </select>
         <form class="filters" id="filters">
           <label class="search">搜索藏书
-            <input id="q" type="search" placeholder="搜索书名、系列或分类…" autocomplete="off">
+            <input id="q" type="search" placeholder="搜索书名、系列、分类或作者…" autocomplete="off">
           </label>
           <label>文件状态
             <select id="status">
@@ -85,9 +85,19 @@
             <select id="sort">
               <option value="title">按书名</option>
               <option value="recent">最近添加</option>
+              <option value="size">按大小（大→小）</option>
+              <option value="format">按格式</option>
             </select>
           </label>
         </form>
+        <details id="more-filters" class="more-filters">
+          <summary>更多筛选 <span id="more-badge" class="muted"></span></summary>
+          <div id="mf-body" class="mf-body"></div>
+        </details>
+        <p id="filter-summary" class="filter-summary" hidden>
+          <span id="filter-summary-text"></span>
+          <button id="clear-all" type="button" class="link-btn">清除全部</button>
+        </p>
         <p id="list-error" class="notice error" role="alert" hidden></p>
         <div class="result-row">
           <span id="count" aria-live="polite">正在读取书架…</span>

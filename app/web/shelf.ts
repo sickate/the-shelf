@@ -13,9 +13,37 @@ import {
   renderAuthBox,
   splitTitle,
 } from "./lib/common";
+import {
+  ADDED_LABELS,
+  ADDED_VALUES,
+  FORMAT_GROUPS,
+  FORMAT_LABELS,
+  Facet,
+  FilterState,
+  SIZE_BUCKETS,
+  SIZE_LABELS,
+  SortKey,
+  Tri,
+  effective,
+  emptyFilters,
+  facetCounts,
+  filterEntries,
+  hasActive,
+  parseFilters,
+  parseSort,
+  serializeFilters,
+  sortEntries,
+  summarize,
+} from "./lib/filters";
 
 const MAX_BYTES = 20_000_000;
 const PAGE = 60;
+const SORT_LABELS: Record<SortKey, string> = {
+  title: "按书名排列 ",
+  recent: "最近添加在前 ",
+  size: "按大小（大→小）排列 ",
+  format: "按格式排列 ",
+};
 
 type Entry = Book & { _t: string; _main: string; _series: string; _created: number };
 
@@ -35,19 +63,29 @@ const emptyEl = $<HTMLDivElement>("empty");
 const listError = $<HTMLParagraphElement>("list-error");
 const moreBtn = $<HTMLButtonElement>("more");
 const categoryList = $<HTMLDataListElement>("category-list");
+const moreFilters = $<HTMLDetailsElement>("more-filters");
+const moreBadge = $<HTMLSpanElement>("more-badge");
+const mfBody = $<HTMLDivElement>("mf-body");
+const summaryEl = $<HTMLParagraphElement>("filter-summary");
+const summaryText = $<HTMLSpanElement>("filter-summary-text");
 
 let owner = false;
-let byTitle: Entry[] = [];
-let byRecent: Entry[] = [];
+let all: Entry[] = [];
+const sorted = new Map<SortKey, Entry[]>();
+const collator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
 let categories: string[] = [];
 let filtered: Entry[] = [];
 let shown = 0;
+// Resolved before the first render so owner-only filters/fields are right from the start.
+const ownerReady: Promise<boolean> = getOwner().then((v) => (owner = v));
 
 // ---------------- URL / history state ----------------
 const initial = new URLSearchParams(location.search);
 qInput.value = initial.get("q") || "";
 statusSelect.value = initial.get("status") || "";
-sortSelect.value = initial.get("sort") === "recent" ? "recent" : "title";
+sortSelect.value = parseSort(initial.get("sort"));
+let filters: FilterState = parseFilters(initial);
+moreFilters.open = hasActive(filters);
 let category = initial.get("category") || "";
 const restore: { shown?: number; scrollY?: number } = history.state || {};
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
@@ -58,7 +96,8 @@ function saveState() {
   if (category) p.set("category", category);
   if (statusSelect.value) p.set("status", statusSelect.value);
   if (sortSelect.value !== "title") p.set("sort", sortSelect.value);
-  const qs = p.toString();
+  serializeFilters(filters, p);
+  const qs = p.toString().replace(/%2C/gi, ",");
   history.replaceState({ shown, scrollY: window.scrollY }, "", location.pathname + (qs ? `?${qs}` : ""));
 }
 let scrollTimer: number | undefined;
@@ -74,10 +113,13 @@ window.addEventListener("pagehide", saveState);
 
 // ---------------- Auth / budget ----------------
 function setOwner(next: boolean) {
+  const changed = next !== owner;
   owner = next;
   renderAuthBox(authBox, owner, setOwner);
   ownerPanel.hidden = !owner;
   if (owner) loadBudget();
+  // Owner-only list fields (cover/info/authors) appear or vanish with the session.
+  if (changed) loadBooks();
 }
 
 async function loadBudget() {
@@ -94,6 +136,7 @@ async function loadBudget() {
 async function loadBooks() {
   listError.hidden = true;
   try {
+    await ownerReady;
     const data = await api<{ books: Book[]; categories?: string[] }>("/api/books");
     const entries: Entry[] = (data.books || []).map((b) => {
       const { main, series } = splitTitle(b.title);
@@ -101,13 +144,12 @@ async function loadBooks() {
         ...b,
         _main: main,
         _series: series,
-        _t: `${b.title} ${b.category} ${categoryName(b.category)}`.toLowerCase(),
+        _t: `${b.title} ${b.category} ${categoryName(b.category)} ${(b.authors || []).join(" ")}`.toLowerCase(),
         _created: Date.parse(b.createdAt || "") || 0,
       };
     });
-    const collator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
-    byTitle = entries.slice().sort((a, b) => collator.compare(a.title, b.title));
-    byRecent = entries.slice().sort((a, b) => b._created - a._created || collator.compare(a.title, b.title));
+    all = entries;
+    sorted.clear();
     categories = [...new Set([...(data.categories || []), ...entries.map((b) => b.category).filter(Boolean)])].sort(
       collator.compare,
     );
@@ -122,20 +164,104 @@ async function loadBooks() {
 }
 
 function renderStats() {
-  const total = byTitle.reduce((s, b) => s + (Number(b.sizeBytes) || 0), 0);
-  $("stat-books").textContent = byTitle.length.toLocaleString();
+  const total = all.reduce((s, b) => s + (Number(b.sizeBytes) || 0), 0);
+  $("stat-books").textContent = all.length.toLocaleString();
   $("stat-cats").textContent = String(categories.length);
   $("stat-size").textContent = humanSize(total);
-  $("stat-cloud").textContent = byTitle.filter((b) => b.status === "uploaded").length.toLocaleString();
+  $("stat-cloud").textContent = all.filter((b) => b.status === "uploaded").length.toLocaleString();
+}
+
+function sortedList(): Entry[] {
+  const key = parseSort(sortSelect.value);
+  let list = sorted.get(key);
+  if (!list) sorted.set(key, (list = sortEntries(all, key, collator)));
+  return list;
 }
 
 /** Books matching search + status (category applied separately so counts stay useful). */
-function baseMatches(): Entry[] {
+function searchMatches(): Entry[] {
   const q = qInput.value.trim().toLowerCase();
   const status = statusSelect.value;
-  const list = sortSelect.value === "recent" ? byRecent : byTitle;
+  const list = sortedList();
   if (!q && !status) return list;
   return list.filter((b) => (!q || b._t.includes(q)) && (!status || b.status === status));
+}
+
+const filterOpts = () => ({ owner, now: Date.now() });
+
+/** Books matching search + status + the extra filters (category applied separately). */
+function baseMatches(): Entry[] {
+  return filterEntries(searchMatches(), filters, filterOpts());
+}
+
+// ---------------- More filters UI ----------------
+function chip(label: string, count: number | null, on: boolean, onClick: () => void): HTMLButtonElement {
+  const b = el("button", { type: "button", class: on ? "tag chip on" : "tag chip", "aria-pressed": String(on) }, label);
+  if (count !== null) b.append(el("span", { class: "chip-n" }, count.toLocaleString()));
+  if (count === 0 && !on) b.classList.add("zero");
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function group(label: string, ...items: Node[]): HTMLElement {
+  return el("div", { class: "mf-group" }, el("span", { class: "mf-label" }, label), el("div", { class: "mf-chips" }, ...items));
+}
+
+const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+
+function renderMoreFilters() {
+  // Facet counts: books matching search/status/category and every OTHER active filter.
+  const pool = category ? searchMatches().filter((b) => b.category === category) : searchMatches();
+  const opts = filterOpts();
+  const counts = (f: Facet) => facetCounts(pool, filters, opts, f);
+  const fmtC = counts("fmt");
+  const sizeC = counts("size");
+  const addedC = counts("added");
+  const change = (patch: Partial<FilterState>) => {
+    filters = { ...filters, ...patch };
+    update();
+  };
+  const tri = (key: "cover" | "info", yes: string, no: string) => {
+    const set = (v: Tri) => change({ [key]: filters[key] === v ? "" : v });
+    return [chip(yes, null, filters[key] === "1", () => set("1")), chip(no, null, filters[key] === "0", () => set("0"))];
+  };
+  const groups: HTMLElement[] = [
+    group("格式", ...FORMAT_GROUPS.map((f) => chip(FORMAT_LABELS[f], fmtC.get(f) || 0, filters.fmt.includes(f), () => change({ fmt: toggle(filters.fmt, f) })))),
+    group("大小", ...SIZE_BUCKETS.map((k) => chip(SIZE_LABELS[k], sizeC.get(k) || 0, filters.size.includes(k), () => change({ size: toggle(filters.size, k) })))),
+    group(
+      "添加时间",
+      chip("全部", null, !filters.added, () => change({ added: "" })),
+      ...ADDED_VALUES.map((v) => chip(ADDED_LABELS[v], addedC.get(v) || 0, filters.added === v, () => change({ added: filters.added === v ? "" : v }))),
+    ),
+    group("阅读", chip("可在线阅读", null, filters.readable, () => change({ readable: !filters.readable }))),
+  ];
+  if (owner) {
+    groups.push(group("缩略图", ...tri("cover", "有缩略图", "无缩略图")), group("AI 简介", ...tri("info", "有 AI 简介", "无 AI 简介")));
+    const authorC = counts("author");
+    const names = new Set(authorC.keys());
+    if (filters.author) names.add(filters.author);
+    if (names.size) {
+      const select = el(
+        "select",
+        { "aria-label": "作者" },
+        el("option", { value: "" }, "全部作者"),
+        ...[...names].sort(collator.compare).map((n) => el("option", { value: n }, `${n} (${authorC.get(n) || 0})`)),
+      );
+      select.value = filters.author;
+      select.addEventListener("change", () => change({ author: select.value }));
+      groups.push(group("作者", select));
+    }
+  }
+  mfBody.replaceChildren(...groups);
+}
+
+function renderSummary() {
+  const active = hasActive(filters, owner);
+  const e = effective(filters, owner);
+  const k = [e.fmt.length, e.size.length, e.added, e.readable, e.cover, e.info, e.author].filter(Boolean).length;
+  moreBadge.textContent = active ? `（已选 ${k}）` : "";
+  summaryEl.hidden = !active;
+  summaryText.textContent = active ? summarize(filters, owner, filtered.length) : "";
 }
 
 function renderCategories(base: Entry[]) {
@@ -192,6 +318,8 @@ function render(reset: boolean) {
     filtered = category ? base.filter((b) => b.category === category) : base;
     shown = 0;
     grid.replaceChildren();
+    renderMoreFilters();
+    renderSummary();
   }
   const frag = document.createDocumentFragment();
   const next = filtered.slice(shown, shown + PAGE);
@@ -201,9 +329,9 @@ function render(reset: boolean) {
   const rest = filtered.length - shown;
   moreBtn.hidden = rest <= 0;
   moreBtn.textContent = `显示更多（剩余 ${rest.toLocaleString()} 本）`;
-  emptyEl.hidden = filtered.length > 0 || !byTitle.length;
+  emptyEl.hidden = filtered.length > 0 || !all.length;
   countEl.textContent = `${filtered.length.toLocaleString()} 本藏书${filtered.length ? ` · 已显示 ${shown.toLocaleString()}` : ""}`;
-  sortLabel.firstChild!.textContent = sortSelect.value === "recent" ? "最近添加在前 " : "按书名排列 ";
+  sortLabel.firstChild!.textContent = SORT_LABELS[parseSort(sortSelect.value)];
   saveState();
 }
 
@@ -231,11 +359,14 @@ catNav.addEventListener("click", (ev) => {
   $("filters").scrollIntoView({ block: "nearest" });
 });
 $("filters").addEventListener("submit", (ev) => ev.preventDefault());
-$("clear").addEventListener("click", () => {
+function clearAll() {
   qInput.value = statusSelect.value = "";
   category = "";
+  filters = emptyFilters();
   update();
-});
+}
+$("clear").addEventListener("click", clearAll);
+$("clear-all").addEventListener("click", clearAll);
 moreBtn.addEventListener("click", () => render(false));
 
 // ---------------- Upload ----------------
@@ -309,7 +440,7 @@ uploadForm.addEventListener("submit", async (ev) => {
 
 // ---------------- Boot ----------------
 (async () => {
-  const [isOwner] = await Promise.all([getOwner(), loadBooks()]);
+  const [isOwner] = await Promise.all([ownerReady, loadBooks()]);
   setOwner(isOwner);
   // Restore "显示更多" depth and scroll position when coming back from a detail page.
   if (restore.shown && restore.shown > shown) {
