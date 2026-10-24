@@ -35,6 +35,7 @@
   "dependencies": {
     "astro": "^7.3.8",
     "epubjs": "0.3.93",
+    "foliate-js": "1.0.1",
     "marked": "^18.1.1",
     "pdfjs-dist": "^6.4.299"
   },
