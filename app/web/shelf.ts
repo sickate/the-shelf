@@ -380,7 +380,7 @@ moreBtn.addEventListener("click", () => render(false));
 // ---------------- Thumbnails ----------------
 const thumbPanel = $<HTMLDivElement>("thumb-panel");
 const thumbs = mountThumbPanel(thumbPanel, {
-  books: () => (owner ? byTitle : []),
+  books: () => (owner ? all : []),
   onCover: (b) => {
     const cover = grid.querySelector<HTMLElement>(`article[data-id="${CSS.escape(String(b.id))}"] .cover`);
     if (cover) addCoverImg(cover, coverUrl(b.id));
