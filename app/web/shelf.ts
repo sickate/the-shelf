@@ -1,4 +1,4 @@
-import { initUpload } from "./lib/upload";
+import { initUpload, onUploaded } from "./lib/upload";
 import {
   api,
   Book,
@@ -35,6 +35,9 @@ import {
   sortEntries,
   summarize,
 } from "./lib/filters";
+import { addCoverImg, coverUrl } from "./lib/common";
+import { mountThumbPanel } from "./lib/thumb-batch";
+import { canThumb, ensureThumb } from "./lib/thumb";
 
 const PAGE = 60;
 const SORT_LABELS: Record<SortKey, string> = {
@@ -117,8 +120,9 @@ function setOwner(next: boolean) {
   renderAuthBox(authBox, owner, setOwner);
   ownerPanel.hidden = !owner;
   if (owner) loadBudget();
-  // Owner-only list fields (cover/info/authors) appear or vanish with the session.
+  // Owner-only list fields (hasCover/hasInfo/authors) appear or vanish with the session.
   if (changed) loadBooks();
+  else thumbs.refresh();
 }
 
 async function loadBudget() {
@@ -154,6 +158,7 @@ async function loadBooks() {
     );
     categoryList.replaceChildren(...categories.map((c) => el("option", { value: c })));
     renderStats();
+    thumbs.refresh();
   } catch (e) {
     listError.textContent = `书目加载失败：${errorText(e)}`;
     listError.hidden = false;
@@ -292,12 +297,16 @@ function card(b: Entry, i: number): HTMLElement {
   const link = el(
     "a",
     { href: bookUrl(b.id) },
-    coverEl(b, { num: String(i + 1).padStart(2, "0"), footer: b._series || `${f} · ${humanSize(b.sizeBytes)}` }),
+    coverEl(b, {
+      num: String(i + 1).padStart(2, "0"),
+      footer: b._series || `${f} · ${humanSize(b.sizeBytes)}`,
+      img: b.hasCover ? coverUrl(b.id) : undefined,
+    }),
     el("h3", { class: "book-title", title: b.title }, b._main),
   );
   return el(
     "article",
-    { class: "book-card" },
+    { class: "book-card", "data-id": String(b.id) },
     link,
     el("div", { class: "book-meta" }, b._series ? `${b._series} · ${categoryName(b.category)}` : categoryName(b.category)),
     el(
@@ -368,6 +377,17 @@ $("clear").addEventListener("click", clearAll);
 $("clear-all").addEventListener("click", clearAll);
 moreBtn.addEventListener("click", () => render(false));
 
+// ---------------- Thumbnails ----------------
+const thumbPanel = $<HTMLDivElement>("thumb-panel");
+const thumbs = mountThumbPanel(thumbPanel, {
+  books: () => (owner ? byTitle : []),
+  onCover: (b) => {
+    const cover = grid.querySelector<HTMLElement>(`article[data-id="${CSS.escape(String(b.id))}"] .cover`);
+    if (cover) addCoverImg(cover, coverUrl(b.id));
+  },
+  onUnauthorized: () => setOwner(false),
+});
+
 // ---------------- Upload ----------------
 initUpload({
   form: $<HTMLFormElement>("upload-form"),
@@ -392,3 +412,8 @@ initUpload({
   }
   if (restore.scrollY) window.scrollTo(0, restore.scrollY);
 })();
+
+// New uploads get their thumbnail right away; failures are left for "补全缩略图".
+onUploaded(async (book) => {
+  if (canThumb(book)) await ensureThumb(book).catch(() => {});
+});

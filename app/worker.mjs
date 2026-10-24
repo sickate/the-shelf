@@ -770,7 +770,9 @@ async function handleApi(request, env, url) {
     if (m[2] === "info" && method === "POST") return generateInfo(request, env, row, url);
     if (!m[2] && method === "GET") {
       if (!row || row.status === "reserved") throw new HttpError(404, "not_found");
-      return json({ book: publicBook(row) });
+      if (!(await isOwner(request, env).catch(() => false))) return json({ book: publicBook(row) });
+      const cover = await env.DB.prepare("SELECT 1 FROM covers WHERE book_id = ?").bind(row.id).first();
+      return json({ book: { ...publicBook(row), hasCover: Boolean(cover) } });
     }
     if (!m[2] && method === "DELETE") {
       await requireOwner(request, env);

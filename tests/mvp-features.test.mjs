@@ -521,6 +521,10 @@ test("book list: owner-only cover/info/author fields in one shape", async (t) =>
     { hasCover: false, hasInfo: false, authors: [] },
   );
   assert.deepEqual(owner.categories, visitor.categories);
+  const one = async (id, init) => (await (await c.fetch(`/api/books/${id}`, init)).json()).book;
+  assert.equal("hasCover" in (await one(c.bookId)), false);
+  assert.equal((await one(c.bookId, c.owner())).hasCover, true);
+  assert.equal((await one(other.book.id, c.owner())).hasCover, false);
 });
 
 test("validateInfo keeps only whitelisted sources and strips extra fields", () => {
