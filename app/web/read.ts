@@ -1,4 +1,4 @@
-import { api, ApiError, Book, el, errorText, fmt, getOwner, loginForm, store } from "./lib/common";
+import { api, ApiError, Book, bookUrl, el, errorText, fmt, getOwner, humanSize, loginForm, splitTitle, store } from "./lib/common";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const titleEl = $<HTMLHeadingElement>("book-title");
@@ -7,17 +7,46 @@ const toolbar = $<HTMLDivElement>("toolbar");
 const msg = $<HTMLParagraphElement>("msg");
 const loginBox = $<HTMLDivElement>("login");
 const view = $<HTMLElement>("view");
+const loading = $<HTMLElement>("loading");
+const loadingText = $<HTMLParagraphElement>("loading-text");
+const loadingDetail = $<HTMLParagraphElement>("loading-detail");
+const progressBar = $<HTMLDivElement>("progress-bar");
 
 const id = new URLSearchParams(location.search).get("id") || "";
 const fileUrl = `/api/books/${encodeURIComponent(id)}/file`;
 const posKey = `shelf:pos:${id}`;
 
+// ---------------- Loading status ----------------
+function setStage(text: string, detail = "") {
+  loading.hidden = false;
+  loadingText.textContent = text;
+  loadingDetail.textContent = detail;
+}
+
+/** Determinate bar when the total is known; otherwise an indeterminate bar with bytes loaded. */
+function setProgress(loaded: number, total?: number, determinate = true) {
+  const known = !!total && total > 0 && determinate;
+  progressBar.classList.toggle("indeterminate", !known);
+  progressBar.style.width = known ? `${Math.min(100, (loaded / total!) * 100).toFixed(1)}%` : "";
+  loadingDetail.textContent = known
+    ? `${Math.floor(Math.min(100, (loaded / total!) * 100))}% · ${humanSize(loaded)} / ${humanSize(total!)}`
+    : total
+      ? `已加载 ${humanSize(loaded)} · 文件共 ${humanSize(total)}`
+      : `已加载 ${humanSize(loaded)}`;
+}
+
+function hideLoading() {
+  loading.hidden = true;
+}
+
 function showError(text: string) {
+  hideLoading();
   msg.textContent = text;
   msg.hidden = false;
 }
 
 function requireLogin() {
+  hideLoading();
   loginBox.replaceChildren(el("p", {}, "需要所有者登录后才能阅读。"), loginForm(() => location.reload()));
   loginBox.hidden = false;
 }
@@ -28,7 +57,10 @@ function button(label: string, title: string, onClick: () => void): HTMLButtonEl
   return b;
 }
 
-async function fetchFile(): Promise<Response> {
+/** Downloads the whole file, streaming the body so progress can be shown. */
+async function fetchFile(label: string): Promise<ArrayBuffer> {
+  setStage(`正在下载${label}…`);
+  setProgress(0);
   const res = await fetch(fileUrl, { credentials: "same-origin" });
   if (!res.ok) {
     let code = `http_${res.status}`;
@@ -39,43 +71,80 @@ async function fetchFile(): Promise<Response> {
     }
     throw new ApiError(res.status, code);
   }
-  return res;
+  const total = Number(res.headers.get("Content-Length")) || 0;
+  if (!res.body) return res.arrayBuffer();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  setProgress(0, total);
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    setProgress(loaded, total);
+  }
+  const out = new Uint8Array(loaded);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out.buffer;
 }
 
 // ---------------- PDF ----------------
-async function readPdf() {
+async function readPdf(sizeBytes: number) {
+  setStage("正在加载 PDF 阅读器…");
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
-  const pdf = await pdfjs.getDocument({
+  setStage("正在打开 PDF…");
+  setProgress(0, sizeBytes, false);
+  // Range loading: with disableStream pdf.js aborts the initial full GET once it sees
+  // Accept-Ranges/Content-Length and then fetches only the 256 KB chunks it needs, so the
+  // first page appears without downloading the whole file. disableAutoFetch stops it from
+  // prefetching the rest in the background. (Files <= 512 KB are simply fetched whole.)
+  const loadingTask = pdfjs.getDocument({
     url: fileUrl,
     withCredentials: true,
     rangeChunkSize: 65536 * 4,
+    disableStream: true,
     disableAutoFetch: true,
     cMapUrl: "/pdfjs/cmaps/",
     cMapPacked: true,
     standardFontDataUrl: "/pdfjs/standard_fonts/",
     wasmUrl: "/pdfjs/wasm/",
     iccUrl: "/pdfjs/iccs/",
-  }).promise;
+  });
+  // In range mode "loaded" is just the chunks fetched so far, so show bytes, not a percentage.
+  loadingTask.onProgress = ({ loaded, total }: { loaded: number; total?: number }) =>
+    setProgress(loaded, total || sizeBytes, false);
+  const pdf = await loadingTask.promise;
 
   const total = pdf.numPages;
   let pageNum = Math.min(Math.max(1, Number(store.get(posKey)) || 1), total);
   let zoom = 0; // 0 = fit width, else absolute scale
   let task: { cancel(): void; promise: Promise<void> } | null = null;
+  let firstRender = true;
+  const busy = el("span", { class: "busy muted small", "aria-live": "polite" });
 
   const canvas = el("canvas", { class: "pdf-page" });
   const wrap = el("div", { class: "pdf-wrap" }, canvas);
   view.replaceChildren(wrap);
 
   const pageInput = el("input", { type: "number", min: "1", max: String(total), class: "page-input", "aria-label": "页码" });
-  const zoomLabel = el("span", { class: "muted small" });
+  const zoomLabel = el("span", { class: "muted small zoom-label" });
   const tocSelect = el("select", { "aria-label": "目录", hidden: "" });
 
   async function render() {
     task?.cancel();
-    pageInput.value = String(pageNum);
-    store.set(posKey, String(pageNum));
-    const page = await pdf.getPage(pageNum);
+    const n = pageNum;
+    pageInput.value = String(n);
+    store.set(posKey, String(n));
+    if (firstRender) setStage(`正在渲染第 ${n} 页…`, `共 ${total} 页`);
+    busy.textContent = `正在渲染第 ${n} 页…`;
+    const page = await pdf.getPage(n);
+    if (n !== pageNum) return; // superseded while loading
     const base = page.getViewport({ scale: 1 });
     const avail = Math.max(200, wrap.clientWidth - 16);
     const scale = zoom || avail / base.width;
@@ -95,8 +164,16 @@ async function readPdf() {
     task = t;
     try {
       await t.promise;
+      if (n === pageNum) busy.textContent = "";
     } catch (e: any) {
-      if (e?.name !== "RenderingCancelledException") showError(`渲染失败：${e?.message || e}`);
+      if (e?.name !== "RenderingCancelledException") {
+        busy.textContent = "";
+        showError(`第 ${n} 页渲染失败：${e?.message || e}`);
+      }
+    }
+    if (firstRender) {
+      firstRender = false;
+      hideLoading();
     }
   }
   const go = (n: number) => {
@@ -134,6 +211,7 @@ async function readPdf() {
       render();
     }),
     tocSelect,
+    busy,
   );
   toolbar.hidden = false;
 
@@ -192,8 +270,8 @@ async function readPdf() {
 
 // ---------------- EPUB ----------------
 async function readEpub() {
-  const [{ default: ePub }, res] = await Promise.all([import("epubjs"), fetchFile()]);
-  const buf = await res.arrayBuffer();
+  const [{ default: ePub }, buf] = await Promise.all([import("epubjs"), fetchFile(" EPUB")]);
+  setStage("正在解析 EPUB…");
   const book = ePub(buf as any);
   const area = el("div", { class: "epub-area" });
   view.replaceChildren(area);
@@ -243,11 +321,13 @@ async function readEpub() {
   document.addEventListener("keyup", onKey);
 
   const saved = store.get(posKey);
+  setStage("正在排版…");
   try {
     await rendition.display(saved || undefined);
   } catch {
     await rendition.display();
   }
+  hideLoading();
 
   book.loaded.navigation.then((nav: any) => {
     const opts: HTMLOptionElement[] = [el("option", { value: "" }, "目录")];
@@ -286,8 +366,8 @@ function decode(buf: ArrayBuffer): string {
 }
 
 async function readText() {
-  const res = await fetchFile();
-  const text = decode(await res.arrayBuffer());
+  const text = decode(await fetchFile("文本"));
+  hideLoading();
   const article = el("article", { class: "text-body" });
   article.textContent = text;
   view.replaceChildren(article);
@@ -318,22 +398,35 @@ async function readText() {
     showError("缺少参数 id。");
     return;
   }
+  setStage("正在读取书籍信息…");
   let book: Book;
+  let owner: boolean;
   try {
-    const data = await api<any>(`/api/books/${encodeURIComponent(id)}`);
+    const [data, isOwner] = await Promise.all([api<any>(`/api/books/${encodeURIComponent(id)}`), getOwner()]);
     book = data.book ?? data;
+    owner = isOwner;
   } catch (e) {
     titleEl.textContent = "无法加载";
     showError(e instanceof ApiError && e.status === 404 ? "未找到这本书。" : `元数据加载失败：${errorText(e)}`);
     return;
   }
-  titleEl.textContent = book.title;
-  document.title = `${book.title} · The Shelf`;
+  const { main } = splitTitle(book.title);
+  titleEl.textContent = main;
+  titleEl.title = book.title;
+  document.title = `${main} — The Shelf`;
+  const back = $<HTMLAnchorElement>("back");
+  back.href = bookUrl(book.id);
+  back.addEventListener("click", (ev) => {
+    if (document.referrer && new URL(document.referrer).origin === location.origin && history.length > 1) {
+      ev.preventDefault();
+      history.back();
+    }
+  });
   if (book.status !== "uploaded") {
     showError("这本书仅登记在本地目录（>20MB 未上传），无法在线阅读。");
     return;
   }
-  if (!(await getOwner())) {
+  if (!owner) {
     requireLogin();
     return;
   }
@@ -342,7 +435,7 @@ async function readText() {
 
   const f = fmt(book);
   try {
-    if (f === "pdf") await readPdf();
+    if (f === "pdf") await readPdf(Number(book.sizeBytes) || 0);
     else if (f === "epub") await readEpub();
     else if (f === "txt" || f === "md") await readText();
     else showError(`不支持在线阅读 ${f.toUpperCase() || "该"} 格式，请下载。`);

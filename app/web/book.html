@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>书籍详情 — The Shelf</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">跳至正文</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="The Shelf 首页">
+      <span class="brand-mark">S.</span>
+      <span>THE SHELF<small>一座私人书房的公开目录</small></span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="/">书架</a>
+      <div id="auth" class="auth"></div>
+    </nav>
+  </header>
+  <main id="main">
+    <p id="load-status" class="notice" role="status">正在读取书籍详情…</p>
+    <div id="book-content" hidden>
+      <div class="breadcrumb">
+        <a id="back" href="/">书架</a> /
+        <a id="crumb-category" href="/"></a> / 书籍详情
+      </div>
+      <section class="detail-hero">
+        <div id="cover-slot"></div>
+        <div>
+          <span class="eyebrow">THE COLLECTION / 藏书记录</span>
+          <h1 id="book-title"></h1>
+          <p id="book-series" class="series" hidden></p>
+          <p id="book-byline" class="muted"></p>
+          <div id="book-tags" class="tags"></div>
+          <dl id="book-facts" class="facts"></dl>
+        </div>
+      </section>
+      <section class="detail-file">
+        <h2 class="section-title">收藏文件</h2>
+        <div class="file-row">
+          <div>
+            <strong id="file-format"></strong> <span id="file-size" class="muted"></span>
+            <p id="file-explanation"></p>
+          </div>
+          <div id="file-actions" class="file-actions"></div>
+        </div>
+        <div id="file-login" class="notice" hidden></div>
+        <p id="file-message" class="status-text" role="status"></p>
+      </section>
+    </div>
+  </main>
+  <footer>
+    <span>THE SHELF <span class="muted">/</span> 让每一本书都能被找到。</span>
+    <span>文件默认私有 · 单本 ≤ 20 MB</span>
+  </footer>
+  <script type="module" src="/book.js"></script>
+</body>
+</html>

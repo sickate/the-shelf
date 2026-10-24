@@ -4,45 +4,109 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>The Shelf</title>
+  <meta name="description" content="The Shelf · 收藏中的每一本书，都值得被找到。">
+  <title>私人藏书 — The Shelf</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="top">
-    <h1><a href="/">The Shelf</a></h1>
-    <div id="auth" class="auth"></div>
+  <a class="skip" href="#main">跳至正文</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="The Shelf 首页">
+      <span class="brand-mark">S.</span>
+      <span>THE SHELF<small>一座私人书房的公开目录</small></span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="/" aria-current="page">书架</a>
+      <div id="auth" class="auth"></div>
+    </nav>
   </header>
-  <main class="wrap">
-    <section id="owner-panel" class="panel" hidden>
-      <div class="panel-head">
-        <h2>上传</h2>
-        <span id="budget" class="muted"></span>
+
+  <main id="main">
+    <section class="hero">
+      <div>
+        <span class="eyebrow">A PERSONAL COLLECTION · 个人藏书</span>
+        <h1>书在这里，<br>世界在书里。</h1>
+        <p>从文学到科学，从一页到另一页。<br>收藏中的每一本书，都值得被找到。</p>
       </div>
-      <form id="upload-form" class="upload">
-        <input id="upload-files" type="file" multiple required>
-        <input id="upload-category" list="category-list" placeholder="分类（可新建）" required>
-        <datalist id="category-list"></datalist>
-        <button type="submit" class="primary">上传</button>
-      </form>
-      <p class="muted small">每本不超过 20,000,000 bytes；在浏览器计算 SHA-256 后逐本上传。</p>
-      <ul id="upload-log" class="upload-log"></ul>
+      <div class="stats" aria-live="polite">
+        <div><strong id="stat-books">—</strong><span>本藏书</span></div>
+        <div><strong id="stat-cats">—</strong><span>个分类</span></div>
+        <div><strong id="stat-size">—</strong><span>收藏体积</span></div>
+        <div><strong id="stat-cloud">—</strong><span>本云端可读</span></div>
+      </div>
     </section>
 
-    <section class="filters">
-      <input id="q" type="search" placeholder="搜索书名" autocomplete="off">
-      <select id="cat"><option value="">全部分类</option></select>
-      <div class="seg" id="status" role="radiogroup" aria-label="状态">
-        <button type="button" data-v="" aria-pressed="true">全部</button>
-        <button type="button" data-v="uploaded" aria-pressed="false">已上传</button>
-        <button type="button" data-v="local_only" aria-pressed="false">仅本地</button>
-      </div>
-    </section>
-    <p id="counts" class="muted small"></p>
-    <p id="list-error" class="error" hidden></p>
-    <ul id="list" class="books"></ul>
-    <div class="more"><button id="more" type="button" hidden>显示更多</button></div>
+    <details id="owner-panel" class="panel upload-panel" hidden>
+      <summary>
+        <span class="section-title">上传新书</span>
+        <span id="budget" class="muted"></span>
+      </summary>
+      <form id="upload-form" class="upload">
+        <label class="upload-file">选择文件
+          <input id="upload-files" type="file" multiple required>
+        </label>
+        <label>分类（可新建）
+          <input id="upload-category" list="category-list" placeholder="例如：01-计算机与技术" required>
+        </label>
+        <datalist id="category-list"></datalist>
+        <button type="submit" class="primary">逐本上传 →</button>
+      </form>
+      <p class="muted small">每本不超过 20,000,000 bytes；在浏览器计算 SHA-256 后逐本上传，按内容去重。</p>
+      <ul id="upload-log" class="upload-log"></ul>
+    </details>
+
+    <div class="library-layout">
+      <aside class="sidebar">
+        <h2>浏览分类 / COLLECTIONS</h2>
+        <nav id="categories" class="categories" aria-label="书籍分类"></nav>
+        <p class="sidebar-note">
+          书架公开，文件默认私有。<br>
+          阅读与下载需要所有者登录。<br>
+          超过 20 MB 的文件仅登记。
+        </p>
+      </aside>
+      <section aria-label="藏书目录">
+        <select class="mobile-category" id="category" aria-label="分类">
+          <option value="">全部藏书</option>
+        </select>
+        <form class="filters" id="filters">
+          <label class="search">搜索藏书
+            <input id="q" type="search" placeholder="搜索书名、系列或分类…" autocomplete="off">
+          </label>
+          <label>文件状态
+            <select id="status">
+              <option value="">全部状态</option>
+              <option value="uploaded">云端可读</option>
+              <option value="local_only">仅本地</option>
+            </select>
+          </label>
+          <label>排序
+            <select id="sort">
+              <option value="title">按书名</option>
+              <option value="recent">最近添加</option>
+            </select>
+          </label>
+        </form>
+        <p id="list-error" class="notice error" role="alert" hidden></p>
+        <div class="result-row">
+          <span id="count" aria-live="polite">正在读取书架…</span>
+          <span id="sort-label">按书名排列 <span aria-hidden="true">↓</span></span>
+        </div>
+        <div class="book-grid" id="books" aria-busy="true"></div>
+        <div id="empty" class="empty" hidden>
+          <strong>这里还没有匹配的书。</strong>
+          <p>尝试另一个书名，或清除筛选条件。</p>
+          <button id="clear" type="button">清除筛选</button>
+        </div>
+        <div class="pagination"><button id="more" type="button" hidden>显示更多</button></div>
+      </section>
+    </div>
   </main>
+  <footer>
+    <span>THE SHELF <span class="muted">/</span> 让每一本书都能被找到。</span>
+    <span>文件默认私有 · 单本 ≤ 20 MB</span>
+  </footer>
   <script type="module" src="/shelf.js"></script>
 </body>
 </html>

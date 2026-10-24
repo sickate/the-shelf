@@ -4,18 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>阅读 · The Shelf</title>
+  <title>阅读 — The Shelf</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body class="reader">
-  <header class="top">
-    <a href="/" class="back">← 返回书架</a>
-    <h1 id="book-title" class="book-title">加载中…</h1>
-    <a id="download" class="btn" hidden>下载</a>
+  <header class="reader-top">
+    <a id="back" href="/" class="back" title="返回">←</a>
+    <span class="brand-mark small-mark" aria-hidden="true">S.</span>
+    <h1 id="book-title" class="reader-title">正在加载…</h1>
+    <a id="download" class="button" hidden>下载 ↓</a>
   </header>
   <div id="toolbar" class="toolbar" hidden></div>
-  <p id="msg" class="error" hidden></p>
+  <section id="loading" class="loading" role="status" aria-live="polite">
+    <p id="loading-text" class="loading-text">正在加载…</p>
+    <div class="progress" aria-hidden="true"><div id="progress-bar" class="progress-bar indeterminate"></div></div>
+    <p id="loading-detail" class="loading-detail"></p>
+  </section>
+  <p id="msg" class="reader-error" role="alert" hidden></p>
   <div id="login" class="center" hidden></div>
   <main id="view" class="view"></main>
   <script type="module" src="/read.js"></script>

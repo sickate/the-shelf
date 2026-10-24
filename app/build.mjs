@@ -48,7 +48,7 @@ for (const dir of ["cmaps", "standard_fonts", "wasm", "iccs"]) {
   });
 }
 
-const required = ["index.html", "read.html", "404.html", "style.css", "shelf.js", "read.js", "pdfjs/pdf.worker.min.mjs"];
+const required = ["index.html", "book.html", "read.html", "404.html", "style.css", "shelf.js", "book.js", "read.js", "pdfjs/pdf.worker.min.mjs"];
 for (const f of required) {
   await readdir(dirname(join(dist, f))).then((names) => {
     if (!names.includes(f.split("/").pop())) throw new Error(`missing ${f}`);

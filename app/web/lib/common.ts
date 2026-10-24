@@ -146,3 +146,65 @@ export const store = {
     }
   },
 };
+
+/** Titles may encode a series path ("系列/卷 1"); the last segment is the book's own title. */
+export function splitTitle(title: string): { main: string; series: string } {
+  const parts = String(title || "").split("/").map((s) => s.trim()).filter(Boolean);
+  const main = parts.pop() || String(title || "");
+  return { main, series: parts.join(" / ") };
+}
+
+/** Category label without the sorting prefix ("01-计算机与技术" -> "计算机与技术"). */
+export function categoryName(category: string): string {
+  return String(category || "未分类").replace(/^\d+[-_.\s]+/, "") || String(category);
+}
+
+const COVER_COLORS = ["#9d4230", "#365749", "#4e5574", "#976a37", "#62544a", "#7b4657"];
+
+/** Deterministic cover colour (same palette and hash as the original catalog). */
+export function coverColor(id: string | number): string {
+  return COVER_COLORS[Array.from(String(id)).reduce((a, c) => a + c.charCodeAt(0), 0) % COVER_COLORS.length];
+}
+
+/** CSS-generated typographic cover. */
+export function coverEl(b: Book, opts: { num?: string; footer?: string } = {}): HTMLDivElement {
+  const { main } = splitTitle(b.title);
+  const cover = el(
+    "div",
+    { class: "cover", style: `--cover:${coverColor(b.id)}`, "aria-hidden": "true" },
+    el("span", { class: "cover-category" }, `${categoryName(b.category)} / THE SHELF`),
+    el("h2", {}, main),
+  );
+  if (opts.num) cover.append(el("span", { class: "cover-num" }, opts.num));
+  cover.append(el("span", { class: "cover-author" }, opts.footer ?? (fmt(b).toUpperCase() || "—")));
+  return cover;
+}
+
+export const bookUrl = (id: string | number) => `/book.html?id=${encodeURIComponent(String(id))}`;
+export const readUrl = (id: string | number) => `/read.html?id=${encodeURIComponent(String(id))}`;
+export const downloadUrl = (id: string | number) => `/api/books/${encodeURIComponent(String(id))}/file?download=1`;
+
+/** Topbar owner controls: a compact login popover, or the owner badge + logout. */
+export function renderAuthBox(box: HTMLElement, owner: boolean, onChange: (owner: boolean) => void) {
+  box.replaceChildren();
+  if (owner) {
+    const btn = el("button", { type: "button", class: "link-btn" }, "退出登录");
+    btn.addEventListener("click", async () => {
+      try {
+        await logout();
+      } catch {
+        /* ignore */
+      }
+      onChange(false);
+    });
+    box.append(el("span", { class: "owner-badge" }, "所有者"), btn);
+  } else {
+    const details = el("details", { class: "login-pop" }, el("summary", {}, "所有者登录 ↗"));
+    const form = loginForm(() => onChange(true));
+    details.append(form);
+    details.addEventListener("toggle", () => {
+      if (details.open) (form.querySelector("input") as HTMLInputElement).focus();
+    });
+    box.append(details);
+  }
+}
