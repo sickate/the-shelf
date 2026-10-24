@@ -16,6 +16,7 @@ import {
   renderAuthBox,
   splitTitle,
 } from "./lib/common";
+import { InfoSection, mountBookInfo } from "./lib/info-view";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const id = new URLSearchParams(location.search).get("id") || "";
@@ -28,6 +29,7 @@ const authBox = $<HTMLDivElement>("auth");
 
 let book: Book;
 let owner = false;
+let infoSection: InfoSection | null = null;
 
 // Going "back" to the shelf should restore its filters, depth and scroll position.
 const fromShelf = (() => {
@@ -48,7 +50,17 @@ $<HTMLAnchorElement>("back").addEventListener("click", (ev) => {
 function setOwner(next: boolean) {
   owner = next;
   renderAuthBox(authBox, owner, setOwner);
-  if (book) renderActions();
+  if (book) {
+    renderActions();
+    renderInfo();
+  }
+}
+
+/** AI book info is owner-only: visitors see nothing of it. */
+function renderInfo() {
+  infoSection?.destroy();
+  infoSection = null;
+  if (owner) infoSection = mountBookInfo($("book-info"), book, () => setOwner(false));
 }
 
 function fact(term: string, value: string) {
@@ -90,6 +102,7 @@ function renderBook() {
       : "已上传 · 该格式不支持在线阅读，请下载原文件。"
     : "仅本地 · 文件超过 20 MB 或尚未上传，只登记目录信息，无法在线阅读或下载。";
   renderActions();
+  renderInfo();
   loadStatus.hidden = true;
   content.hidden = false;
 }
