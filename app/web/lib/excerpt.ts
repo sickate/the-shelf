@@ -122,6 +122,28 @@ async function textExcerpt(b: Book): Promise<string> {
   return normalizeText(decodeText(bytes));
 }
 
+async function mobiExcerpt(b: Book): Promise<string> {
+  const res = await fetch(fileUrl(b), { credentials: "same-origin" });
+  if (!res.ok) return "";
+  const { openMobi } = await import("./mobi");
+  const book = await openMobi(await res.blob());
+  const parts: string[] = [];
+  let len = 0;
+  for (const section of book.sections.slice(0, 12)) {
+    if (len >= EXCERPT_CHARS) break;
+    try {
+      const doc: Document = await section.createDocument();
+      const text = normalizeText(doc.body?.textContent || doc.documentElement?.textContent || "");
+      if (!text) continue;
+      parts.push(text);
+      len += text.length + 2;
+    } catch {
+      /* skip broken section */
+    }
+  }
+  return parts.join("\n\n");
+}
+
 /** Best-effort excerpt (≤ 12,000 chars) of the book's opening text. Never throws; "" on failure. */
 export async function extractExcerpt(book: Book): Promise<string> {
   try {
@@ -131,7 +153,7 @@ export async function extractExcerpt(book: Book): Promise<string> {
     if (f === "pdf") text = await pdfExcerpt(book);
     else if (f === "epub") text = await epubExcerpt(book);
     else if (f === "txt" || f === "md") text = await textExcerpt(book);
-    // TODO(mobi): MOBI/AZW3 excerpt via lib/mobi.ts once that reader lands.
+    else if (f === "mobi" || f === "azw3" || f === "azw") text = await mobiExcerpt(book);
     return clip(normalizeText(text));
   } catch {
     return "";
