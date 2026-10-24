@@ -15,7 +15,7 @@ import {
   safeStaticBindings,
   deployApi,
 } from "../scripts/cf-api-deploy.mjs";
-import { deploy } from "../scripts/cf-deploy.mjs";
+import { deploy, STATIC_WORKER_SOURCE } from "../scripts/cf-deploy.mjs";
 import { validateSingleTrialTarget } from "../scripts/single-trial-config.mjs";
 import {
   filenameAiSecret,
@@ -266,7 +266,11 @@ test("AI static rollback requires explicit flag and leaves only assets and exact
         await fs.readFile(call.args[call.args.indexOf("--config") + 1], "utf8"),
       );
       assert.equal(config.vars, undefined);
-      assert.equal(config.main, undefined);
+      assert.equal(
+        await fs.readFile(config.main, "utf8"),
+        STATIC_WORKER_SOURCE,
+      );
+      assert.equal(config.assets.binding, "ASSETS");
       assert.equal(config.r2_buckets, undefined);
     }
     return { code: 0 };

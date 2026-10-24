@@ -10,6 +10,8 @@
 
 常规静态发布修复改为固定ASSETS passthrough user Worker，主Agent独立review及76项相关回归通过。恢复方案由专属Sol/high实施：从固定历史UUID显式继承四个已有secret绑定，keep_assets保留既有静态资产，直连有界版本上传及部署各一次，不读取或PUT密钥值；预先精确核验旧版本、空settings、最新上传/活动版本及关闭auth，之后独立核验新不可变版本/settings。方案依据Cloudflare官方SDK的inherit.version_id及multipart metadata文档；尚未执行。013、policy seed、本轮书籍PUT及AI调用均未执行，auth保持关闭，全部历史账本与收据保留。
 
+恢复工具及静态修复提交8f268a745db282008b2ac3ebf18c3433396d3c31已推送；主Agent完整review、89项联合验证、两构建与1638文件秘密扫描通过。两CI40084809765/40084810156在完整测试中失败：filename-AI及prepared静态回退两项遗留断言仍要求main为空，与新固定passthrough契约冲突；交回原Sol/high只修正测试并全面搜索同类断言。失败CI为2230项Node、2226通过/2失败/2因pdftotext缺失跳过，Python未启动，不宣称通过；本机此前PDF真实提取测试已通过。恢复工具及任何新生产动作仍未执行。
+
 ## 2026-10-24 常规隔离上传发布候选
 
 用户已明确批准AGENTS顶部常规隔离上传规则；固定同意记录已在`.local/isolated-upload/consent.json`以0600不可覆盖保存。主Agent独立review及联合226/226通过，最终完整2195项Node+8项Python通过（`/private/tmp/shelf-upload-full-final-20261024.log`）；两构建各1282页、public/static和两轮实际秘密扫描1634文件0命中/0不安全项通过。013最终hash与关闭generation围栏见development-plan顶部。首本与全部旧责任保留，不依赖010/011/012上线。

@@ -20,7 +20,7 @@ import {
   PREPARED_SCHEMA_DEFINITIONS,
   PREPARED_SCHEMA_SHA256,
 } from "../scripts/prepared-schema.mjs";
-import { deploy } from "../scripts/cf-deploy.mjs";
+import { deploy, STATIC_WORKER_SOURCE } from "../scripts/cf-deploy.mjs";
 import { validateSingleTrialTarget } from "../scripts/single-trial-config.mjs";
 import { DatabaseSync } from "node:sqlite";
 
@@ -595,8 +595,11 @@ test("prepared full static rollback must explicitly recognize prepared and prese
         );
         assert.equal(config.vars, undefined);
         assert.equal(config.r2_buckets, undefined);
-        assert.equal(config.main, undefined);
-        assert.ok(config.assets);
+        assert.equal(
+          await fs.readFile(config.main, "utf8"),
+          STATIC_WORKER_SOURCE,
+        );
+        assert.equal(config.assets.binding, "ASSETS");
       }
       return { code: 0 };
     },
