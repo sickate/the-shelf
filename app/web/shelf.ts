@@ -1,6 +1,6 @@
+import { initUpload } from "./lib/upload";
 import {
   api,
-  ApiError,
   Book,
   bookUrl,
   categoryName,
@@ -14,7 +14,6 @@ import {
   splitTitle,
 } from "./lib/common";
 
-const MAX_BYTES = 20_000_000;
 const PAGE = 60;
 
 type Entry = Book & { _t: string; _main: string; _series: string; _created: number };
@@ -239,72 +238,17 @@ $("clear").addEventListener("click", () => {
 moreBtn.addEventListener("click", () => render(false));
 
 // ---------------- Upload ----------------
-const uploadForm = $<HTMLFormElement>("upload-form");
-const fileInput = $<HTMLInputElement>("upload-files");
-const catInput = $<HTMLInputElement>("upload-category");
-const uploadLog = $<HTMLUListElement>("upload-log");
-
-async function sha256Hex(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  const digest = await crypto.subtle.digest("SHA-256", buf);
-  return [...new Uint8Array(digest)].map((x) => x.toString(16).padStart(2, "0")).join("");
-}
-
-uploadForm.addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const cat = catInput.value.trim().replace(/^\/+|\/+$/g, "");
-  const files = [...(fileInput.files || [])];
-  if (!cat || !files.length) return;
-  const submit = uploadForm.querySelector("button") as HTMLButtonElement;
-  submit.disabled = true;
-  let changed = false;
-  for (const file of files) {
-    const status = el("span", { class: "muted" }, "等待中");
-    uploadLog.prepend(el("li", {}, el("span", { class: "title" }, file.name), el("span", { class: "muted" }, humanSize(file.size)), status));
-    const set = (text: string, cls = "muted") => {
-      status.textContent = text;
-      status.className = cls;
-    };
-    if (file.size > MAX_BYTES) {
-      set("跳过：超过 20,000,000 bytes", "error");
-      continue;
-    }
-    if (file.size === 0) {
-      set("跳过：空文件", "error");
-      continue;
-    }
-    try {
-      set("计算 SHA-256…");
-      const hex = await sha256Hex(file);
-      set("上传中…");
-      const res = await api<{ book: Book; duplicate: boolean }>("/api/upload", {
-        method: "PUT",
-        body: file,
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "X-Shelf-Path": encodeURIComponent(`${cat}/${file.name}`),
-          "X-Shelf-Sha256": hex,
-        },
-      });
-      if (res.duplicate) set("已存在（按 SHA-256 去重）", "muted");
-      else {
-        set("已上传 ✓", "ok");
-        changed = true;
-      }
-    } catch (e) {
-      set(errorText(e), "error");
-      if (e instanceof ApiError && e.status === 401) {
-        setOwner(false);
-        break;
-      }
-    }
-  }
-  submit.disabled = false;
-  fileInput.value = "";
-  if (changed) {
+initUpload({
+  form: $<HTMLFormElement>("upload-form"),
+  fileInput: $<HTMLInputElement>("upload-files"),
+  catInput: $<HTMLInputElement>("upload-category"),
+  review: $("upload-review"),
+  isOwner: () => owner,
+  onLoginLost: () => setOwner(false),
+  onDone: () => {
     loadBudget();
     loadBooks();
-  }
+  },
 });
 
 // ---------------- Boot ----------------
