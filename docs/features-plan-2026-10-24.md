@@ -170,3 +170,17 @@ CREATE TABLE IF NOT EXISTS book_info (book_id TEXT PRIMARY KEY REFERENCES books(
 
 - 批量上传结果：445 个候选 → uploaded 384、cataloged（>20 MB 仅登记）59、duplicate 1（`02-数学/高数公式.pdf`）、failed 1（`01-计算机与技术/数据挖掘-概念与技术.pdf`，本地源文件 0 字节 → `empty_file`）；上传 1,442,973,084 bytes。线上书目 444 条（uploaded 385、local_only 59）。
 - EPUB 线上阅读：API 层（未登录 401、登录下载 hash 一致、Range 206）和无头 Chrome 渲染（0.6 MB / 中位 / 18 MB 三本：封面、正文、翻页、目录、无控制台错误）均通过。
+
+## 10. 上线状态（2026-10-24）
+
+当前生产版本 `ddf2529f-7e8d-43cb-8983-a030ef572442`（回退：`npx wrangler rollback 79da3649-34b0-49ae-b90b-367ad68f2c15 --name the-shelf`，即本轮开始前版本；新表和 `covers/` 对象保留）。D1 迁移 `0002_features.sql` 已执行；secrets `OAI_KEY`、`DEEPSEEK_KEY` 已配置。
+
+| 功能 | 实施 | 线上验收 |
+| --- | --- | --- |
+| F1 缩略图 | T2 Opus | 批量补全 374 本：新增 362，失败 12（无内嵌封面 7：6 EPUB + 1 MOBI；PDF 解析失败 5）；封面合计 5,164,600 bytes 已计入预算；书架截图正常 |
+| F2 拖拽上传 | T4 Sonnet | 线上模拟拖入：重复（带原书链接）、>20,000,000 bytes、不支持格式均给出原因，无 PUT；上传成功后自动生成缩略图 |
+| F3 MOBI/AZW3 | T3 Opus | 线上 3 本（含 AZW3）渲染、目录、翻页正常；DRM 仅用构造样本验证 |
+| F4 AI 详情 | T1 Opus（后端）+ T5 Opus（前端/脚本） | 线上 3 本生成成功（书名-only 1 本；PDF 摘录 5,847 字、MOBI 摘录 12,000 字各 1 本），来源均在 DeepSeek 检索白名单内；批量脚本 `npm run app:enrich` 未在线上运行，待用户决定时段 |
+| F5 列表过滤 | T6 Sonnet | 线上计数核对：EPUB+MOBI 26（访客）、+可在线阅读 24、>20 MB 59 |
+
+已知问题/后续：前端构建不做类型检查（合并时漏掉一个改名变量，已修复）——建议加 `tsc --noEmit`；5 本 PDF 缩略图解析失败待查；无封面 EPUB 可考虑渲染首页作为封面。
