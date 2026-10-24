@@ -17,5 +17,8 @@
   "r2_buckets": [
     { "binding": "BOOKS", "bucket_name": "the-shelf-first-book-20261023" }
   ]
-  // Secrets (wrangler secret put): OWNER_PASSWORD, SESSION_SECRET
+  // Secrets (wrangler secret put): OWNER_PASSWORD, SESSION_SECRET, OAI_KEY (AI book info),
+  // DEEPSEEK_KEY (optional web search for AI book info; skipped when unset).
+  // Optional vars: OAI_BASE_URL (default https://oai.parallelstreamllc.com).
+  // Schema migrations: app/migrations/0002_features.sql (covers, book_info).
 }
