@@ -4,6 +4,8 @@
 
 ## 2026-10-24 上传发布中断与恢复记录
 
+ba63b65已push；Cloudflare CI40088456821成功、Pages CI40088456808失败于同hash并发intent用例：测试误把Promise.all第一个请求固定为201胜者，实际合法200重复响应触发断言。upload_ci_finish（Sol/high）仅修此专项，改为两原始请求恰一201/一200并核对同身份、单次预算预留/提交及唯一PUT；生产代码未更改。子Agent18/18及20次独立并发专项通过，主Agent完整diff review与独立18/18通过（`/private/tmp/shelf-upload-dedupe-root-review-20261024.log`）。CI失败日志保留，进入窄修复提交/推送与两CI复验；v2恢复仍未执行。
+
 v2冻结放行：主Agent完整审阅新版脚本、transport、两专项与旧工具仅四export，独立88/88通过（`/private/tmp/shelf-recovery-v2-root-review-20261024.log`），完整2283项Node+8项Python零失败/零跳过（`/private/tmp/shelf-recovery-v2-full-root-20261024.log`）。disabled/same-origin均1282页、public/static和真实秘密扫描1642文件0命中/0不安全通过。v2脚本SHA256=`01aa1c8c872b06436c1f9704b0c44a8a532a4fce362dd326dc4ca7b4f1d32b2b`；固定disabled artifact1312文件/12,516,770bytes、manifest pin=`6af1677ac59cd57db7c6498453f01e0a33b6fffde4e0e0f7ac05b57ec0e6da8f`，主Agent实际loader独立核对通过。支持最多16次固定asset bulk/single POST、总20MB/30HTTP，仅asset允许最终201；其他仍200，所有未知及claim保留。尚未执行该v2真实恢复；进入提交/推送/CI后受控执行。
 
 本机浏览器补验：browser_fixture（gpt-6-luna/medium）使用Chrome155独立临时profile，仅合成localhost夹具；management18/18及book/reader23/23逐项PASS，主Agent独立读DOM核对全部场景。电子书虚拟计时首轮超时保留，真实wall-clock子线程934ms通过，主Agent另独立启动同一合成夹具及临时Chrome、1011ms通过，pageErrors=[]。范围覆盖EPUB/MOBI/AZW/KF8解析、安全隔离、目录/导航/字号/主题/进度和parser清理；浏览器及server均由各自执行者退出。冻结DOM/主Agent电子书报告/hash收据在`.local/browser-headless-20261024/`（0700/0600），不是生产上传/视觉验收，不覆盖历史CUA失败事实。

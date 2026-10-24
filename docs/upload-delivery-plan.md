@@ -23,7 +23,11 @@
 
 ## 验收、发布与回退
 
+CI接续窄修复（2026-10-24，upload_ci_finish，gpt-6.1-sol/high）：ba63b65 Cloudflare CI40088456821成功、Pages CI40088456808在同hash并发intent用例失败；本机通过不覆盖此失败。证据显示重复请求得到合法200/reserved/canSubmit=false，但测试helper错误地要求两个并发请求均201。先由Sol核对真实创建/去重契约，只修正此测试的顺序假设并强化“恰一创建、同身份、一次责任和一次PUT”断言，不放宽生产写门槛或跳过测试。主Agent独立专项/重复并发及适用完整回归后提交推送，再核验两CI；尚不执行v2恢复/013/新书PUT。原失败日志永久保留，运维步骤不变。
+
 补充验证分工（2026-10-24）：browser_fixture（gpt-6-luna/medium）只运行已有本机合成DOM/电子书夹具，尝试用已安装Chrome headless与本项目独立临时profile完成实际浏览器引擎验证，不访问用户Chrome资料或生产API、不读取密钥、不新增产品实现。主Agent独立审查输出与失败，CUA不可用不重复要求用户开窗口；headless通过只能证明所执行合成场景，不记为生产视觉验收。
+
+生产浏览器补验准备由production_browser（gpt-6.1-sol/high，涉及所有者鉴权）另在本项目临时文件中实现，待主Agentreview及既定真实HTTP上传通过后才执行。使用全新临时Chrome profile，不接触用户日常profile；仅主站及localhost可解析，默认preview0IO。执行时内存取得已授权owner key，经真实/account表单登录，/manage核验常规上传就绪但不选文件、不触发识别/上传；读取固定confirmed首本/read并检查真实canvas绘制，可保存0600私有截图；正常退出后再访原阅读地址核验正文消失。每阶段45秒/总90秒硬上限，失败最多一次正常退出，无重新登录或业务请求重放；不打印key/cookie/私人DOM/CDP异常，保留私有布尔结果与退出状态，结束销毁独立profile。此补验不替代24HTTP真实上传验收，也不因浏览器工具故障无限阻塞已验收发布。
 
 主 Agent 独立review并验收：真实SQLite并发最后一槽、同hash/双点击一次PUT、未知claim/PUT保留、20MB/格式/DRM拒绝、未登录/Origin/CSRF、NULL旧normal不误读、首本+新五格式目录/详情/Range/阅读、trash/restore不释放预算、来源冲突拒绝及会话撤销。离线合成通过不能称真实上传。按development-plan顶部本轮发布验收方法，完成生产TS合成DOM回归、完整回归/两构建/隐私检查后commit→push→CI；真实浏览器工具不可用保留为明确未验收项，不冒充通过。固定生产目标、DDL/启用/逐文件HTTP清单及硬上限由实际实现确定再审。真实上传通过后独立目录/全文hash/阅读验收。失败静态回退并关闭policy，保留全部对象/责任/unknown/收据；新增上传后禁止回退到只看首本、看不到新责任的旧业务代码。
 

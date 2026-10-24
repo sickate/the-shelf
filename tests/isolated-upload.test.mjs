@@ -569,14 +569,43 @@ test("closing writes before bytes blocks PUT; closing after claim keeps confirma
 });
 test("same hash dedupes without new responsibility and parallel bytes dispatch at most one PUT", async (t) => {
   const f = await fixture(t);
-  const intents = await Promise.all([
-    f.intent(),
+  const authorityBefore = f.sql
+      .prepare("SELECT committed_bytes,reserved_bytes FROM shelf_storage_authority")
+      .get(),
+    reservationsBefore = f.sql
+      .prepare("SELECT count(*) n FROM shelf_storage_reservations")
+      .get().n;
+  const responses = await Promise.all([
+    f.send("/api/manage/uploads", { body: f.descriptor() }),
     f.send("/api/manage/uploads", { body: f.descriptor() }),
   ]);
-  const first = intents[0],
-    second = await intents[1].json();
+  assert.deepEqual(responses.map((r) => r.status).sort(), [200, 201]);
+  const first = await responses.find((r) => r.status === 201).json(),
+    second = await responses.find((r) => r.status === 200).json();
+  assert.equal(first.upload.state, "reserved");
+  assert.equal(first.upload.canSubmit, true);
+  assert.equal(second.upload.state, "reserved");
   assert.equal(second.upload.canSubmit, false);
   assert.equal(second.bookId, first.bookId);
+  assert.equal(second.fileId, first.fileId);
+  assert.equal(second.upload.id, first.upload.id);
+  assert.equal(second.upload.bytesUrl, first.upload.bytesUrl);
+  assert.equal(
+    f.sql.prepare("SELECT count(*) n FROM browser_uploads").get().n,
+    1,
+  );
+  assert.equal(
+    f.sql.prepare("SELECT count(*) n FROM shelf_storage_reservations").get().n,
+    reservationsBefore + 1,
+  );
+  const authorityReserved = f.sql
+    .prepare("SELECT committed_bytes,reserved_bytes FROM shelf_storage_authority")
+    .get();
+  assert.equal(authorityReserved.committed_bytes, authorityBefore.committed_bytes);
+  assert.equal(
+    authorityReserved.reserved_bytes,
+    authorityBefore.reserved_bytes + PDF.length,
+  );
   const rs = await Promise.all([
     f.send(first.upload.bytesUrl, { binary: PDF }),
     f.send(first.upload.bytesUrl, { binary: PDF }),
@@ -588,8 +617,17 @@ test("same hash dedupes without new responsibility and parallel bytes dispatch a
     1,
   );
   const again = await f.send("/api/manage/uploads", { body: f.descriptor() });
+  assert.equal(again.status, 200);
   assert.equal((await again.json()).upload.canSubmit, false);
   assert.equal(f.io.filter((x) => x[0] === "put").length, 1);
+  const authorityConfirmed = f.sql
+    .prepare("SELECT committed_bytes,reserved_bytes FROM shelf_storage_authority")
+    .get();
+  assert.equal(
+    authorityConfirmed.committed_bytes,
+    authorityBefore.committed_bytes + PDF.length,
+  );
+  assert.equal(authorityConfirmed.reserved_bytes, authorityBefore.reserved_bytes);
 });
 test("lost claim and PUT responses retain responsibility and never replay", async (t) => {
   for (const point of ["claim", "put"]) {
