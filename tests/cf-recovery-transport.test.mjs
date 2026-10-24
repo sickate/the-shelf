@@ -33,7 +33,7 @@ test("successful response is unchanged while observations contain only status an
     { cloudflareErrorCodes: [] },
   ]);
 });
-for (const status of [201, 400, 500])
+for (const status of [201, 202, 400, 500])
   test(`HTTP ${status} preserves status and only numeric API codes before rejection, without retry`, async () => {
     const observations = [];
     let calls = 0;
@@ -86,25 +86,27 @@ test("error-code observation is bounded and does not decide business envelope su
   assert.deepEqual(await result.json(), input);
   assert.equal(observations[1].cloudflareErrorCodes.length, 32);
 });
-test("only the explicit asset-created option accepts HTTP201", async () => {
-  const observations = [];
-  const result = await observedRecoveryResponse(
-    async () => Response.json({ success: true, result: {} }, { status: 201 }),
-    URL,
-    {},
-    options(observations, { allowAssetCreated: true }),
-  );
-  assert.equal(result.status, 201);
-  assert.deepEqual(observations, [
-    { httpStatus: 201 },
-    { cloudflareErrorCodes: [] },
-  ]);
-  await assert.rejects(
-    observedRecoveryResponse(
-      async () => Response.json({ success: true, result: {} }, { status: 202 }),
+test("only explicit asset uploads accept HTTP201 and HTTP202; other statuses stay unknown", async () => {
+  for (const status of [201, 202]) {
+    const observations = [];
+    const result = await observedRecoveryResponse(
+      async () => Response.json({ success: true, result: null }, { status }),
       URL,
       {},
-      options([], { allowAssetCreated: true }),
+      options(observations, { allowAssetUpload: true }),
+    );
+    assert.equal(result.status, status);
+    assert.deepEqual(observations, [
+      { httpStatus: status },
+      { cloudflareErrorCodes: [] },
+    ]);
+  }
+  await assert.rejects(
+    observedRecoveryResponse(
+      async () => Response.json({ success: true, result: {} }, { status: 203 }),
+      URL,
+      {},
+      options([], { allowAssetUpload: true }),
     ),
     unknown,
   );

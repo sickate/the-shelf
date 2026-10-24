@@ -26,7 +26,7 @@ export async function observedRecoveryResponse(
   {
     timeoutMs = RECOVERY_TRANSPORT_LIMITS.timeoutMs,
     observe,
-    allowAssetCreated = false,
+    allowAssetUpload = false,
   } = {},
 ) {
   if (
@@ -34,7 +34,7 @@ export async function observedRecoveryResponse(
     timeoutMs < 1 ||
     timeoutMs > RECOVERY_TRANSPORT_LIMITS.timeoutMs ||
     typeof observe !== "function" ||
-    typeof allowAssetCreated !== "boolean"
+    typeof allowAssetUpload !== "boolean"
   )
     fail();
   const controller = new AbortController();
@@ -102,7 +102,7 @@ export async function observedRecoveryResponse(
     if (
       controller.signal.aborted ||
       (response.status !== 200 &&
-        !(allowAssetCreated && response.status === 201))
+        !(allowAssetUpload && [201, 202].includes(response.status)))
     )
       fail();
     return new Response(body, {

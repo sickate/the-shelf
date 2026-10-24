@@ -15,6 +15,7 @@ import {
   validateRecoveryJwt,
   validateRecoveryV2Version,
   RECOVERY_ASSET_DIRECTORY,
+  RECOVERY_ASSET_202_RUN,
   RECOVERY_V2_DIRECTORY,
   RECOVERY_V2_LIMITS,
   RECOVERY_ASSETS_CONFIG,
@@ -79,9 +80,31 @@ function syntheticAssets() {
     bytes: rows.reduce((s, r) => s + r.size, 0),
   };
 }
-async function fixture(t, bucketCount = 0) {
-  const f = await isolatedFixture(t),
-    assets = syntheticAssets();
+// Synthetic content carrying the five fixed public hashes and byte counts of
+// the failed run. Production cannot inject this loader or change its manifest.
+function historicalAssets() {
+  const assets = syntheticAssets(),
+    fixed = [
+      ["a15ab5ab7c45014de27e4687ae50d1eb", 8305],
+      ["a9689168b0d3af4367b2634c695ce48b", 199848],
+      ["6419c9a49225e3eabddbb3cdf3123675", 8517],
+      ["331aae699f7f38d0f623e7c6813684ef", 240001],
+      ["0cf3bd3ee078d13ee8042611bcc43291", 187825],
+    ];
+  for (const [i, [hash, size]] of fixed.entries()) {
+    const row = assets.rows[i],
+      bytes = Buffer.alloc(size, i);
+    Object.assign(row, { hash, size, sha256: sha(bytes) });
+    assets.contents.set(row.path, bytes);
+  }
+  assets.byHash = new Map(assets.rows.map((row) => [row.hash, row]));
+  assets.manifest = Object.fromEntries(
+    assets.rows.map((row) => [row.path, { hash: row.hash, size: row.size }]),
+  );
+  return assets;
+}
+async function fixture(t, bucketCount = 0, assets = syntheticAssets()) {
+  const f = await isolatedFixture(t);
   f.db.exec("UPDATE auth_config SET generation=2,enabled=0,updated_at=2");
   const current = {
     calls: [],
@@ -249,6 +272,48 @@ async function fixture(t, bucketCount = 0) {
 }
 const prefix = (suffix) => (e) =>
   e.code === `static_binding_recovery_v2_${suffix}`;
+async function continuationFixture(t) {
+  const f = await fixture(t, 0, historicalAssets()),
+    { current, root } = f;
+  current.session.buckets = [
+    current.assets.rows.slice(0, 2).map((row) => row.hash),
+    current.assets.rows.slice(2, 4).map((row) => row.hash),
+    [current.assets.rows[4].hash],
+  ];
+  // The old transport rejected status202. Reproduce its immutable observations
+  // with a rejected envelope; raw envelopes were never recorded in either case.
+  current.hook = (call) =>
+    call.url.endsWith("/workers/assets/upload?base64=true")
+      ? Response.json(
+          { success: false, errors: [], result: null },
+          { status: 202 },
+        )
+      : undefined;
+  await assert.rejects(
+    current.run(RECOVERY_ASSET_202_RUN),
+    prefix("mutation_unknown"),
+  );
+  const dir = path.join(root, RECOVERY_V2_DIRECTORY),
+    oldRun = path.join(dir, RECOVERY_ASSET_202_RUN),
+    snapshot = {};
+  for (const name of await fs.readdir(oldRun))
+    snapshot[name] = await fs.readFile(path.join(oldRun, name), "utf8");
+  current.hook = null;
+  current.calls = [];
+  current.sessionPosts = 0;
+  current.session = {
+    jwt: jwt({ purpose: "new-session-only" }),
+    buckets: current.assets.rows.slice(2, 5).map((row) => [row.hash]),
+  };
+  return {
+    ...f,
+    dir,
+    oldRun,
+    snapshot,
+    continue: (runId = "continuation") =>
+      current.run(runId, { continueAfterAsset202: true }),
+  };
+}
 test("preview has no IO, asset paths or transport and fixed maximum30 requests", async () => {
   const result = await runStaticBindingRecoveryV2({
     root: "/absent",
@@ -363,6 +428,253 @@ test("empty buckets mayattach completionJWT carrying single-asset flag", async (
   const { current } = await fixture(t);
   current.session.jwt = jwt({ wrangler_single_asset_uploads: true });
   assert.equal((await current.run()).outcome, "static_bindings_verified");
+});
+for (const single of [false, true])
+  for (const shape of ["null", "omitted", "object"])
+    test(`asset202 ${shape} intermediate result then201 completion succeeds in ${single ? "single" : "bulk"} mode`, async (t) => {
+      const { current } = await fixture(t, 2);
+      if (single)
+        current.session.jwt = jwt({ wrangler_single_asset_uploads: true });
+      current.hook = (call) => {
+        if (
+          call.url.includes("/workers/assets/upload") &&
+          current.bucketPosts === 0
+        ) {
+          current.bucketPosts++;
+          return Response.json(
+            {
+              success: true,
+              errors: null,
+              ...(shape === "omitted"
+                ? {}
+                : { result: shape === "null" ? null : {} }),
+            },
+            { status: 202 },
+          );
+        }
+      };
+      assert.equal((await current.run()).outcome, "static_bindings_verified");
+      assert.equal(current.bucketPosts, 2);
+      assert.equal(current.versionPosts, 1);
+    });
+for (const body of [
+  { success: false, errors: [], result: null },
+  { success: true, errors: [{ code: 10057 }], result: {} },
+  { success: true, errors: "invalid", result: {} },
+  { errors: [], result: {} },
+])
+  test(`asset202 rejects unsuccessful/error envelope ${JSON.stringify(body)}`, async (t) => {
+    const { current } = await fixture(t, 2);
+    current.hook = (call) =>
+      call.url.includes("/workers/assets/upload")
+        ? Response.json(body, { status: 202 })
+        : undefined;
+    await assert.rejects(current.run(), prefix("mutation_unknown"));
+    assert.equal(
+      current.calls.filter((call) =>
+        call.url.includes("/workers/assets/upload"),
+      ).length,
+      1,
+    );
+    assert.equal(current.versionPosts, 0);
+    assert.equal(current.deploymentPosts, 0);
+  });
+for (const result of [null, [], "invalid", false])
+  test(`asset201 without valid completion cannot dispatch version: ${JSON.stringify(result)}`, async (t) => {
+    const { current, root } = await fixture(t, 1);
+    current.hook = (call) =>
+      call.url.includes("/workers/assets/upload")
+        ? Response.json({ success: true, errors: [], result }, { status: 201 })
+        : undefined;
+    await assert.rejects(current.run());
+    assert.equal(current.versionPosts, 0);
+    await assert.rejects(
+      fs.stat(path.join(root, RECOVERY_V2_DIRECTORY, "attempt-claim.json")),
+      { code: "ENOENT" },
+    );
+  });
+for (const status of [201, 202])
+  for (const stage of ["source", "session", "version", "deployment"])
+    test(`${stage} endpoint remains strict200 when HTTP${status} has success envelope`, async (t) => {
+      const { current } = await fixture(t);
+      const match = (url) =>
+        stage === "source"
+          ? url.endsWith(`/versions/${RECOVERY_SOURCE_VERSION}`)
+          : stage === "session"
+            ? url.endsWith("/assets-upload-session")
+            : stage === "version"
+              ? url.endsWith("?deploy=false")
+              : url.endsWith("/deployments?force=true");
+      current.hook = (call) =>
+        match(call.url)
+          ? Response.json({ success: true, errors: [], result: {} }, { status })
+          : undefined;
+      await assert.rejects(
+        current.run(),
+        prefix(stage === "source" ? "read_failed" : "mutation_unknown"),
+      );
+      assert.equal(current.calls.filter((call) => match(call.url)).length, 1);
+    });
+test("fixed HTTP202 continuation uses one new session, preserves every old record and shares original version claim", async (t) => {
+  const f = await continuationFixture(t),
+    { current, root, dir, oldRun, snapshot } = f;
+  const claimBefore = await fs.readFile(
+    path.join(dir, "asset-session-claim.json"),
+    "utf8",
+  );
+  const result = await f.continue();
+  assert.equal(result.requests, 17);
+  assert.equal(result.cumulativeRequests, 25);
+  assert.equal(result.cumulativeAssetBuckets, 4);
+  assert.equal(result.cumulativeAssetBytes, 644496);
+  assert.equal(current.sessionPosts, 1);
+  assert.equal(current.bucketPosts, 3);
+  assert.equal(current.versionPosts, 1);
+  assert.equal(current.deploymentPosts, 1);
+  assert.equal(
+    await fs.readFile(path.join(dir, "asset-session-claim.json"), "utf8"),
+    claimBefore,
+  );
+  for (const [name, value] of Object.entries(snapshot))
+    assert.equal(await fs.readFile(path.join(oldRun, name), "utf8"), value);
+  const versionClaim = JSON.parse(
+    await fs.readFile(path.join(dir, "attempt-claim.json")),
+  );
+  assert.equal(versionClaim.runId, "continuation");
+  for (const name of await fs.readdir(path.join(dir, "continuation"))) {
+    const text = await fs.readFile(
+      path.join(dir, "continuation", name),
+      "utf8",
+    );
+    assert.equal(text.includes(SESSION), false);
+    assert.equal(text.includes(current.session.jwt), false);
+    assert.equal(text.includes(COMPLETION), false);
+  }
+  for (const call of current.calls.filter((call) =>
+    call.url.includes("/workers/assets/upload"),
+  ))
+    assert.equal(call.headers.Authorization, `Bearer ${current.session.jwt}`);
+  const count = current.calls.length;
+  await assert.rejects(f.continue("third"));
+  await assert.rejects(current.run("ordinary"));
+  assert.equal(current.sessionPosts, 1);
+  assert.equal(current.versionPosts, 1);
+  assert.ok(current.calls.length >= count);
+  assert.ok(
+    await fs.stat(
+      path.join(
+        root,
+        RECOVERY_V2_DIRECTORY,
+        "asset-202-continuation-claim.json",
+      ),
+    ),
+  );
+});
+for (const change of [
+  "result",
+  "status",
+  "error-code",
+  "identity",
+  "manifest",
+  "extra-request",
+  "attempt-claim",
+  "continuation-claim",
+  "mode",
+  "missing",
+  "unsafe",
+])
+  test(`fixed202 continuation ${change} prestate drift rejects before any IO write or HTTP`, async (t) => {
+    const f = await continuationFixture(t);
+    let filename = path.join(f.oldRun, "result.json");
+    if (change === "status")
+      filename = path.join(f.oldRun, "008-http-status.json");
+    if (change === "error-code")
+      filename = path.join(f.oldRun, "008-error-codes.json");
+    if (change === "identity")
+      filename = path.join(f.dir, "asset-session-claim.json");
+    if (change === "manifest")
+      filename = path.join(f.oldRun, "007-intent.json");
+    if (change === "mode") filename = path.join(f.oldRun, "asset-plan.json");
+    if (change === "extra-request")
+      filename = path.join(f.oldRun, "009-intent.json");
+    if (change.endsWith("claim"))
+      filename = path.join(
+        f.dir,
+        change === "attempt-claim"
+          ? "attempt-claim.json"
+          : "asset-202-continuation-claim.json",
+      );
+    if (change === "missing") await fs.unlink(filename);
+    else if (change === "unsafe") await fs.chmod(filename, 0o644);
+    else {
+      let value = {};
+      try {
+        value = JSON.parse(await fs.readFile(filename));
+      } catch {}
+      if (change === "result") value.versionPosts = 1;
+      if (change === "status") value.httpStatus = 200;
+      if (change === "error-code") value.cloudflareErrorCodes = [10057];
+      if (change === "identity") value.identity.worker = "other";
+      if (change === "manifest") value.bodySha256 = "a".repeat(64);
+      if (change === "mode") value.mode = "single";
+      await fs.writeFile(filename, JSON.stringify(value), { mode: 0o600 });
+    }
+    const before = (await fs.readdir(f.dir)).sort();
+    await assert.rejects(f.continue());
+    assert.deepEqual((await fs.readdir(f.dir)).sort(), before);
+    assert.equal(f.current.calls.length, 0);
+  });
+test("concurrent explicit202 continuations acquire exactly one new-session claim", async (t) => {
+  const f = await continuationFixture(t);
+  const results = await Promise.allSettled([f.continue("a"), f.continue("b")]);
+  assert.equal(
+    results.filter((result) => result.status === "fulfilled").length,
+    1,
+  );
+  assert.equal(f.current.sessionPosts, 1);
+  assert.equal(f.current.versionPosts, 1);
+  assert.equal(f.current.deploymentPosts, 1);
+});
+for (const stage of ["session", "asset", "version"])
+  test(`unknown continued ${stage} consumes continuation forever without replay`, async (t) => {
+    const f = await continuationFixture(t);
+    const match = (url) =>
+      stage === "session"
+        ? url.endsWith("/assets-upload-session")
+        : stage === "asset"
+          ? url.includes("/workers/assets/upload")
+          : url.endsWith("?deploy=false");
+    f.current.hook = (call) => {
+      if (match(call.url)) throw Error("synthetic lost response");
+    };
+    await assert.rejects(f.continue(), prefix("mutation_unknown"));
+    const count = f.current.calls.length;
+    f.current.hook = null;
+    await assert.rejects(f.continue("again"));
+    assert.equal(f.current.calls.length, count);
+    assert.equal(f.current.calls.filter((call) => match(call.url)).length, 1);
+    assert.equal(f.current.deploymentPosts, 0);
+  });
+test("continuation preflights must match original source/auth hashes", async (t) => {
+  const f = await continuationFixture(t);
+  // A structurally valid old claim is still bound to the independent new reads.
+  const name = path.join(f.dir, "asset-session-claim.json"),
+    claim = JSON.parse(await fs.readFile(name));
+  claim.authSha256 = "a".repeat(64);
+  await fs.writeFile(name, JSON.stringify(claim));
+  await assert.rejects(f.continue(), prefix("continuation_preflight_changed"));
+  assert.equal(f.current.calls.length, 6);
+  assert.equal(f.current.sessionPosts, 0);
+});
+test("continued session plan reserves later reads and remains within original cumulative30HTTP", async (t) => {
+  const f = await continuationFixture(t);
+  f.current.session.buckets = f.current.assets.rows
+    .slice(0, 9)
+    .map((row) => [row.hash]);
+  await assert.rejects(f.continue(), prefix("request_budget"));
+  assert.equal(f.current.sessionPosts, 1);
+  assert.equal(f.current.bucketPosts, 0);
+  assert.equal(f.current.versionPosts, 0);
 });
 test("single-asset mode uploads two frozen raw hashes sequentially and attaches completionJWT", async (t) => {
   const { current } = await fixture(t);

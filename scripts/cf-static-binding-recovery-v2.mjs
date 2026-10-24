@@ -26,6 +26,8 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url)),
   WORKER = "the-shelf",
   MODULE = "static-worker.mjs";
 export const RECOVERY_V2_DIRECTORY = ".local/cf-static-binding-recovery-v2";
+export const RECOVERY_ASSET_202_RUN =
+  "static-binding-recovery-v2-f753f2b-20261024";
 export const RECOVERY_ASSET_DIRECTORY =
   ".local/isolated-upload/static-fix-disabled-dist";
 export const FROZEN_ASSET_SHA256 =
@@ -278,8 +280,131 @@ export function validateRecoveryV2Version(value, versionId) {
   return staticBindings(value.bindings);
 }
 
+// A single, explicit new session may follow only this recorded HTTP202 stop.
+// No old session token is read; old requests are never replayed. Records remain intact.
+export async function validateRecoveryAsset202Continuation(
+  root,
+  identity,
+  assets,
+) {
+  const dir = path.join(root, RECOVERY_V2_DIRECTORY);
+  await IO.privateDirectory(root, dir);
+  if (
+    JSON.stringify((await fs.readdir(dir)).sort()) !==
+    JSON.stringify([RECOVERY_ASSET_202_RUN, "asset-session-claim.json"].sort())
+  )
+    fail("continuation_invalid");
+  const oldRun = path.join(dir, RECOVERY_ASSET_202_RUN);
+  await IO.privateDirectory(root, oldRun);
+  const claim = await IO.readPrivate(
+    root,
+    path.join(dir, "asset-session-claim.json"),
+  );
+  if (
+    !/^[a-f0-9]{64}$/.test(claim.sourceSha256 || "") ||
+    !/^[a-f0-9]{64}$/.test(claim.authSha256 || "")
+  )
+    fail("continuation_invalid");
+  const equal = (actual, expected) => {
+    if (sha(actual) !== sha(expected)) fail("continuation_invalid");
+  };
+  equal(claim, {
+    schemaVersion: 1,
+    runId: RECOVERY_ASSET_202_RUN,
+    identity,
+    sourceSha256: claim.sourceSha256,
+    authSha256: claim.authSha256,
+  });
+  const buckets = [
+      ["a15ab5ab7c45014de27e4687ae50d1eb", "a9689168b0d3af4367b2634c695ce48b"],
+      ["6419c9a49225e3eabddbb3cdf3123675", "331aae699f7f38d0f623e7c6813684ef"],
+      ["0cf3bd3ee078d13ee8042611bcc43291"],
+    ],
+    bytes = (hashes) =>
+      hashes.reduce((sum, hash) => {
+        const row = assets.byHash.get(hash);
+        if (!row || !Number.isSafeInteger(row.size) || row.size < 1)
+          fail("continuation_invalid");
+        return sum + row.size;
+      }, 0),
+    previous = {
+      state: "stopped",
+      code: "static_binding_recovery_v2_mutation_unknown",
+      requests: 8,
+      assetSessions: 1,
+      assetBuckets: 1,
+      assetBytes: 208153,
+      versionPosts: 0,
+      deploymentPosts: 0,
+      uploadAllowed: false,
+    };
+  if (
+    bytes(buckets[0]) !== previous.assetBytes ||
+    bytes(buckets.flat()) !== 644496
+  )
+    fail("continuation_invalid");
+  const expected = {
+    "run.json": { schemaVersion: 1, identity, limits: RECOVERY_V2_LIMITS },
+    "result.json": previous,
+    "asset-plan.json": {
+      buckets,
+      bytes: 644496,
+      mode: "bulk",
+      frozenAssetSha256: FROZEN_ASSET_SHA256,
+    },
+    "asset-1-claim.json": {
+      bucket: 1,
+      mode: "bulk",
+      hashes: buckets[0],
+      bytes: previous.assetBytes,
+    },
+  };
+  const labels = [
+    "immutable-source",
+    "empty-latest-settings",
+    "production-database-identity",
+    "retained-active-deployment",
+    "fixed-latest-assets-version",
+    "closed-auth-before",
+    "single-asset-session",
+    "single-bulk-asset-bucket",
+  ];
+  for (let i = 1; i <= 8; i++) {
+    const stem = String(i).padStart(3, "0");
+    expected[stem + "-intent.json"] = {
+      sequence: i,
+      label: labels[i - 1],
+      method: i < 6 ? "GET" : "POST",
+      mutation: i === 7 ? "session" : i === 8 ? "asset" : null,
+      bodySha256:
+        i === 6
+          ? sha(JSON.stringify({ sql: RECOVERY_AUTH_SQL, params: [] }))
+          : i === 7
+            ? sha(JSON.stringify({ manifest: assets.manifest }))
+            : i === 8
+              ? sha(buckets[0])
+              : null,
+    };
+    expected[stem + "-http-status.json"] = { httpStatus: i === 8 ? 202 : 200 };
+    expected[stem + "-error-codes.json"] = { cloudflareErrorCodes: [] };
+    expected[stem + "-outcome.json"] = {
+      state: i === 8 ? "unknown" : "response-validated",
+    };
+  }
+  equal((await fs.readdir(oldRun)).sort(), Object.keys(expected).sort());
+  for (const [name, value] of Object.entries(expected))
+    equal(await IO.readPrivate(root, path.join(oldRun, name)), value);
+  return {
+    ...previous,
+    sourceSha256: claim.sourceSha256,
+    authSha256: claim.authSha256,
+    historySha256: sha({ claim, records: expected }),
+  };
+}
+
 export async function runStaticBindingRecoveryV2({
   execute = false,
+  continueAfterAsset202 = false,
   runId,
   root = ROOT,
   environment = process.env,
@@ -298,6 +423,8 @@ export async function runStaticBindingRecoveryV2({
     };
   if (
     execute !== true ||
+    typeof continueAfterAsset202 !== "boolean" ||
+    (continueAfterAsset202 && runId === RECOVERY_ASSET_202_RUN) ||
     !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(runId || "") ||
     typeof fetchImpl !== "function" ||
     typeof loadAssets !== "function" ||
@@ -310,9 +437,6 @@ export async function runStaticBindingRecoveryV2({
   root = context.root;
   const assets = await loadAssets(root),
     dir = path.join(root, RECOVERY_V2_DIRECTORY);
-  await IO.privateDirectory(root, dir, true);
-  const run = path.join(dir, runId);
-  await fs.mkdir(run, { mode: 0o700 });
   const identity = {
     accountId: context.credentials.accountId,
     worker: WORKER,
@@ -321,11 +445,32 @@ export async function runStaticBindingRecoveryV2({
     assetsVersion: RECOVERY_ASSETS_VERSION,
     frozenAssetSha256: FROZEN_ASSET_SHA256,
   };
+  // Validate the complete fixed history and absence of any later claim before
+  // creating even a local new run/claim, and before any network request.
+  const previous = continueAfterAsset202
+    ? await validateRecoveryAsset202Continuation(root, identity, assets)
+    : null;
+  await IO.privateDirectory(root, dir, true);
+  const run = path.join(dir, runId);
+  await fs.mkdir(run, { mode: 0o700 });
   await IO.writeImmutable(root, path.join(run, "run.json"), {
     schemaVersion: 1,
     identity,
     limits: RECOVERY_V2_LIMITS,
+    ...(previous ? { continuationOf: RECOVERY_ASSET_202_RUN } : {}),
   });
+  if (previous)
+    await IO.writeImmutable(
+      root,
+      path.join(dir, "asset-202-continuation-claim.json"),
+      {
+        schemaVersion: 1,
+        runId,
+        continuationOf: RECOVERY_ASSET_202_RUN,
+        identity,
+        historySha256: previous.historySha256,
+      },
+    );
   const base = `https://api.cloudflare.com/client/v4/accounts/${context.credentials.accountId}`,
     workerBase = `${base}/workers/scripts/${WORKER}`,
     versionBase = `${base}/workers/workers/${WORKER}/versions`;
@@ -346,13 +491,13 @@ export async function runStaticBindingRecoveryV2({
       bearer,
       contentType,
       bodySha256,
-      allowAssetCreated = false,
     } = {},
   ) => {
     if (
-      ++count > RECOVERY_V2_LIMITS.http ||
+      ++count + (previous?.requests || 0) > RECOVERY_V2_LIMITS.http ||
       (mutation === "session" && ++assetSessions > 1) ||
-      (mutation === "asset" && ++assetBuckets > 16) ||
+      (mutation === "asset" &&
+        ++assetBuckets + (previous?.assetBuckets || 0) > 16) ||
       (mutation === "version" && ++versionPosts > 1) ||
       (mutation === "deployment" && ++deploymentPosts > 1)
     )
@@ -381,7 +526,7 @@ export async function runStaticBindingRecoveryV2({
           },
           {
             timeoutMs,
-            allowAssetCreated,
+            allowAssetUpload: mutation === "asset",
             observe: (observation) =>
               IO.writeImmutable(
                 root,
@@ -399,7 +544,7 @@ export async function runStaticBindingRecoveryV2({
         (data.errors !== undefined &&
           data.errors !== null &&
           (!Array.isArray(data.errors) || data.errors.length)) ||
-        !Object.hasOwn(data, "result")
+        (mutation !== "asset" && !Object.hasOwn(data, "result"))
       )
         fail("response_invalid");
       await IO.writeImmutable(root, stem + "-outcome.json", {
@@ -468,13 +613,24 @@ export async function runStaticBindingRecoveryV2({
     )
       fail("latest_invalid");
     const authSha256 = await auth("closed-auth-before");
-    await IO.writeImmutable(root, path.join(dir, "asset-session-claim.json"), {
-      schemaVersion: 1,
-      runId,
-      identity,
-      sourceSha256,
-      authSha256,
-    });
+    if (previous) {
+      if (
+        sourceSha256 !== previous.sourceSha256 ||
+        authSha256 !== previous.authSha256
+      )
+        fail("continuation_preflight_changed");
+    } else
+      await IO.writeImmutable(
+        root,
+        path.join(dir, "asset-session-claim.json"),
+        {
+          schemaVersion: 1,
+          runId,
+          identity,
+          sourceSha256,
+          authSha256,
+        },
+      );
     const session = await request(`${workerBase}/assets-upload-session`, {
       label: "single-asset-session",
       method: "POST",
@@ -482,6 +638,14 @@ export async function runStaticBindingRecoveryV2({
       mutation: "session",
     });
     const plan = validateRecoveryBuckets(session, assets.byHash);
+    if (
+      count + plan.buckets.length + 7 + (previous?.requests || 0) >
+        RECOVERY_V2_LIMITS.http ||
+      plan.buckets.length + (previous?.assetBuckets || 0) >
+        RECOVERY_V2_LIMITS.assetBuckets ||
+      plan.bytes + (previous?.assetBytes || 0) > RECOVERY_V2_LIMITS.assetBytes
+    )
+      fail("request_budget");
     await IO.writeImmutable(root, path.join(run, "asset-plan.json"), {
       buckets: plan.buckets.map((bucket) => bucket.map((r) => r.hash)),
       bytes: plan.bytes,
@@ -535,12 +699,14 @@ export async function runStaticBindingRecoveryV2({
             ? { contentType: MIME[path.extname(bucket[0].path)] }
             : {}),
           bodySha256: sha(hashes),
-          allowAssetCreated: true,
         },
       );
-      if (!result || typeof result !== "object" || Array.isArray(result))
+      if (
+        result != null &&
+        (typeof result !== "object" || Array.isArray(result))
+      )
         fail("asset_upload_invalid");
-      if (result.jwt !== undefined && result.jwt !== null && result.jwt !== "")
+      if (result?.jwt !== undefined && result.jwt !== null && result.jwt !== "")
         completionJwt = validateRecoveryJwt(result.jwt);
     }
     validateRecoveryJwt(completionJwt);
@@ -630,6 +796,14 @@ export async function runStaticBindingRecoveryV2({
       assetSessions,
       assetBuckets,
       assetBytes,
+      ...(previous
+        ? {
+            continuationOf: RECOVERY_ASSET_202_RUN,
+            cumulativeRequests: count + previous.requests,
+            cumulativeAssetBuckets: assetBuckets + previous.assetBuckets,
+            cumulativeAssetBytes: assetBytes + previous.assetBytes,
+          }
+        : {}),
       versionPosts,
       deploymentPosts,
       versionId: uploadedVersion,
@@ -671,6 +845,8 @@ export async function main(argv = process.argv.slice(2)) {
     if (seen.has(key)) fail("options_invalid");
     seen.add(key);
     if (key === "--execute") options.execute = true;
+    else if (key === "--continue-after-asset-202")
+      options.continueAfterAsset202 = true;
     else if (key === "--run" && i + 1 < argv.length) options.runId = argv[++i];
     else fail("options_invalid");
   }

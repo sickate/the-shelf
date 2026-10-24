@@ -72,3 +72,15 @@ CI接续窄修复（2026-10-24，upload_ci_finish，gpt-6.1-sol/high）：ba63b6
 7. `node scripts/isolated-upload.mjs enable --execute --run <id> --expected-generation 0`：6 HTTP、1 policy CAS；settings前后精确一致，同条CAS绑定完整初始schema/accounting/trial/auth/policy观测；CLI结果保守保留 uploadAllowed=false，业务可用性由主Agent真实HTTP验收。随后真实上传另按主Agent的逐文件验收清单执行。
 
 回退先用 `node scripts/isolated-upload.mjs close --execute --run <id> --expected-generation <g>`：4 HTTP、1 policy CAS，不读取 Worker配置或完整schema/accounting；enabled0也可 generation+1，保证迟到旧enable CAS失败。保留旧unknown claim，不能据此清除责任。仅policy close保留已确认读取和已claim确认；需要整体静态回退时再auth close及disabled artifact，使用 `node scripts/cf-deploy.mjs --static-rollback --single-trial --filename-ai --isolated-uploads`（2 settings GET）。之后只能恢复保留013的隔离版本，不部署仅识别旧首本的业务版本。
+
+## HTTP202接续修复（2026-10-24）
+
+f753f2b两条CI（40089109934/40089109974）成功，主Agent完整2283项Node+8项Python通过。v2真实恢复在第8请求（第一个公开asset bucket）返回HTTP202、错误code空；工具仅接受200/201而停止。session1、asset1、version0、deployment0，auth仍2/0；013、新书PUT、AI和secret PUT均未执行。原run及全部claim保留，不清除、不重放。
+
+目标是修正静态asset中间响应处理，完成既定恢复及常规上传上线。asset_protocol_finish使用gpt-6.1-sol/high，先核对官方Direct Upload及安装Wrangler的成功契约，窄改仅asset允许202、保留严格envelope；为固定失败run增加一次显式新session接续，保持原记录、相同冻结manifest、共用唯一version claim及原请求/公开字节上限，不创建第三套恢复框架。范围不含业务上传预算调整或重发书籍PUT/AI验收。
+
+依赖为已保存失败证据、冻结公开artifact和源版本AAA7。主Agent独立review及专项验收202中间/201最终、错误envelope、其他端点strict200、前态/并发/唯一claim/JWT隐私/不重放后提交推送，核验CI再执行。随后按013→seed→API部署→auth/policy启用→真实上传/读取/删除恢复→生产浏览器完成。失败保留auth关闭及全部证据；回退沿用既定关闭与保留013的业务版本，不自动重放。
+
+接续实现已冻结，主Agent完整review4文件并独立85/85专项通过；使用导出的只读decoder核对真实旧run全部记录和1312文件冻结artifact匹配（0HTTP/0写入，history SHA256 966a3189e39ea2d647aac3f1e4b8d7ebc9fdb798574daf5e5f00e96fc2334275）。仅asset允许200/201/202及省略/null result，最终有效completion JWT仍必需；新版version官方200示例明确，保持strict200。显式--continue-after-asset-202先校验完整固定前态、新唯一claim，再6次独立前置读取并核对旧source/auth hash；仍共享原唯一version claim。历史8HTTP/1asset/208153bytes计入累计30HTTP/16asset/20MB，新增session仅一次，任何失败不再重放。主Agent完整回归正在运行。此批仅控制面工具、专项及非公开运维文档，生产模块/公开文档与已通过两构建的ba63版本完全相同，沿用已验artifact；新的1642文件实际秘密扫描0命中/0不安全项。提交后仍核验两CI才真实接续。
+
+主Agent接续最终完整回归2324项Node+8项Python通过，零失败/跳过/取消（/private/tmp/shelf-asset202-full-root-20261024.log）；public/static和1642文件实际秘密扫描再次通过。现进入commit→push→两CI→一次显式接续，真实接续尚未执行。

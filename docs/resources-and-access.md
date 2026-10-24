@@ -1,3 +1,7 @@
+## 2026-10-24 最新发布检查点：静态资源202
+
+f753f2b的Cloudflare CI40089109934与Pages CI40089109974成功，本地完整2283项Node+8项Python通过。真实v2恢复run static-binding-recovery-v2-f753f2b-20261024 第8请求收到HTTP202、error codes空后因transport只允许200/201停止。共session1、asset1（208153公开bytes）、version0、deployment0；原记录及claim保留，未重放。013/seed/新书PUT/本轮AI/secret PUT尚未执行，常规上传尚未上线。接续修复见upload-delivery-plan；下方旧检查点保留为历史。
+
 # The Shelf 资源、权限与开发配置
 
 更新日期：2026 年 10 月 24 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。历史按轮次保留，当前状态以最新交付记录及对应私有收据为准。
