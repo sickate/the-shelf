@@ -4,6 +4,14 @@
 
 ## 2026-10-24 上传发布中断与恢复记录
 
+v2冻结放行：主Agent完整审阅新版脚本、transport、两专项与旧工具仅四export，独立88/88通过（`/private/tmp/shelf-recovery-v2-root-review-20261024.log`），完整2283项Node+8项Python零失败/零跳过（`/private/tmp/shelf-recovery-v2-full-root-20261024.log`）。disabled/same-origin均1282页、public/static和真实秘密扫描1642文件0命中/0不安全通过。v2脚本SHA256=`01aa1c8c872b06436c1f9704b0c44a8a532a4fce362dd326dc4ca7b4f1d32b2b`；固定disabled artifact1312文件/12,516,770bytes、manifest pin=`6af1677ac59cd57db7c6498453f01e0a33b6fffde4e0e0f7ac05b57ec0e6da8f`，主Agent实际loader独立核对通过。支持最多16次固定asset bulk/single POST、总20MB/30HTTP，仅asset允许最终201；其他仍200，所有未知及claim保留。尚未执行该v2真实恢复；进入提交/推送/CI后受控执行。
+
+本机浏览器补验：browser_fixture（gpt-6-luna/medium）使用Chrome155独立临时profile，仅合成localhost夹具；management18/18及book/reader23/23逐项PASS，主Agent独立读DOM核对全部场景。电子书虚拟计时首轮超时保留，真实wall-clock子线程934ms通过，主Agent另独立启动同一合成夹具及临时Chrome、1011ms通过，pageErrors=[]。范围覆盖EPUB/MOBI/AZW/KF8解析、安全隔离、目录/导航/字号/主题/进度和parser清理；浏览器及server均由各自执行者退出。冻结DOM/主Agent电子书报告/hash收据在`.local/browser-headless-20261024/`（0700/0600），不是生产上传/视觉验收，不覆盖历史CUA失败事实。
+
+最新接续：null envelope修复09810138688b63fd13167eb3398f9a538d9d3f38已push；两CI40085924047/40085923944成功。主Agent独立36项相关回归通过，前一完整快照2230项Node及8项Python通过。执行`static-binding-recovery-0981013-20261024`在第7请求停止，versionPosts=1、deploymentPosts=0，状态mutation_unknown；旧transport没有保留非200状态/错误码，不能追认该POST已被明确拒绝。全局`.local/cf-static-binding-recovery/attempt-claim.json`及该run全部记录永久保留，原工具不得重跑。之后独立latest/settings只读观察仍为08版本及空bindings；这不证明原请求已终止。
+
+Cloudflare完整官方文档进一步确认：指定UUID的`inherit.version_id`仅受新版`/workers/workers/{worker_id}/versions`支持，旧`/workers/scripts/{script_name}/versions`只接受latest；此前SDK注释遗漏这条限制。原Sol/high正准备独立v2修复：使用固定本项目Worker名、新JSON版本接口和显式完整disabled静态资源JWT，四个secret仅从既有AAA7不可变版本继承，不读取/重发secret值；旧unknown不覆盖，新方案须主Agent独立review、测试、CI后执行。没有安装013、seed、书籍PUT或新AI，auth仍generation2/enabled0。
+
 上传实现85ca5a70c5f114c497d92a8701893b7e2b2aeec0已推送main；Cloudflare CI40080199912与Pages CI40080199916均success。随后auth close以4 HTTP成功关闭生产鉴权，generation2/enabled0，收据`.local/isolated-upload/auth-close.json`。旧profile静态回退实际创建版本08d46159-f7a7-4eec-b47c-30a9502aad2c，postflight失败；独立settings GET确认bindings=[]，日志`.local/cf-static/deploy-ggyy7a/deploy.log`。根因是实际安装Wrangler的assets-only上传metadata提前返回，忽略bindings/keepSecrets，旧模拟测试未覆盖此路径。
 
 固定历史版本aaa7a94f-6478-4d76-aa65-03a3d2461d25的独立GET确认精确旧trial+filename-AI绑定及四个secret_text名称仍保留；只执行一次带force的deployment POST切回该不可变版本，HTTP200/success，后续GET确认100%流量。此POST不得重发；私有claim/response为`.local/isolated-upload/restore-retained-version-{claim,response}.json`，独立观察为`post-restore-independent-observation.json`。实际匿名/api/session返回200/未登录，不能据此证明所有密钥值。settings仍指向最新上传静态版的空绑定；活动流量切回不等于恢复后续上传的默认继承来源。

@@ -112,7 +112,7 @@ export function recoveryUploadMetadata() {
     keep_assets: true,
   };
 }
-function staticBindings(bindings) {
+export function staticBindings(bindings) {
   if (
     !Array.isArray(bindings) ||
     bindings.length !== 5 ||
@@ -138,7 +138,7 @@ export function validateRecoveryVersion(value, versionId) {
     fail("version_invalid");
   return staticBindings(value.resources.bindings);
 }
-function deploymentVersion(value, expected) {
+export function deploymentVersion(value, expected) {
   if (
     !exact(value, ["deployments"]) ||
     !Array.isArray(value.deployments) ||
@@ -157,7 +157,7 @@ function deploymentVersion(value, expected) {
     fail("deployment_invalid");
   return row.id;
 }
-function sourceVersion(value, context) {
+export function sourceVersion(value, context) {
   if (
     value?.id !== RECOVERY_SOURCE_VERSION ||
     !Array.isArray(value.resources?.bindings)
@@ -197,7 +197,7 @@ function sourceVersion(value, context) {
     fail("source_invalid");
   return sha([...bindings].sort((a, b) => (a.name < b.name ? -1 : 1)));
 }
-async function loadContext(root, environment) {
+export async function loadContext(root, environment) {
   root = await fs.realpath(root);
   const loaded = await readProjectEnvironment(root, environment),
     credentials = loaded.credentials;

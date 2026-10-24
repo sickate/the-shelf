@@ -513,6 +513,12 @@ CF-02 已验收：新站点全部 1,303 个静态资源与 1,264 个书籍详情
 
 ## 2026-10-24 用户优先级调整：独立交付书籍上传
 
+最新接续：上传实现及静态发布修复已提交，当前0981013两CI成功；最近完整2230项Node及8项Python通过。新版恢复工具由原gpt-6.1-sol/high线程实施，主Agent负责独立审查：使用支持固定旧版本继承的Workers JSON API及完整冻结disabled资产JWT，保留第一次恢复POST的unknown和原claim，不重发旧请求或secret。六项前检、最多16次固定公开资产上传、版本POST/独立代码核验/部署及四项后检，总上限30HTTP；auth继续关闭，无013安装、seed、新书PUT或新AI。具体方案及失败证据见独立上传交付计划和私有运维收据，修复通过后继续原发布顺序。
+
+浏览器验证有新证据：独立Chrome headless临时profile的管理18场景和动态详情/阅读23场景全部通过，主Agent已独立读取DOM逐项结果；同浏览器真实计时下电子书夹具报告EPUB/MOBI/AZW/KF8解析、安全隔离、目录/导航/字号/主题/进度及parser清理通过。最初虚拟计时运行触发iframe/Worker握手超时，保留原输出，以真实计时结果区分运行方法问题；不把这些本机合成浏览器结果记为生产上传或生产视觉验收。此前CUA不可用不再等于没有浏览器引擎验证。
+
+以下较早检查点按历史保留，当前状态以上述接续为准。
+
 生产发布修复（进行中）：85ca5a7已提交/推送，CI40080199912与40080199916均success；auth close4HTTP成功，generation2/enabled0。旧trial静态回退实际已部署08d46159-f7a7-4eec-b47c-30a9502aad2c，但postflight失败，独立settings1GET确认bindings为空；013/seed/真实上传均未执行。安装的Wrangler源码确认assets-only提前返回metadata，不发送bindings/keepSecrets；增加ASSETS而没有main也会被拒绝。此为实际发布缺陷，不能将模拟settings通过作为真实保留secret证明。继续由原Sol/high线程修复：先只读核验既有旧版本及绑定，主Agent在不重发secret PUT的前提下恢复已有不可变版本；静态回退采用固定ASSETS passthrough模块+显式binding，验证实际发出的metadata及secret继承路径。主Agent独立review、相关回归/构建、提交推送及CI通过后再恢复上传发布流程；记录所有失败版本/日志/收据，不重放未知写，不把活动版本缺失绑定称为底层凭证已删除。
 
 静态修复和独立恢复工具已冻结并由主Agent完整review：76项静态/部署相关回归及包含恢复工具的89项联合回归分别通过；disabled与same-origin均1282页、public/static和实际秘密扫描通过。一次性恢复方案见upload-delivery-plan：固定旧不可变来源、显式四绑定继承、keep_assets、13 HTTP硬上限，版本上传与force部署各一次，auth保持关闭，未知停止。没有重发已成功的旧版本切流POST；恢复工具自身尚未执行。该窄修复提交/CI通过后，主Agent继续013→seed→新API部署→auth/policy启用→固定合成书真实上传/读取验收。

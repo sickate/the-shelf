@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-24T10:09:11.386Z",
-  "version": "dfa77ce2cb63701116a73bbd84c23e25522d956262483e68125a59b0934e7a37",
+  "generatedAt": "2026-10-24T11:03:01.533Z",
+  "version": "72c40e1e5d0e5f97c44af08fc0c3bf5f5a51c9da81bfc78a7e2051fa95a56a9c",
   "basePath": "/",
   "documents": [
     {
@@ -105,9 +105,9 @@
     {
       "id": "development-plan",
       "title": "The Shelf 开发计划",
-      "description": "生产发布修复（进行中）：85ca5a7已提交/推送，CI40080199912与40080199916均success；auth close4HTTP成功，generation2/enabled0。旧trial静态回退实际已部署08d46159-f7a7-4eec-b47c-30a9502aad2c，但postflight失败，独立settings1GET确认bindings为空；013/seed/真实上传均未执行。安装的Wrangler源码确认assets-only提前返回",
+      "description": "最新接续：上传实现及静态发布修复已提交，当前0981013两CI成功；最近完整2230项Node及8项Python通过。新版恢复工具由原gpt-6.1-sol/high线程实施，主Agent负责独立审查：使用支持固定旧版本继承的Workers JSON API及完整冻结disabled资产JWT，保留第一次恢复POST的unknown和原claim，不重发旧请求或secret。六项前检、最多16次固定公开资产上传、版本POST/独立代码核验/部署及四项后检，总上限30HTTP",
       "updatedAt": "2026-10-22",
-      "version": "e32e4153f7712e2d0e6ac90456986033902bab55fd233869096fa917891013bc",
+      "version": "3b09bd617b7569e2cb70c481fc072dd6f91d3fc2c2903287afc6c675f4bb7a4b",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",

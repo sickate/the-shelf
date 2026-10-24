@@ -2,7 +2,7 @@
 
 盘点日期：2026-10-24。依据：`AGENTS.md`、`docs/development-plan.md` 顶部持续计划、`docs/implementation-plan.md`、`docs/remote-storage-plan.md`、`docs/cf03-plan.md`、`docs/resources-and-access.md`，以及当前仓库代码和测试。此清单用于接续开发；较早阶段表和旧状态只作历史线索。
 
-最新状态：上传版本85ca5a70已提交并推送，两条CI（40080199912、40080199916）成功。本机完整2195项Node和8项Python、两构建及隐私检查通过。生产auth已关闭（generation2/enabled0）；静态回退暴露Wrangler assets-only遗漏绑定的真实缺陷，流量已恢复到保留绑定的旧不可变版本，但settings仍是最近上传静态版本的空绑定，尚不能继续常规发布。专属Sol/high正修复静态发布并准备从固定旧版本显式继承现有绑定的一次性恢复工具；静态修复已由主Agent独立review并通过76项相关回归。未安装013、未seed、未执行本轮书籍上传或AI调用。恢复配置后继续固定迁移、部署、开启及613字节合成PDF真实上传/读取验收。常规上传授权已生效，无须逐本聊天批准；浏览器完整视觉交互仍未验收。下方较早检查点仅保留历史，不覆盖本段。
+最新状态：上传版本85ca5a70及静态发布修复已提交并推送；当前HEAD 0981013两CI（40085924047、40085923944）成功。最近完整本机2230项Node和8项Python通过，null envelope窄改另经主Agent独立36项验证。生产auth保持generation2/enabled0，流量为旧AAA7不可变版本；最新上传08的settings仍空bindings。首个恢复工具已执行一次版本POST，在第7HTTP停止，deploymentPosts=0、mutation_unknown；原claim/记录永久保留，不重跑。官方完整文档明确指定旧UUID继承须用新版Workers API，专属Sol/high正在准备独立新版JSON接口及显式静态资产JWT修复，待主审/验证后继续。未安装013、未seed、未执行本轮书籍上传或AI调用。恢复配置后继续固定迁移、部署、开启及613字节合成PDF真实上传/读取验收。常规上传授权已生效，无须逐本聊天批准；浏览器完整视觉交互仍未验收。下方较早检查点仅保留历史，不覆盖本段。
 
 最新冻结检查点：本机完整1963项Node及8项Python全部通过，disabled/same-origin两构建各1282页，public/static及1621文件秘密扫描通过。N2b列表分页、详情、metadata、回收站删除恢复、文件/正文读取与deploy/auth/static/HTTP验收工具均已主审；该批未提交、未推送或部署。此前表中“冻结全套待验”已由本检查点完成；F3完整23项浏览器验收仍未通过，本轮CUA再次观察Chrome进程但无browser且连接cgWindowNotFound，生产保持旧版本。普通上传、010/011安装及真实正文同步仍受原门槛约束。N2c只读operator兼容已启动提案审查：source_finalize（Sol/high）负责prepared schema-status，deploy_wiring（Sol/high）并行调查007/008/009 status；尚未批准实现或取得新兼容验收，随后继续任务依赖链，不能把本轮本机通过视为全部目标完成。
 
