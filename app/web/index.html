@@ -50,10 +50,10 @@
           <input id="upload-category" list="category-list" placeholder="例如：01-计算机与技术" required>
         </label>
         <datalist id="category-list"></datalist>
-        <button type="submit" class="primary">逐本上传 →</button>
+        <button type="submit" class="primary">检查文件 →</button>
       </form>
-      <p class="muted small">每本不超过 20,000,000 bytes；在浏览器计算 SHA-256 后逐本上传，按内容去重。</p>
-      <ul id="upload-log" class="upload-log"></ul>
+      <p class="muted small">每本不超过 20,000,000 bytes；也可把文件或整个文件夹直接拖到页面上（文件夹名作为分类）。上传前会先检查并说明不能上传的原因。</p>
+      <div id="upload-review"></div>
     </details>
 
     <div class="library-layout">

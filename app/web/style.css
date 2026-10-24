@@ -205,6 +205,21 @@ main { max-width: 1500px; margin: auto; padding: 52px 5vw 70px; }
 .empty { padding: 55px 20px; text-align: center; border: 1px dashed var(--line); color: var(--muted); }
 
 /* ---------- Panels / upload ---------- */
+.drop-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--accent) 82%, transparent); color: #fff; font: 28px Georgia, "Songti SC", serif; letter-spacing: 2px; border: 4px dashed #fff; box-sizing: border-box; pointer-events: none; text-align: center; padding: 24px; }
+.drop-overlay[hidden] { display: none; }
+.drop-overlay.deny { background: rgba(60, 60, 60, .85); }
+.review-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.review-actions { display: flex; gap: 10px; }
+.review-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 420px; overflow: auto; font-size: 12px; }
+.review-list:empty { display: none; }
+.review-item { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.review-item .title { flex: 1 1 220px; word-break: break-all; }
+.review-item progress { flex: 1 1 100%; height: 6px; accent-color: var(--accent); }
+.review-item .error a { color: var(--err); }
+.review-item .warn { color: #8a5a00; }
+.tag-warn { background: #fff3d6; color: #8a5a00; }
+.tag-bad { background: #fde7e5; color: #b3261e; }
+@media (prefers-color-scheme: dark) { .tag-warn { background: #4a3a14; color: #f0c870; } .tag-bad { background: #4a1f1c; color: #ff9d95; } .review-item .warn { color: #f0c870; } }
 .notice { font-size: 12px; line-height: 1.8; color: var(--muted); padding: 14px 16px; background: var(--notice); border-radius: 4px; }
 .notice.error { color: var(--err); }
 .notice p { margin: 0 0 10px; }
