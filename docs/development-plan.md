@@ -1,5 +1,13 @@
 # The Shelf 开发计划
 
+## 2026-10-24 暂停检查点
+
+用户已暂停长期开发目标。本检查点只记录进度，不继续开发、部署或生产写入。HEAD `e7a9e050d7adddbaf631c0cf47d9740fcb9fdd12`已推送；Cloudflare CI `40092634503`与Pages CI `40092634591`均success。主Agent完整本机验收2352项Node及8项Python全部通过、零跳过；public/static检查与实际秘密扫描1643文件零命中。
+
+finish-install窄修已通过主审及真实readonly history/prefix核对，但命令从未执行，不能记作013安装完成。此前013原install仅完成前6句与3个临时锁；在21 HTTP/10 DDL后第7个CREATE TRIGGER结果未知。EXPLAIN确认尾注释触发D1 parser拒绝；原unknown与claim均保留。生产只读独立核验确认静态版本`efd364e0-c75d-495f-b717-fc55d74b5c99`为100% active、精确5 bindings、runtime disabled、auth generation2/enabled0。
+
+长期开发仍暂停。恢复时第一步仅执行 `node scripts/isolated-upload.mjs finish-install --execute --run <newunique>`（上限32 HTTP/11 DDL），不得重跑原install；之后依次完成seed、API部署、auth与policy enable、613字节合成PDF单次真实上传HTTP验收及浏览器验收。新常规书尚未上传，网站常规上传未上线；AI和secret不重发。Garage本地书籍复制是独立事项，不代表网站或R2上传；复制实际统计待主Agent补录。本次仅更新进度文档，完成文档导出、公开信息与秘密检查后提交并推送GitHub；无需重跑全套开发验证，不部署生产。既有生产版本与账本继续作为回退基线。
+
 ## 2026-10-24 用户优先级调整：独立交付书籍上传
 
 最新接续：上传实现及静态发布修复已提交，当前0981013两CI成功；最近完整2230项Node及8项Python通过。新版恢复工具由原gpt-6.1-sol/high线程实施，主Agent负责独立审查：使用支持固定旧版本继承的Workers JSON API及完整冻结disabled资产JWT，保留第一次恢复POST的unknown和原claim，不重发旧请求或secret。六项前检、最多16次固定公开资产上传、版本POST/独立代码核验/部署及四项后检，总上限30HTTP；auth继续关闭，无013安装、seed、新书PUT或新AI。具体方案及失败证据见独立上传交付计划和私有运维收据，修复通过后继续原发布顺序。

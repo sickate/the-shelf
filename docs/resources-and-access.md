@@ -1,3 +1,11 @@
+## 2026-10-24 暂停检查点
+
+长期开发目标已暂停。代码HEAD `e7a9e050d7adddbaf631c0cf47d9740fcb9fdd12`已push；Cloudflare CI `40092634503`与Pages CI `40092634591`均success。本机2352项Node及8项Python全部通过且零跳过；public/static检查和1643文件实际秘密扫描零命中。
+
+finish-install窄修已通过主Agent审查及真实readonly history/prefix核对，但从未执行。013原install仅确认前6句和3个临时锁；第7个CREATE TRIGGER在21 HTTP/10 DDL后结果未知，尾注释的D1 parser拒绝由EXPLAIN确认。旧unknown与claim保留，不重跑install。生产只读独立核验为静态版本`efd364e0-c75d-495f-b717-fc55d74b5c99` 100% active、精确5 bindings、runtime disabled、auth generation2/enabled0。
+
+下次若恢复开发，固定从 `node scripts/isolated-upload.mjs finish-install --execute --run <newunique>` 开始（32 HTTP/11 DDL），之后才继续seed、API部署、auth/policy enable和613字节合成PDF单次真实上传HTTP及浏览器验收。新书尚未上传，网站常规上传未上线；AI/secret不重发。Garage本地书籍复制状态需主Agent另补实际数量、字节及hash验收统计；它与网站/R2上传分开记录。本检查点不改变任何生产资源或账本。
+
 ## 2026-10-24 013固定缺失段收尾准备
 
 原安装isolated-install-416e986-20261024在21HTTP/10DDL停止（第7 migration CREATE TRIGGER未知），原claim及unknown保留。两次独立只读schema/control核验及主Agent本机SQLite逐项比对确认精确trial-009+3临时lock+前6句，原业务仍disabled/auth2/0；尚无policy seed/书籍PUT。两次同目标EXPLAIN证明原第7句尾部行注释导致D1 HTTP400/code7500 SQL code did not contain a statement，移除注释HTTP200；EXPLAIN未执行DDL。证据位于.local/isolated-upload/install-independent-416e986及install-explain-416e986。Sol/high正在窄修发送前注释处理和一次固定finish-install（32HTTP/11DDL上限），只补缺失段、确认旧责任不变后才移锁，不重跑原安装。详见upload-delivery-plan。

@@ -1,5 +1,13 @@
 # The Shelf 当前任务状态清单
 
+## 2026-10-24 暂停检查点
+
+长期开发目标已暂停。HEAD `e7a9e050d7adddbaf631c0cf47d9740fcb9fdd12`已push；CI `40092634503`与`40092634591`均success。本机2352项Node+8项Python全部通过、零跳过；public/static与1643文件实际秘密扫描均通过、零命中。
+
+finish-install窄修主审和真实readonly history/prefix核对通过，但尚未执行，013不得记为完成。原install在21 HTTP/10 DDL后第7个CREATE TRIGGER结果未知，仅完成前6句及3个临时锁；尾注释经EXPLAIN确认会被D1 parser拒绝。原unknown与claim保留。生产独立只读确认静态版本`efd364e0-c75d-495f-b717-fc55d74b5c99` 100% active、精确5 bindings、runtime disabled、auth generation2/enabled0。
+
+恢复开发时从 `node scripts/isolated-upload.mjs finish-install --execute --run <newunique>` 开始（32 HTTP/11 DDL），不重跑install；之后才是seed、API部署、auth/policy enable及613字节合成PDF单次上传与浏览器验收。新常规书未上传，网站常规上传未上线；AI/secret不重发。Garage复制是独立事项，实际统计待主Agent补录。状态：paused。
+
 盘点日期：2026-10-24。依据：`AGENTS.md`、`docs/development-plan.md` 顶部持续计划、`docs/implementation-plan.md`、`docs/remote-storage-plan.md`、`docs/cf03-plan.md`、`docs/resources-and-access.md`，以及当前仓库代码和测试。此清单用于接续开发；较早阶段表和旧状态只作历史线索。
 
 最新状态：416e986已推送，两CI40090763480/40090763524成功；本地2324项Node+8项Python通过。静态恢复真实部署POST返回200后本地响应断言停止，但另5项只读postflight确认efd364e0版本100% active、精确5bindings、auth2/0和disabled runtime，未重发部署。013安装在第21HTTP/10DDL停止，独立schema确认精确trial-009+3保护锁+前6句；两次EXPLAIN证明第7句末尾注释导致D1 parser拒绝。Sol/high固定finish-install窄修已完成38/38专项及真实历史只读匹配，主Agent完整回归运行中；原claim/unknown保留，不重跑原安装。policy seed/新书PUT/本轮AI/secret PUT未执行，常规上传尚未上线。本机真实Chrome管理18/18、详情/阅读23/23与电子书真实计时夹具通过，生产新版本仍待验收。
