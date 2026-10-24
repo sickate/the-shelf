@@ -6,7 +6,7 @@
 
 finish-install窄修主审和真实readonly history/prefix核对通过，但尚未执行，013不得记为完成。原install在21 HTTP/10 DDL后第7个CREATE TRIGGER结果未知，仅完成前6句及3个临时锁；尾注释经EXPLAIN确认会被D1 parser拒绝。原unknown与claim保留。生产独立只读确认静态版本`efd364e0-c75d-495f-b717-fc55d74b5c99` 100% active、精确5 bindings、runtime disabled、auth generation2/enabled0。
 
-恢复开发时从 `node scripts/isolated-upload.mjs finish-install --execute --run <newunique>` 开始（32 HTTP/11 DDL），不重跑install；之后才是seed、API部署、auth/policy enable及613字节合成PDF单次上传与浏览器验收。新常规书未上传，网站常规上传未上线；AI/secret不重发。Garage复制是独立事项，实际统计待主Agent补录。状态：paused。
+恢复开发时从 `node scripts/isolated-upload.mjs finish-install --execute --run <newunique>` 开始（32 HTTP/11 DDL），不重跑install；之后才是seed、API部署、auth/policy enable及613字节合成PDF单次上传与浏览器验收。新常规书未上传，网站常规上传未上线；AI/secret不重发。Garage复制是独立事项。Garage书籍全集盘点为3657文件、15,067,525,579 bytes（约14.03 GiB），排除39项数据库、程序或系统元数据；复制正在进行，尚未完成远端全文SHA256验收。链路约0.3 MB/s，预计可能耗时十余小时；最终以私有传输收据为准。状态：paused。
 
 盘点日期：2026-10-24。依据：`AGENTS.md`、`docs/development-plan.md` 顶部持续计划、`docs/implementation-plan.md`、`docs/remote-storage-plan.md`、`docs/cf03-plan.md`、`docs/resources-and-access.md`，以及当前仓库代码和测试。此清单用于接续开发；较早阶段表和旧状态只作历史线索。
 

@@ -517,7 +517,7 @@ CF-02 已验收：新站点全部 1,303 个静态资源与 1,264 个书籍详情
 
 finish-install窄修已通过主审及真实readonly history/prefix核对，但命令从未执行，不能记作013安装完成。此前013原install仅完成前6句与3个临时锁；在21 HTTP/10 DDL后第7个CREATE TRIGGER结果未知。EXPLAIN确认尾注释触发D1 parser拒绝；原unknown与claim均保留。生产只读独立核验确认静态版本`efd364e0-c75d-495f-b717-fc55d74b5c99`为100% active、精确5 bindings、runtime disabled、auth generation2/enabled0。
 
-长期开发仍暂停。恢复时第一步仅执行 `node scripts/isolated-upload.mjs finish-install --execute --run <newunique>`（上限32 HTTP/11 DDL），不得重跑原install；之后依次完成seed、API部署、auth与policy enable、613字节合成PDF单次真实上传HTTP验收及浏览器验收。新常规书尚未上传，网站常规上传未上线；AI和secret不重发。Garage本地书籍复制是独立事项，不代表网站或R2上传；复制实际统计待主Agent补录。本次仅更新进度文档，完成文档导出、公开信息与秘密检查后提交并推送GitHub；无需重跑全套开发验证，不部署生产。既有生产版本与账本继续作为回退基线。
+长期开发仍暂停。恢复时第一步仅执行 `node scripts/isolated-upload.mjs finish-install --execute --run <newunique>`（上限32 HTTP/11 DDL），不得重跑原install；之后依次完成seed、API部署、auth与policy enable、613字节合成PDF单次真实上传HTTP验收及浏览器验收。新常规书尚未上传，网站常规上传未上线；AI和secret不重发。Garage本地书籍复制是独立事项，不代表网站或R2上传。Garage书籍全集盘点为3657文件、15,067,525,579 bytes（约14.03 GiB），排除39项数据库、程序或系统元数据；复制正在进行，尚未完成远端全文SHA256验收。链路约0.3 MB/s，预计可能耗时十余小时；最终以私有传输收据为准。本次仅更新进度文档，完成文档导出、公开信息与秘密检查后提交并推送GitHub；无需重跑全套开发验证，不部署生产。既有生产版本与账本继续作为回退基线。
 
 ## 2026-10-24 用户优先级调整：独立交付书籍上传
 
