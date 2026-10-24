@@ -1,0 +1,23 @@
+---
+import Layout from "../layouts/Layout.astro";
+import BookDetail from "../components/BookDetail.astro";
+// The public artifact contains no requested book or private API snapshot.
+const emptyBook = {
+  id: "",
+  title: "书籍详情",
+  author: "",
+  category: "",
+  categoryId: "",
+  tags: [],
+  description: "",
+  files: [],
+};
+---
+
+<Layout title="书籍详情">
+  <BookDetail book={emptyBook} dynamic />
+</Layout>
+<script>
+  import { initDynamicBook } from "../scripts/book";
+  initDynamicBook();
+</script>

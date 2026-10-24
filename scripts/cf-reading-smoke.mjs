@@ -15,6 +15,7 @@ export const READING_ORIGIN = "https://the-shelf.iamzhutuo.workers.dev";
 export const READING_LIMITS = Object.freeze({
   requests: 11,
   trialRequests: 15,
+  v2Requests: 20,
   timeoutMs: 30_000,
   objectBytes: 20_000_000,
   jsonBytes: 65_536,
@@ -57,6 +58,9 @@ const own = (v, keys) =>
   Object.keys(v).every((k) => keys.includes(k));
 function planValue(p) {
   try {
+    // v2 source/target is pinned private evidence supplied by the caller.
+    // The same-origin HTTP surface does not independently prove a source bucket.
+    const v2 = p?.schemaVersion === 2;
     if (
       !own(p, [
         "schemaVersion",
@@ -66,9 +70,17 @@ function planValue(p) {
         "bucket",
         "descriptor",
         "etag",
-        ...(p?.mode === SINGLE_TRIAL_MODE ? ["mode"] : []),
+        ...(v2
+          ? ["storageMode", "writeMode", "source"]
+          : p?.mode === SINGLE_TRIAL_MODE
+            ? ["mode"]
+            : []),
       ]) ||
-      p.schemaVersion !== 1 ||
+      (!v2 && p.schemaVersion !== 1) ||
+      (v2 &&
+        (p.storageMode !== "authority-v2" ||
+          p.writeMode !== "closed" ||
+          !["normal", "trial"].includes(p.source))) ||
       typeof p.profile !== "string" ||
       p.profile !== "production" ||
       typeof p.origin !== "string" ||
@@ -77,7 +89,7 @@ function planValue(p) {
       !/^[a-f0-9]{32}$/.test(p.accountId) ||
       typeof p.bucket !== "string" ||
       p.bucket !==
-        (p.mode === SINGLE_TRIAL_MODE
+        ((v2 ? p.source === "trial" : p.mode === SINGLE_TRIAL_MODE)
           ? SINGLE_TRIAL_BUCKET
           : "the-shelf-books") ||
       typeof p.etag !== "string" ||
@@ -96,6 +108,8 @@ function planValue(p) {
     fail("invalid_plan");
   }
 }
+const localContent = (p) =>
+  p.schemaVersion === 2 || p.mode === SINGLE_TRIAL_MODE;
 const mimeFor = (d) =>
   d.format === "PDF" ? "application/pdf" : "application/epub+zip";
 const same = (a, b) =>
@@ -253,7 +267,7 @@ async function journalValue(receipt, requestLimit = READING_LIMITS.requests) {
 
 function signatureUrl(access, p, now) {
   try {
-    if (p.mode === SINGLE_TRIAL_MODE) {
+    if (localContent(p)) {
       if (
         !own(access, ["url", "format", "expiresAt", "mode"]) ||
         access.mode !== "local" ||
@@ -356,14 +370,17 @@ const cancel = (body) => {
 export async function runReadingSmoke(options = {}) {
   const p = planValue(options.plan);
   const requestLimit =
-    p.mode === SINGLE_TRIAL_MODE
-      ? READING_LIMITS.trialRequests
-      : READING_LIMITS.requests;
+    p.schemaVersion === 2
+      ? READING_LIMITS.v2Requests
+      : p.mode === SINGLE_TRIAL_MODE
+        ? READING_LIMITS.trialRequests
+        : READING_LIMITS.requests;
   if (options.execute !== true)
     return {
       dryRun: true,
       profile: "production",
-      requests: p.mode === SINGLE_TRIAL_MODE ? 14 : 10,
+      requests:
+        p.schemaVersion === 2 ? 19 : p.mode === SINGLE_TRIAL_MODE ? 14 : 10,
       requestLimit,
       browserVerified: false,
     };
@@ -402,6 +419,7 @@ export async function runReadingSmoke(options = {}) {
       anonymous = false,
       negativeOrigin = false,
       negativeCsrf = false,
+      operator = false,
     } = {},
   ) {
     if (++sequence > requestLimit) fail("request_budget");
@@ -410,7 +428,7 @@ export async function runReadingSmoke(options = {}) {
       sequence,
       label,
       method,
-      service: object ? "r2" : "api",
+      service: object && p.schemaVersion !== 2 ? "r2" : "api",
     });
     await journal.verify();
     let timer,
@@ -432,9 +450,7 @@ export async function runReadingSmoke(options = {}) {
       const headers = object
         ? {
             Origin: READING_ORIGIN,
-            ...(p.mode === SINGLE_TRIAL_MODE && cookie
-              ? { Cookie: cookie }
-              : {}),
+            ...(localContent(p) && cookie ? { Cookie: cookie } : {}),
             ...(range
               ? {
                   Range: `bytes=0-${Math.min(31, p.descriptor.sizeBytes - 1)}`,
@@ -448,7 +464,7 @@ export async function runReadingSmoke(options = {}) {
               ? {
                   Origin: READING_ORIGIN,
                   "Content-Type": "application/json",
-                  ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+                  ...(csrf && !operator ? { "X-CSRF-Token": csrf } : {}),
                 }
               : {}),
           };
@@ -490,10 +506,11 @@ export async function runReadingSmoke(options = {}) {
           : READING_LIMITS.jsonBytes;
         const length = response.headers.get("content-length");
         if (
-          length !== null &&
-          (!/^[0-9]+$/.test(length) ||
-            Number(length) > limit ||
-            (object && Number(length) !== limit))
+          (object && method === "HEAD" && length === null) ||
+          (length !== null &&
+            (!/^[0-9]+$/.test(length) ||
+              Number(length) > limit ||
+              (object && Number(length) !== limit)))
         ) {
           cancel(response.body);
           fail("response_limit");
@@ -511,7 +528,17 @@ export async function runReadingSmoke(options = {}) {
           cancel(response.body);
           fail("object_mismatch");
         }
-        if (object && p.mode !== SINGLE_TRIAL_MODE) {
+        if (
+          object &&
+          method === "HEAD" &&
+          (response.headers.get("accept-ranges") !== "bytes" ||
+            response.headers.has("content-range") ||
+            response.headers.get("cache-control") !== "private, no-store")
+        ) {
+          cancel(response.body);
+          fail("object_mismatch");
+        }
+        if (object && !localContent(p)) {
           const exposed = new Set(
             (response.headers.get("access-control-expose-headers") || "")
               .toLowerCase()
@@ -543,6 +570,7 @@ export async function runReadingSmoke(options = {}) {
           fail("range_mismatch");
         }
         reader = response.body?.getReader();
+        if (method === "HEAD" && !reader) return { response };
         if (!reader) fail("response_invalid");
         let size = 0,
           chunkCount = 0;
@@ -560,9 +588,9 @@ export async function runReadingSmoke(options = {}) {
             fail("response_chunk_limit");
           }
           size += value.byteLength;
-          if (size > limit) {
+          if (size > (method === "HEAD" ? 0 : limit)) {
             Promise.resolve(reader.cancel()).catch(() => {});
-            fail("response_limit");
+            fail(method === "HEAD" ? "response_invalid" : "response_limit");
           }
           if (object) {
             hash.update(value);
@@ -571,6 +599,7 @@ export async function runReadingSmoke(options = {}) {
               prefix.set(value.subarray(0, prefix.length - start), start);
           } else chunks.push(Buffer.from(value));
         }
+        if (method === "HEAD") return { response };
         if (
           object &&
           (size !== limit ||
@@ -640,7 +669,7 @@ export async function runReadingSmoke(options = {}) {
     if (denied.data?.error?.code !== "authentication_required")
       fail("authentication_invalid");
     const contentPath = `${READING_ORIGIN}/api/files/${encodeURIComponent(p.descriptor.fileId)}/content`;
-    if (p.mode === SINGLE_TRIAL_MODE) {
+    if (localContent(p)) {
       const deniedContent = await send("anonymous-content", contentPath, {
         expected: 401,
         anonymous: true,
@@ -662,7 +691,7 @@ export async function runReadingSmoke(options = {}) {
       fail("authentication_invalid");
     csrf = auth.data.csrfToken;
     loginUnknown = false;
-    if (p.mode === SINGLE_TRIAL_MODE) {
+    if (localContent(p)) {
       const deniedCsrf = await send(
         "invalid-csrf-logout",
         `${READING_ORIGIN}/api/logout`,
@@ -703,7 +732,7 @@ export async function runReadingSmoke(options = {}) {
       fail("catalog_mismatch");
     const access = await send("file-access", accessPath),
       url = signatureUrl(access.data, p, now());
-    if (p.mode === SINGLE_TRIAL_MODE) {
+    if (localContent(p)) {
       const deniedOrigin = await send("wrong-origin-content", url, {
         expected: 403,
         negativeOrigin: true,
@@ -711,6 +740,8 @@ export async function runReadingSmoke(options = {}) {
       if (deniedOrigin.data?.error?.code !== "origin_forbidden")
         fail("authentication_invalid");
     }
+    if (p.schemaVersion === 2)
+      await send("object-head", url, { method: "HEAD", object: true });
     const full = await send("object-full", url, { object: true });
     signatureUrl(access.data, p, now()); // do not dispatch a Range using an expired URL
     const range = await send("object-range", url, {
@@ -719,6 +750,35 @@ export async function runReadingSmoke(options = {}) {
       expected: 206,
     });
     if (!full.prefix.equals(range.prefix)) fail("range_mismatch");
+    if (p.schemaVersion === 2) {
+      for (const [label, method, pathname] of [
+        ["closed-operator-root", "GET", "/api/single-trial"],
+        ["closed-operator-upload", "POST", "/api/single-trial/upload"],
+        ["closed-operator-object", "HEAD", "/api/single-trial/object"],
+        [
+          "closed-operator-unknown",
+          "OPTIONS",
+          "/api/single-trial/unknown/deep",
+        ],
+      ]) {
+        const closed = await send(label, READING_ORIGIN + pathname, {
+          method,
+          expected: 404,
+          anonymous: true,
+          operator: true,
+          negativeOrigin: true,
+          ...(method === "POST" ? { body: {} } : {}),
+        });
+        if (
+          closed.response.headers.get("cache-control") !== "no-store" ||
+          (method !== "HEAD" &&
+            (!own(closed.data, ["error"]) ||
+              !own(closed.data.error, ["code"]) ||
+              closed.data.error.code !== "not_found"))
+        )
+          fail("response_invalid");
+      }
+    }
     await logout("logout");
     revocationUnverified = true;
     const anonymous = await send(
@@ -734,7 +794,7 @@ export async function runReadingSmoke(options = {}) {
     const revoked = await send("revoked-access", accessPath, { expected: 401 });
     if (revoked.data?.error?.code !== "authentication_required")
       fail("authentication_invalid");
-    if (p.mode === SINGLE_TRIAL_MODE) {
+    if (localContent(p)) {
       const revokedContent = await send("revoked-content", contentPath, {
         expected: 401,
       });

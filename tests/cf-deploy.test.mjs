@@ -600,6 +600,18 @@ test("trial static rollback requires explicit private target and strips all runt
     }),
     safeError("remote"),
   );
+  await assert.rejects(
+    deploy({
+      root,
+      staticRollback: true,
+      singleTrial: "true",
+      environment: localEnvironment(),
+      inspector: () =>
+        assert.fail("invalid trial flag must reject before HTTP"),
+      runner: () => assert.fail("invalid trial flag must not deploy"),
+    }),
+    safeError("config"),
+  );
   let calls = 0;
   const result = await deploy({
     root,

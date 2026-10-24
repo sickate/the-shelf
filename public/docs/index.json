@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-23T07:27:31.510Z",
-  "version": "4721affb3497ea969bbd0bff26eec89ac974193d462582bb3e26da5328d1eed1",
+  "generatedAt": "2026-10-24T08:58:51.066Z",
+  "version": "48c3a6eda271df780af99de0511b3b82d6acaa747d4c2c145b4981977d953f5d",
   "basePath": "/",
   "documents": [
     {
@@ -105,9 +105,9 @@
     {
       "id": "development-plan",
       "title": "The Shelf 开发计划",
-      "description": "目标：真实首个合成文件名识别返回未知后，纠正“任何未知都会永久阻止所有其他文件识别”的调度设计。主Agent和两个Sol独立复核确认，这不是AGENTS对AI的硬性要求；不得把上传authority的未知阻断类推为所有独立AI推理不可继续。原调用仍未知、没有结果，绝不删除/改判/重发；普通上传及旧存储未知边界完全保留。",
+      "description": "最终本机放行：独立完整2195项Node和8项Python通过（/private/tmp/shelf-upload-full-final-20261024.log），disabled/same-origin两构建各1282页、public/static检查通过，两产物实际私密值扫描均1634文件、0命中/0不安全项。生产仅只读auth核验2HTTP，generation1/enabled1且无未决auth mutation；尚无新生产DDL、上传或发布。进入commit→pu",
       "updatedAt": "2026-10-22",
-      "version": "d5af8948edc044c9259ca2cf81bf8bf69d903659ec17d2272873d9dd011c829a",
+      "version": "f63857ff4c3f4e8b9b9fb3bc74829bc97def2adbe0cd5d2d7eba75ace73d3c77",
       "htmlPath": "/docs/development-plan/",
       "rawPath": "/docs/raw/development-plan.md",
       "htmlUrl": "https://the-shelf.iamzhutuo.workers.dev/docs/development-plan/",

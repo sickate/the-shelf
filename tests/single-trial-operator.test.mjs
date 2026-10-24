@@ -404,6 +404,7 @@ test("one upload POST is independent from confirmation; reconciliation uses only
     result = await f.run("reconcile");
   assert.equal(result.status, "confirmed");
   assert.equal(result.contentVerified, true);
+  assert.equal(f.calls.length - before, 13);
   assert.deepEqual(
     f.calls
       .slice(before)
@@ -513,7 +514,7 @@ test("clean issue and reconcile plus lost confirm response stay within explicit 
   await f.run("schema");
   let before = f.calls.length;
   await f.run("issue");
-  assert.equal(f.calls.length - before, 9);
+  assert.equal(f.calls.length - before, 11);
   before = f.calls.length;
   await f.run("upload");
   assert.equal(f.calls.length - before, 1);

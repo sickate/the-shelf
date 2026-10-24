@@ -12,6 +12,7 @@ export function fileActions({
   mode = "",
   readBase = "",
   onDownload,
+  replaceInitial = false,
 }) {
   const rows = [...root.querySelectorAll("[data-file-row]")];
   const ownerDocument = root.ownerDocument || document;
@@ -30,7 +31,7 @@ export function fileActions({
         row
           .querySelectorAll("[data-dynamic-file-action]")
           .forEach((el) => el.remove());
-        if (mode === "same-origin")
+        if (mode === "same-origin" || replaceInitial)
           row
             .querySelectorAll("[data-file-initial-action]")
             .forEach((el) => el.remove());
@@ -65,7 +66,11 @@ export function fileActions({
         if (status) status.textContent = fileStatus(file);
         const explanation = row.querySelector("[data-file-explanation]");
         if (explanation) explanation.textContent = fileExplanation(file, mode);
-        if (mode !== "same-origin" || !canAccessFile(file, mode)) continue;
+        if (
+          (mode !== "same-origin" && !replaceInitial) ||
+          !canAccessFile(file, mode)
+        )
+          continue;
 
         const actions = row.querySelector("[data-file-actions]");
         if (!actions) continue;

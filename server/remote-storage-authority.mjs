@@ -12,6 +12,12 @@ import {
   STORAGE_CEILING,
 } from "./storage-authority.mjs";
 import { accountEvidence } from "../scripts/cf-library-data.mjs";
+import {
+  readStorageSchemaState,
+  readStorageAuthorityState,
+  STORAGE_SCHEMA_PROFILES,
+  STORAGE_SCHEMA_MANIFEST_SQL,
+} from "./storage-schema-state.mjs";
 
 const json = JSON.stringify,
   clone = structuredClone;
@@ -432,7 +438,6 @@ export class RemoteStorageAuthority {
   #timeout;
   #verificationTimeout;
   #verifyClosure;
-  #trialSchema = null;
   #trialEnabled = false;
   constructor({
     identity,
@@ -605,56 +610,51 @@ export class RemoteStorageAuthority {
     )
       fail("storage_identity_mismatch");
     // A resumed operation observes an earlier unknown INSERT instead of replaying it.
-    if (!existing.length)
-      await this.#query(
+    if (!existing.length) {
+      const schema = await this.#schema();
+      await this.#write(
         "INSERT INTO shelf_storage_authority(id,identity_json,phase) SELECT 1,?,'migration_required' WHERE NOT EXISTS(SELECT 1 FROM shelf_storage_authority WHERE id=1)",
         [json(this.#identity)],
-        "production",
+        schema.layout,
         "initialize-migration-required",
       );
+    }
     return this.inspect(identity);
   }
-  async #audit() {
-    const trial = await this.#hasTrialSchema();
-    const rows = await this.#query(
-      `SELECT a.*,COALESCE((SELECT sum(size_bytes) FROM shelf_storage_reservations WHERE state='confirmed'),0)${trial ? "+COALESCE((SELECT sum(size_bytes) FROM shelf_storage_single_trial WHERE state='confirmed'),0)" : ""} AS actual_committed,COALESCE((SELECT sum(size_bytes) FROM shelf_storage_reservations WHERE state<>'confirmed'),0)${trial ? "+COALESCE((SELECT sum(size_bytes) FROM shelf_storage_single_trial WHERE state<>'confirmed'),0)" : ""} AS actual_reserved FROM shelf_storage_authority a WHERE id=1`,
+  async #schema(required = false) {
+    return readStorageSchemaState({
+      query: (...args) => this.#query(...args),
+      requireTrial: required || this.#trialEnabled,
+    });
+  }
+  async #write(sql, params, layout, operation = "authority-query") {
+    if (!["legacy-v1", "trial-v1"].includes(layout))
+      fail("storage_v2_write_unavailable");
+    const split = sql.indexOf(" RETURNING ");
+    const statement = split < 0 ? sql : sql.slice(0, split);
+    const suffix = split < 0 ? "" : sql.slice(split);
+    return this.#query(
+      `${statement} AND ${STORAGE_SCHEMA_MANIFEST_SQL}=?${suffix}`,
+      [...params, json(STORAGE_SCHEMA_PROFILES[layout])],
+      "production",
+      operation,
     );
-    const s = rows[0];
-    if (rows.length !== 1 || s.identity_json !== json(this.#identity))
-      fail("storage_identity_mismatch");
-    if (
-      s.actual_committed !== s.committed_bytes ||
-      s.actual_reserved !== s.reserved_bytes
-    )
-      fail("storage_ledger_mismatch");
-    return s;
   }
-  async #hasTrialSchema(required = false) {
-    if (required) this.#trialEnabled = true;
-    if (!this.#trialEnabled) return false;
-    if (this.#trialSchema === null || (required && !this.#trialSchema)) {
-      const rows = await this.#query(
-        "SELECT name,sql FROM sqlite_master WHERE name='shelf_storage_single_trial' OR name GLOB 'shelf_single_trial_*' ORDER BY name LIMIT 9",
-        [],
-        "production",
-        "verify-single-trial-schema",
-      );
-      if (!rows.length) this.#trialSchema = false;
-      else if (
-        !same(
-          rows.map((r) => ({ name: r.name, sql: normalizeSql(r.sql) })),
-          singleTrialSchemaDefinitions,
-        )
-      )
-        fail("single_trial_schema_invalid");
-      else this.#trialSchema = true;
-    }
-    if (required && !this.#trialSchema) fail("single_trial_schema_required");
-    return this.#trialSchema;
+  async #audit(requiredTrial = false, writable = false) {
+    const schema = await this.#schema(requiredTrial);
+    // No trusted current-evidence producer is wired in this compatibility batch.
+    if (writable && schema.layout === "activation-v2")
+      fail("storage_v2_write_unavailable");
+    const s = await readStorageAuthorityState({
+      query: (...args) => this.#query(...args),
+      identity: this.#identity,
+      schema,
+    });
+    return { ...s, storageLayout: schema.layout };
   }
-  async #ready(identity) {
+  async #ready(identity, writable = false) {
     this.#assert(identity);
-    const s = await this.#audit();
+    const s = await this.#audit(false, writable);
     if (s.phase !== "ready") fail("storage_migration_required");
     return s;
   }
@@ -727,16 +727,18 @@ export class RemoteStorageAuthority {
     return this.#decodeTrial(rows[0]);
   }
   async inspectSingleTrial(identity) {
+    return this.#inspectTrial(identity, false);
+  }
+  async #inspectTrial(identity, writable) {
     this.#assert(identity);
-    await this.#hasTrialSchema(true);
-    await this.#audit();
-    return this.#trialRow();
+    const state = await this.#audit(true, writable);
+    const row = await this.#trialRow();
+    return writable ? { row, layout: state.storageLayout } : row;
   }
   async issueSingleTrial(identity, input) {
     this.#assert(identity);
     const permit = singleTrialPermit(input, this.#identity, this.#now());
-    await this.#hasTrialSchema(true);
-    const state = await this.#audit();
+    const state = await this.#audit(true, true);
     if (
       state.phase !== "imported" ||
       permit.issuedAt < this.#now() - 300000 ||
@@ -745,8 +747,8 @@ export class RemoteStorageAuthority {
       fail("single_trial_admission_invalid");
     // Deliberately not idempotent: a lost issuance response is recovered by inspect,
     // never by replaying INSERT (including OR REPLACE).
-    await this.#query(
-      "INSERT INTO shelf_storage_single_trial(id,permit_id,consent_id,authority_identity_json,target_json,descriptor_json,isolated_target_config_sha256,size_bytes,issued_at,expires_at,state,put_attempted,content_verified,etag,updated_at) VALUES(1,?,?,?,?,?,?,?,?,?,'reserved',0,0,NULL,?)",
+    await this.#write(
+      "INSERT INTO shelf_storage_single_trial(id,permit_id,consent_id,authority_identity_json,target_json,descriptor_json,isolated_target_config_sha256,size_bytes,issued_at,expires_at,state,put_attempted,content_verified,etag,updated_at) SELECT 1,?,?,?,?,?,?,?,?,?,'reserved',0,0,NULL,? WHERE 1",
       [
         permit.permitId,
         permit.consentId,
@@ -759,7 +761,7 @@ export class RemoteStorageAuthority {
         permit.expiresAt,
         permit.issuedAt,
       ],
-      "production",
+      state.storageLayout,
       "issue-single-trial",
     );
     const saved = await this.#trialRow();
@@ -771,17 +773,17 @@ export class RemoteStorageAuthority {
   async claimSingleTrialPut(identity, permitId, descriptor, bytes) {
     this.#assert(identity);
     const validated = await validateObjectBytes(descriptor, bytes);
-    const row = await this.inspectSingleTrial(identity);
+    const { row, layout } = await this.#inspectTrial(identity, true);
     if (
       !row ||
       row.permit.permitId !== permitId ||
       !same(row.permit.descriptor, validated.descriptor)
     )
       fail("single_trial_conflict");
-    const changed = await this.#query(
+    const changed = await this.#write(
       "UPDATE shelf_storage_single_trial SET state='uploading',put_attempted=1,updated_at=? WHERE id=1 AND permit_id=? AND descriptor_json=? AND state='reserved' AND put_attempted=0 AND expires_at>CAST(unixepoch('subsec')*1000 AS INTEGER) RETURNING id",
       [this.#now(), permitId, json(validated.descriptor)],
-      "production",
+      layout,
       "claim-single-trial-put",
     );
     if (changed.length !== 1) fail("single_trial_put_already_claimed");
@@ -793,19 +795,19 @@ export class RemoteStorageAuthority {
     return claimed;
   }
   async markSingleTrialUncertain(identity, permitId) {
-    const row = await this.inspectSingleTrial(identity);
+    const { row, layout } = await this.#inspectTrial(identity, true);
     if (!row || row.permit.permitId !== permitId) fail("single_trial_conflict");
     if (row.state === "uploading" || row.state === "uncertain")
-      await this.#query(
+      await this.#write(
         "UPDATE shelf_storage_single_trial SET state='uncertain',updated_at=? WHERE id=1 AND permit_id=? AND state IN ('uploading','uncertain') AND put_attempted=1",
         [this.#now(), permitId],
-        "production",
+        layout,
         "uncertain-single-trial",
       );
     return this.#trialRow();
   }
   async reconcileSingleTrial(identity, permitId, adapter) {
-    const row = await this.inspectSingleTrial(identity);
+    const { row, layout } = await this.#inspectTrial(identity, true);
     if (!row || row.permit.permitId !== permitId || !row.putAttempted)
       fail("single_trial_put_not_claimed");
     const store = snapshotObjectStore(row.permit.target, adapter);
@@ -831,10 +833,11 @@ export class RemoteStorageAuthority {
           ...(await this.markSingleTrialUncertain(identity, permitId)),
           blockedReason: "object_absence_unresolved",
         };
-      await this.#query(
+      await this.#audit(true, true);
+      await this.#write(
         "UPDATE shelf_storage_single_trial SET state='confirmed',content_verified=1,etag=?,updated_at=? WHERE id=1 AND permit_id=? AND descriptor_json=? AND state IN ('uploading','uncertain') AND put_attempted=1",
         [etag, this.#now(), permitId, json(row.permit.descriptor)],
-        "production",
+        layout,
         "confirm-single-trial",
       );
       const confirmed = await this.#trialRow();
@@ -941,7 +944,7 @@ export class RemoteStorageAuthority {
     // validation promise unconsumed. This call pins descriptor/bytes synchronously
     // before its first await, and still completes before any budget/network IO.
     const { descriptor: d } = await validateObjectBytes(descriptor, bytes);
-    await this.#ready(pinnedIdentity);
+    const initial = await this.#ready(pinnedIdentity, true);
     const matches = await this.#query(
       "SELECT * FROM shelf_storage_reservations WHERE reservation_id=? OR logical_key=? OR object_key=? LIMIT 4",
       [reservationId, logicalKey(d), d.objectKey],
@@ -965,7 +968,7 @@ export class RemoteStorageAuthority {
         now,
       );
     if (observation.observedAt > now) fail("account_storage_stale");
-    const changed = await this.#query(
+    const changed = await this.#write(
       "UPDATE shelf_storage_authority SET observed_bytes=?,observed_at=?,evidence_hash=?,billing_period=? WHERE id=1 AND identity_json=? AND phase='ready' RETURNING id",
       [
         observation.observedBytes,
@@ -974,6 +977,7 @@ export class RemoteStorageAuthority {
         pinnedEvidence.billingPeriod,
         json(this.#identity),
       ],
+      initial.storageLayout,
     );
     if (changed.length !== 1) fail("storage_migration_required");
     const s = await this.#audit();
@@ -985,7 +989,7 @@ export class RemoteStorageAuthority {
     )
       fail("storage_budget_exceeded");
     if (!matches.length)
-      await this.#query(
+      await this.#write(
         "INSERT INTO shelf_storage_reservations(reservation_id,logical_key,object_key,descriptor_json,size_bytes,state,put_attempted,content_verified,etag,created_at,updated_at) SELECT ?,?,?,?,?,'reserved',0,0,NULL,?,? WHERE NOT EXISTS(SELECT 1 FROM shelf_storage_reservations WHERE reservation_id=? OR logical_key=? OR object_key=?)",
         [
           reservationId,
@@ -999,25 +1003,28 @@ export class RemoteStorageAuthority {
           logicalKey(d),
           d.objectKey,
         ],
+        initial.storageLayout,
       );
     const row = await this.#row(reservationId);
     if (json(row.descriptor) !== json(d)) fail("storage_reservation_conflict");
     return row;
   }
   async claimPut(identity, id) {
-    await this.#ready(identity);
-    const changed = await this.#query(
+    const state = await this.#ready(identity, true);
+    const changed = await this.#write(
       "UPDATE shelf_storage_reservations SET state='uploading',put_attempted=1,updated_at=? WHERE reservation_id=? AND state='reserved' AND put_attempted=0 RETURNING reservation_id",
       [this.#now(), id],
+      state.storageLayout,
     );
     if (changed.length !== 1) fail("storage_put_already_claimed");
     return this.#row(id);
   }
   async markUncertain(identity, id) {
-    await this.#ready(identity);
-    await this.#query(
+    const state = await this.#ready(identity, true);
+    await this.#write(
       "UPDATE shelf_storage_reservations SET state='uncertain',updated_at=? WHERE reservation_id=? AND put_attempted=1 AND state IN ('reserved','uploading')",
       [this.#now(), id],
+      state.storageLayout,
     );
     return this.#row(id);
   }
@@ -1025,7 +1032,7 @@ export class RemoteStorageAuthority {
     const pinned = clone(identity);
     this.#assert(pinned);
     const store = snapshotObjectStore(pinned, adapter);
-    await this.#ready(pinned);
+    const initial = await this.#ready(pinned, true);
     const row = await this.#row(id);
     if (row.state === "confirmed") return row;
     let timer;
@@ -1052,9 +1059,11 @@ export class RemoteStorageAuthority {
           blockedReason: "object_absence_unresolved",
         };
       }
-      await this.#query(
+      await this.#ready(pinned, true);
+      await this.#write(
         "UPDATE shelf_storage_reservations SET state='confirmed',content_verified=1,etag=?,updated_at=? WHERE reservation_id=? AND descriptor_json=? AND state<>'confirmed'",
         [etag, this.#now(), id, json(row.descriptor)],
+        initial.storageLayout,
       );
       const confirmed = await this.#row(id);
       if (confirmed.state !== "confirmed" || confirmed.etag !== etag)
@@ -1239,7 +1248,9 @@ export class RemoteStorageAuthority {
   }
   async #migrate(identity, input, activate) {
     this.#assert(identity);
-    if (await this.#hasTrialSchema()) {
+    const schema = await this.#schema();
+    if (schema.layout === "activation-v2") fail("storage_v2_write_unavailable");
+    if (schema.layout === "trial-v1") {
       if (await this.#trialRow()) fail("single_trial_keeps_imported");
     }
     if (!Array.isArray(input) || input.length !== 2)
@@ -1318,9 +1329,10 @@ export class RemoteStorageAuthority {
       for (const s of sources.filter(
         (s) => !existingSources.some((old) => old.scope === s.scope),
       ))
-        await this.#query(
+        await this.#write(
           "INSERT INTO shelf_storage_sources(scope,migration_hash,snapshot_hash,metadata_json,freeze_proof_json,reservation_count,registry_count,committed_bytes,reserved_bytes) SELECT ?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM shelf_storage_sources WHERE scope=?)",
           [...Object.values(s), s.scope],
+          schema.layout,
         );
       const existingStage = await this.#pages("shelf_storage_staging", "*");
       for (const old of existingStage) {
@@ -1335,9 +1347,10 @@ export class RemoteStorageAuthority {
       );
       for (let start = 0; start < missing.length; start += 10) {
         const batch = missing.slice(start, start + 10);
-        await this.#query(
-          `INSERT OR IGNORE INTO shelf_storage_staging(reservation_id,logical_key,object_key,descriptor_json,size_bytes,state,etag,enabled,created_at) VALUES ${batch.map(() => "(?,?,?,?,?,?,?,?,?)").join(",")}`,
+        await this.#write(
+          `INSERT OR IGNORE INTO shelf_storage_staging(reservation_id,logical_key,object_key,descriptor_json,size_bytes,state,etag,enabled,created_at) SELECT * FROM (VALUES ${batch.map(() => "(?,?,?,?,?,?,?,?,?)").join(",")}) WHERE 1`,
           batch.flatMap(Object.values),
+          schema.layout,
         );
       }
       const staged = await this.#pages("shelf_storage_staging", "*");
@@ -1346,9 +1359,10 @@ export class RemoteStorageAuthority {
       );
       if (!same(staged, expected) || !same(actualSources, sources))
         fail("migration_readback_failed");
-      const changed = await this.#query(
+      const changed = await this.#write(
         "UPDATE shelf_storage_authority SET phase='imported',migration_hash=? WHERE id=1 AND phase='migration_required' RETURNING id",
         [migrationHash],
+        schema.layout,
       );
       if (changed.length !== 1) fail("migration_conflict");
     } else if (
@@ -1455,9 +1469,10 @@ export class RemoteStorageAuthority {
       verifiedAt: this.#now(),
     };
     if (!activate) {
-      await this.#query(
+      await this.#write(
         "UPDATE shelf_storage_authority SET readback_hash=?,receipt_json=? WHERE id=1 AND phase='imported' AND migration_hash=?",
         [readbackHash, json(importedReceipt), migrationHash],
+        schema.layout,
       );
       const saved = await this.#audit();
       if (
@@ -1497,9 +1512,10 @@ export class RemoteStorageAuthority {
       freezeProofs: proofs,
       verifiedAt: this.#now(),
     };
-    await this.#query(
+    await this.#write(
       "UPDATE shelf_storage_authority SET phase='ready',readback_hash=?,receipt_json=? WHERE id=1 AND phase='imported' AND migration_hash=?",
       [readbackHash, json(receipt), migrationHash],
+      schema.layout,
     );
     const ready = await this.#audit();
     if (ready.phase !== "ready" || ready.receipt_json !== json(receipt))

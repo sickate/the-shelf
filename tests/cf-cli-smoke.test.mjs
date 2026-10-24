@@ -22,6 +22,7 @@ async function fixture(t, { legacy = false } = {}) {
     "cf-api-deploy.mjs",
     "cf-library-clients.mjs",
     "cf-library-data.mjs",
+    "prepared-schema.mjs",
   ]) {
     let source = await fs.readFile(path.join(ROOT, "scripts", name), "utf8");
     if (legacy && name === "cf-deploy.mjs") {
@@ -30,13 +31,19 @@ async function fixture(t, { legacy = false } = {}) {
     }
     await fs.writeFile(path.join(root, "scripts", name), source);
   }
-  // Deployment entrypoints share the trial target validator and its portable
-  // library dependencies even when this fixture exercises the regular CLI.
+  // Copy only the public dependency closure, including the frozen SQL inspected
+  // by prepared-schema at import time and the pure trial decoder. These files
+  // are evaluated by the real CLI; no private configuration or data is copied.
   for (const name of [
     "scripts/single-trial-config.mjs",
+    "scripts/storage-deploy-guard.mjs",
+    "shared/storage-deployment-contract.mjs",
+    "shared/storage-schema-profiles.mjs",
     "cloudflare/library/single-trial.mjs",
+    "cloudflare/library/trial-record.mjs",
     "cloudflare/library/core.mjs",
     "cloudflare/library/security.mjs",
+    "cloudflare/library/migrations/010-prepared-index.sql",
   ]) {
     await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true });
     await fs.copyFile(path.join(ROOT, name), path.join(root, name));

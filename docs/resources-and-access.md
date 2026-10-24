@@ -1,6 +1,72 @@
 # The Shelf 资源、权限与开发配置
 
-更新日期：2026 年 10 月 23 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。历史按轮次保留，当前状态以最新交付记录及对应私有收据为准。
+更新日期：2026 年 10 月 24 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。历史按轮次保留，当前状态以最新交付记录及对应私有收据为准。
+
+## 2026-10-24 常规隔离上传发布候选
+
+用户已明确批准AGENTS顶部常规隔离上传规则；固定同意记录已在`.local/isolated-upload/consent.json`以0600不可覆盖保存。主Agent独立review及联合226/226通过，最终完整2195项Node+8项Python通过（`/private/tmp/shelf-upload-full-final-20261024.log`）；两构建各1282页、public/static和两轮实际秘密扫描1634文件0命中/0不安全项通过。013最终hash与关闭generation围栏见development-plan顶部。首本与全部旧责任保留，不依赖010/011/012上线。
+
+生产仅只读检查：`.local/isolated-upload/auth-preflight.json`及production-auth的`isolated-upload-preflight-20261024`收据，实际2HTTP，generation1/enabled1、无未决auth mutation；未执行新生产DDL、PUT、AI、secret、计费变更或部署。下一步按upload-delivery-plan的固定顺序完成commit→push→CI→受控发布和独立真实验收。CUA当前不可用，浏览器视觉/交互不记为通过；此前旧检查点保留为历史。
+
+## 2026-10-24 离线复审检查点
+
+本轮最终冻结验收：`npm test`独立1963项Node与8项Python全部通过，零失败/跳过/取消，日志`/private/tmp/shelf-n2b-final-full-20261024.log`（Node225260ms）。disabled与same-origin两构建均1282页通过；各自verify:public均1327文件、1264书目，verify:static均1312资源/1282 HTML/12公开文档；最终真实秘密扫描1621文件、0命中/0不安全项，日志分别为`/private/tmp/shelf-n2b-build-disabled-20261024.log`、`/private/tmp/shelf-n2b-build-api-20261024.log`及同前缀public/static/private-scan日志。artifact --check和git diff --check通过，010/011/012及shared contract/artifact保持已审哈希。该结果覆盖当前未提交工作区，不是远端CI或线上验收；没有commit/push/deploy/生产DDL/真实上传/AI/secret操作。新F3完整23项CUA仍未通过：当前Chrome/IAB直接创建均Browser is not available，原生Chrome cgWindowNotFound。按既定浏览器发布门槛保留旧生产版本；普通上传门槛仍阻塞，未扩大首本许可。
+
+3b-2 metadata/回收站删除恢复主Agent逐项review及独立272/272通过（`/private/tmp/shelf-book-mutations-main-review-fixed-20261024.log`）。修复仅MF精确域名路由夹具，保留首次模拟器Origin拦截失败日志；新POST正例、产品Origin/CSRF拒绝、普通/首本/跨源冲突均真实workerd通过。两类mutation均4业务statement、max10bind，各SQL≤16KiB，结果整包≤1MiB，无unknown重放。mutation SHA=`1892dc3309a64437faa5d731102828f4c60aa72774d488a55e2a6a272f1efdb5`，controller=`becffb658d0fa7f422ba1f32d42972cb1d878f7aa995ea16ba3ec90e93423b5d`。仅本机验收，整批尚未提交/部署，进入冻结全套；当前真实Chrome/IAB均不可用，无新浏览器通过证据。
+
+v2 reading-smoke工具/新专项主Agent逐项review并独立74/74通过（包含未改旧40项），日志`/private/tmp/shelf-v2-reading-main-review-20261024.log`，工具SHA=`2cd34677c50040a8c083ed486dc19641c1ccdbe1d8bfefbe6fd2861d2271a4b0`。normal/trial仅同源、19正常/20上限、HEAD及4匿名operator关闭、unknown logout零重试已合成验收；未执行真实请求。该工具不能独立证明源桶，真实plan仍须来自固定confirmed私有证据。
+
+最新3b-1路由/UI主Agent独立120/120、3c prepared/source/controller/legacy联合581/581通过，均含真实本机workerd，日志`/private/tmp/shelf-book-routes-main-review-20261024.log`与`/private/tmp/shelf-prepared-v2-main-review-20261024.log`。3b-1单SELECT分页/详情15341/15339B、6bind；3c read9070B/10bind、guarded admission9392B/14bind，20k块=26业务D1/3 prepared R2/一次access。原source SQL/guard和010保持。source SHA=`597698dc9c7ec3c77d1d599cfafeeef6871efb194ba91c97838fb573c8f82a21`、prepared-source=`d52c95416e79f9323dd1a3169f60411d3e7f5c42bb81e7fb9dd5fd6bd63541e3`、prepared=`30fc8dd7b0be40d900ea52d66d0cd4924a7d1644fa9e28a06f09df255431067a`。metadata/删除恢复接线及v2 reading-smoke仍在开发，未执行生产DDL、真实同步、上传、AI、部署或新浏览器验收。
+
+接续完整pre-route回归1707项Node中1706通过，唯一失败为CF01隔离CLI夹具漏复制新增shared依赖；Python因前项失败未启动。仅补公开依赖的9行变更已由主Agent逐行review并独立15/15通过，保留原网络/配置拦截、错误断言与5秒上限。原失败日志`/private/tmp/shelf-integration-pre-routes-20261024.log`保留；当前路由和prepared仍在实现，最终冻结后须重跑全套。本轮CUA仍只有Chrome进程、无browser provider，原生连接cgWindowNotFound；未获得新DOM通过证据，未执行云mutation。
+
+主Agent已接受3b纯展示API（source SHA256 `afaa17a4d44fb036b627b14b2a1ba72146c60135876b776304835e82c3a4e861`）及4b auth/static：独立475/475读取/展示/旧Worker联合、192/192部署/鉴权/回退联合通过，日志`/private/tmp/shelf-storage-projection-main-review-20261024.log`、`/private/tmp/shelf-v2-auth-static-main-review-20261024.log`。旧trial enable密钥契约和静态入口严格boolean回归已修复、独立验证。auth probe3289B/1bind、CAS2761B/6bind，11HTTP/上限12；静态2 settings、close4另计。三份4b模块SHA分别auth=`7718025a7fef8cb7127ed669e1c37149d96425a683dbdff8a1f0dee03c6b7ad1`、static=`c1474b8e895550490a6a702dd4d4baf88d137ff3043a516a400cb473be9e490e`、guard=`214645b6d074c9ab43c24e991b7f94cbea35def6991bfa0d5775ff05ddddfe9c`。未执行真实auth/Worker/DDL/AI/上传操作，仍未发布。
+
+已有文档提交`54453889b4c0f0423727a5c9c2cf969dd420e72b`的两CI本轮用完整固定SHA独立只读查回：Cloudflare `39973229217`、Pages `39973229306`均completed/success，结果`/private/tmp/shelf-doc-ci-full-5445388-20261024.json`。初次沙箱DNS失败、短SHA查询无匹配均保留；未触发工作流、推送或新部署，该结果不覆盖当前未提交工作区。
+
+N2b-4a deploy主Agent独立156/156通过（`/private/tmp/shelf-v2-deploy-main-review-20261024.log`）；N2b-3a controller/Worker gates主Agent逐项review及独立375/375联合通过（`/private/tmp/shelf-storage-read-main-review-verified-20261024.log`），含真实workerd双桶、Range/HEAD、admission及旧v1。3a固定成功预算4 D1+1 R2、5456B/9 bind。最初回环EPERM日志保留。尚未提交、推送、部署；auth/static已在后续上述192项验收，详情/列表/metadata/prepared接线仍未完成，不能将本地结果描述为线上支持。
+
+N2b-2 source/纯trial历史decoder和N2b-1精确平台扩展已由主Agent完整review并独立296项联合通过，零失败/跳过/取消，含真实workerd双R2和配置等待竞态；日志`/private/tmp/shelf-source-main-review-20261024.log`。本机schema-only独立复验仅读synthetic sqlite_master，确认`_cf_METADATA`精确DDL，外网调用0；收据`.local/storage-source-platform-schema-receipt.json`。三个完整平台变体保留在raw snapshot，不忽略前缀、不改原profile哈希。artifact --check SHA256 `1120fee5ec07248f162793be667f1946e426a7463222b2215a92f4b9f6734757`、118565字节；source SHA256 `17b0400397de758effac09ccfcd505600dce34d1cfe79b4e2de631e79b8dba7a`。结果只覆盖离线模块，Worker/controller/deploy/auth/static接线仍在实施，未发布。
+
+CLI smoke依赖修复已由主Agent独立3/3复验通过（`/private/tmp/shelf-cli-main-review-20261024.log`），保留原错误断言、网络拦截及超时；下述完整回归的3项失败保留为修复前事实。新controller/deploy快照冻结后仍须再跑全套及两构建。浏览器本次再次枚举无Chrome provider，不把HTTP夹具检查算作DOM成功。
+
+N2b-1纯配置/schema契约主Agent完整审阅，独立140项联合回归及artifact --check通过。J0主Agent完整审阅SQL/module和专项，独立41项Node+6项真实workerd合成测试通过（`/private/tmp/shelf-j0-main-review-20261024.log`）；012 SHA256 `363abdb27a27b278b49b979d5474d956a8284614aad17c819e24ef0ce0ab03f4`，未安装云端、默认gate closed，没有Workflow/业务路由或真实AI调用。N4只读设计已审，仍无admissible账号证据或A/B完整旧writer证明；不开放普通上传。
+
+完整整合首轮受限测试因本机回环端口EPERM和J0编辑中间快照失败；独立提升后的1255项Node中1252通过、3项CLI smoke隔离fixture依赖缺失，Python未执行，修复和最终冻结回归待完成。Chrome进程可见但CUA应用连接仍cgWindowNotFound、browser provider不可用；F3未取得23项完整通过。GitHub `5445388` CI本轮查询因api.github.com DNS超时未取回；没有重复F4发布/真实AI、DDL、PUT或secret操作。
+
+## 2026-10-23 F4 runtime修复发布及唯一修复轮AI验收
+
+独立提交`307d05d7fdf0cfeff19a544fd1c3a16cf672bb98`已push；Cloudflare CI `39970044768`及Pages CI `39970044944`成功。F4隔离源码快照完整955项Node及8项Python通过，零失败/跳过/取消；disabled与same-origin均构建1281页，public/static及实际凭证扫描1559文件零匹配/不安全项通过，具体日志和边界见`docs/filename-runtime-release.md`。此隔离快照仅包含F4，不包含F1/N2a工作区改动，也不替代其验收。
+
+受控部署日志为`.local/cf03/deploy-S2pojk/deploy.log`；私有`.local/cf03/f4-runtime-release-active-result.json`确认版本`aaa7a94f-6478-4d76-aa65-03a3d2461d25`唯一100% active。固定PDF真实HTTP回归14项通过，`browserVerified=false`。公开runtime/manage/read三个GET字节与发布包逐字匹配；首轮transport失败记录保留，公开回读总尝试不超过4次。此次未部署F3新前端。
+
+F4唯一修复轮真实合成AI验收成功：收据`.local/single-trial/filename-identify-repair-acceptance-identify-repair-307d05d-20261023/result.json`，共10 HTTP、1次AI POST、0上传字节、0真实书目修改；上游HTTP 200、耗时2844 ms、返回metadata精确匹配预期。剩余17、`consumedOne=true`；两条历史unknown收据hash保持相同，`historyRetained=true`，`aiReconciliationRequired=false`；登出及撤销拒绝验收通过。没有重发secret、执行DDL、普通上传或重置历史unknown。该成功仅验证本次固定合成修复轮，不代表一般书籍识别、F3浏览器验收或普通上传已完成。
+
+## 2026-10-23 生产浏览器私人阅读验收补充
+
+主Agent通过CUA在Chrome Tuo实际观察所有者登录成功、管理目录/上传关闭原因、既有私人PDF canvas显示、1/1页首尾禁用边界、跳页1、120%缩放和刷新后重新授权显示；随后实际退出登录并重新打开原阅读地址，页面要求先登录，正文canvas及工具不出现。独立收据`.local/browser-acceptance/production-pdf-30309a8-20261023.json`记录本轮范围；不修改历史HTTP收据的browserVerified=false。固定PDF只有一页，不能证明多页翻页；Range仍由独立14HTTP验收支持，未声称浏览器网络检查。没有上传字节、下载原件或修改书目。本轮仍对应旧生产包，新工作区代码尚未发布。
+
+用户补充开发期可由Agent自行输入当前所有者Key进行验收，不再重复要求用户代输；密钥仍只从项目私有配置取得、不输出或保存到浏览器。正式上线前须完成既定凭证轮换与旧会话撤销验收，不因本轮授权省略。
+
+## 2026-10-23 本机F1/N1 review与全量验证快照
+
+主Agent独立完整验证1117项Node与8项Python，零失败、零跳过、零取消，日志`/private/tmp/shelf-current-full-20261023.log`。随后disabled和same-origin构建均为1282页，public、static及privacy检查通过。该全量快照早于最新F1部署接线和N2a改动，不能代替这些后续改动的独立验证。
+
+F1 operator/router及部署接线代码的主Agent独立专项177/177通过，日志`/private/tmp/shelf-prepared-deploy-main-review-20261023.log`。N1四个新文件完成主Agent完整review及41项专项。此为本机代码审查/验证结果：生产schema 010尚未执行、能力未绑定，N1的production verifier/journal/producer及接线仍未完成；不安装011。在该F1/N1验证检查点没有新commit、部署、云端操作或AI调用，也没有生产正文同步；后续F4发布与识别验收见本文件顶部记录。
+
+N2a主Agent完成实现review，独立48项专项及78项N1/trial/operator/selected整合通过（/private/tmp/shelf-n2a-main-review-20261023.log、/private/tmp/shelf-n2a-integration-main-20261023.log）；尚未完成整个新工作区全量/构建/提交与部署，不能据此记为线上能力启用。
+
+F3修复后的23场景浏览器CUA仍未通过；已有`cgWindowNotFound`不能计作通过。44项专项、全量测试和构建检查均不替代该浏览器验收。
+
+## 2026-10-23 接续：009已发布，第二次识别失败定位为运行时兼容问题
+
+网络恢复后`11364f3`及运维提交`30309a8472531f2c13e8ec4b9f6abfa76ad729af`已推送。独立回查Cloudflare CI `39938323370`和Pages CI `39938322787`均completed/success，Cloudflare自动部署仍关闭。009在固定production执行pre/apply/post共9/25/9 HTTP，其中apply 6 DDL，schema由original变为complete并独立回读；三次受保护事实SHA均为`3a9f16c83cc03847fb379b47390db424ced764ffe8afbbd30167bd1bb22cf8c7`。私有收据为`.local/identify-observation-schema/identify009-{pre,apply,post}-30309a8-20261023/`。原008、旧识别行、authority/imported、首本许可和auth责任不变。
+
+受控部署实际成功，日志`.local/cf03/deploy-9PvWIC/deploy.log`，版本`cc85e64f-bd66-4fc7-98dc-2fd27c8b9e6f`。部署后3项公开runtime/manage/read资源GET与本地same-origin字节一致；固定PDF只读回归收据`.local/cf03/reading-smoke-reading-after-identify009-30309a8-20261023/`为14HTTP、ok=true、generationRevocationRequired=false、browserVerified=false。上述仅对应已发布30309a8，当前工作区新修复尚未发布。
+
+原诊断轮唯一第二合成识别实际10HTTP、1任务，收据`.local/single-trial/filename-identify-second-acceptance-identify-live-second-30309a8-20261023/`。ok=false，安全观测phase=fetch_error、httpStatus=null、elapsedMs=0，其余上游观测null；上传字节及真实书目变更均0，已完成登出/撤销核验。旧首个unknown及secret安装PUT unknown继续保留，不以名称存在证明secret值正确。原诊断轮两次上限已消耗。
+
+真实本机workerd复现`redirect:"error"`在发送前抛TypeError（0 outbound），修复为manual后请求可发送且302/307/308均不跟随；主Agent独立26项identify+workerd测试通过，日志`/private/tmp/shelf-runtime-main-review-20261023.log`。这是新修复证据，不改变两条历史记录的unknown事实。后续新修复验收轮按development-plan F4单独固定输入、requestId及预算，review/测试/CI/部署后至多一次真实合成识别；当前尚未执行，也不能称AI验收通过。普通上传仍关闭，未重置首本许可、上传新原件或修改计费。
 
 ## 2026-10-23 接续：独立识别失败隔离已本地验收，发布受网络阻断
 

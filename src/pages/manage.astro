@@ -126,6 +126,20 @@ import { path } from "../lib/data";
         登录后加载私人书库。
       </p>
       <div id="books-list" class="manage-grid"></div>
+      <nav
+        id="manage-pagination"
+        class="manage-list-tools"
+        aria-label="私人书库分页"
+        hidden
+      >
+        <button id="manage-previous" type="button" disabled>
+          上一页
+        </button>
+        <span id="manage-page-label" class="muted"></span>
+        <button id="manage-next" type="button" disabled>
+          下一页
+        </button>
+      </nav>
     </section>
 
     <section

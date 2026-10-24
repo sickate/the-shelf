@@ -1,18 +1,117 @@
 import { base } from "../lib/client";
-import { api, session, errorText, fetchFile, explainCode } from "../lib/api";
+import { api as rawApi, errorText, fetchFile, explainCode } from "../lib/api";
 import { metadataEditor, selectCategory } from "../lib/metadata-editor.mjs";
 import { buildJobInput } from "../lib/job-input.mjs";
 import { fileActions } from "../lib/file-actions.mjs";
-export async function initBook() {
+import {
+  apiBook,
+  currentBookFile,
+  queryId,
+  readHref,
+} from "../lib/book-navigation.mjs";
+import { privateView } from "../lib/private-view.mjs";
+import { renderBookFiles } from "../lib/book-files.mjs";
+
+function bookView(root: HTMLElement) {
+  return privateView({
+    checkSession: () => rawApi("/api/session"),
+    clear() {
+      root.replaceChildren();
+      const note = document.createElement("p");
+      note.className = "notice";
+      note.textContent = "页面会话已结束，书籍信息已清除。请重新载入。";
+      root.append(note);
+      root.dataset.book = "";
+      document.title = "书籍详情 — The Shelf";
+    },
+  });
+}
+
+export async function initDynamicBook() {
+  const root = document.querySelector<HTMLElement>("[data-dynamic-book]")!;
+  const scope = bookView(root);
+  const id = queryId(location.search, "id");
+  const requestedSearch = location.search;
+  const active = () => {
+    scope.assert();
+    if (location.search !== requestedSearch) {
+      scope.close();
+      scope.assert();
+    }
+  };
+  const onNavigation = () => {
+    if (location.search !== requestedSearch) scope.close();
+  };
+  window.addEventListener("popstate", onNavigation);
+  scope.cleanup(() => window.removeEventListener("popstate", onNavigation));
+  const status = document.getElementById("book-load-status")!;
+  if (!id) {
+    status.textContent = "书籍编号无效，请从书库重新打开详情。";
+    return;
+  }
+  try {
+    const initialSession = await rawApi("/api/session");
+    active();
+    scope.setAuthenticated(initialSession.authenticated);
+    const initial = await rawApi(`/api/books/${encodeURIComponent(id)}`);
+    active();
+    const book = apiBook(initial, id);
+    root.dataset.book = id;
+    renderBookFiles(
+      document.getElementById("book-files")!,
+      book.files,
+      root.dataset.fileMode || "",
+    );
+    await initBook({ initial, initialSession, scope, guard: active });
+    active();
+    status.hidden = true;
+    document.getElementById("book-content")!.hidden = false;
+  } catch (error) {
+    if (!scope.active) return;
+    status.textContent =
+      (error as any)?.status === 404
+        ? "书籍不存在或当前会话不可查看，请从书库重新打开。"
+        : errorText(error);
+  }
+}
+
+export async function initBook(options: any = {}) {
   const bookRoot = document.querySelector<HTMLElement>("[data-book]")!;
   const book = bookRoot.dataset.book!;
+  const scope = options.scope || bookView(bookRoot);
+  const guard = options.guard || (() => scope.assert());
+  const api = async (route: string, body?: any): Promise<any> => {
+    guard();
+    const data = await rawApi(route, body);
+    guard();
+    return data;
+  };
+  const session = () => api("/api/session");
+  let currentBook: any = null;
+  const urls = new Set<string>();
+  scope.cleanup(() => {
+    for (const url of urls) URL.revokeObjectURL(url);
+    urls.clear();
+  });
   const downloadFile = async (id: string, button: HTMLButtonElement) => {
     button.disabled = true;
     const target = document.getElementById("file-message")!;
     try {
-      await session();
-      const { access, response } = await fetchFile(id);
-      const url = URL.createObjectURL(await response.blob());
+      if ((await session()).authenticated !== true)
+        throw new Error("请先登录所有者账号。");
+      // Query/DOM file ids never authorize access. Recheck the API's current
+      // book snapshot immediately before requesting a file capability.
+      const latest = apiBook(
+        await api(`/api/books/${encodeURIComponent(book)}`),
+        book,
+      );
+      if (!currentBookFile(latest, book, id, bookRoot.dataset.fileMode || ""))
+        throw new Error("此文件不属于当前书籍或暂不可读取。");
+      const { access, response } = await fetchFile(id, guard, scope.signal);
+      const blob = await response.blob();
+      guard();
+      const url = URL.createObjectURL(blob);
+      urls.add(url);
       const a = document.createElement("a");
       a.href = url;
       a.download = `${document
@@ -20,11 +119,16 @@ export async function initBook() {
         .textContent!.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
         .slice(0, 150)}.${access.format.toLowerCase()}`;
       a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        urls.delete(url);
+      }, 30000);
       target.textContent = "已开始下载。";
     } catch (e) {
+      if (!scope.active) return;
       target.textContent = errorText(e);
     } finally {
+      if (!scope.active) return;
       button.disabled = false;
     }
   };
@@ -33,6 +137,7 @@ export async function initBook() {
     bookId: book,
     mode: bookRoot.dataset.fileMode || "",
     readBase: bookRoot.dataset.readBase || "",
+    replaceInitial: bookRoot.hasAttribute("data-dynamic-book"),
     onDownload: (id, button) => downloadFile(id, button),
   });
   document
@@ -53,13 +158,20 @@ export async function initBook() {
     document.getElementById("metadata-fields") as HTMLFieldSetElement,
   );
   let stopped = false;
-  window.addEventListener("pagehide", () => {
+  scope.cleanup(() => {
     stopped = true;
     timers.forEach(clearTimeout);
+    timers.clear();
+    jobs.clear();
+    currentBook = null;
   });
   function applyMetadata(updated: any) {
-    if (!updated || updated.id !== book) return;
+    if (!scope.active) return;
+    updated = apiBook(updated, book);
+    currentBook = updated;
     fileController.apply(updated.files);
+    document.getElementById("file-count")!.textContent =
+      `/ ${updated.files.length} 个版本`;
     const fields: Record<string, string> = {
       "metadata-title": updated.title || "",
       "metadata-author": updated.author || "",
@@ -96,9 +208,10 @@ export async function initBook() {
     }
     document.title = `${updated.title} — The Shelf`;
   }
+  if (options.initial) applyMetadata(apiBook(options.initial, book));
   document.getElementById("metadata-form")!.onsubmit = async (event) => {
     event.preventDefault();
-    if (!authenticated || !editor.ready) return;
+    if (!scope.active || !authenticated || !editor.ready) return;
     await editor.save(async () => {
       if (versionedMetadata && !Number.isInteger(metadataVersion)) {
         document.getElementById("metadata-message")!.textContent =
@@ -137,6 +250,7 @@ export async function initBook() {
         target.textContent =
           "信息已保存，当前详情与后续 AI 任务会使用新信息。公开静态目录将在下次构建后更新。";
       } catch (e) {
+        if (!scope.active) return;
         target.textContent = errorText(e);
         if ((e as any)?.code === "metadata_conflict") {
           try {
@@ -147,6 +261,7 @@ export async function initBook() {
             details.textContent = `最新内容：${current.title} · ${current.author || "作者未标注"} · ${current.category}；${current.description || "暂无简介"}；标签：${(current.tags || []).join("、")}。输入已保留，请核对后再次保存。`;
             target.append(details);
           } catch {
+            if (!scope.active) return;
             metadataVersion = null;
             target.append(
               " 最新版本暂不可读取，请保留输入并稍后重新载入页面。",
@@ -154,6 +269,7 @@ export async function initBook() {
           }
         }
       } finally {
+        if (!scope.active) return;
         button.disabled = false;
       }
     });
@@ -213,7 +329,17 @@ export async function initBook() {
           } catch {}
         } else if (source.fileId) {
           const page = label.match(/PDF 第 (\d+) 页/)?.[1];
-          href = `${base}read/?book=${encodeURIComponent(book)}&file=${encodeURIComponent(source.fileId)}${page ? `&page=${page}` : ""}`;
+          if (
+            currentBookFile(
+              currentBook,
+              book,
+              source.fileId,
+              bookRoot.dataset.fileMode || "",
+            )
+          )
+            href =
+              readHref(book, source.fileId, base) +
+              (page ? `&page=${page}` : "");
         }
         if (href) {
           const link = document.createElement("a");
@@ -241,6 +367,7 @@ export async function initBook() {
           await refreshHistory();
           await published();
         } catch (e) {
+          if (!scope.active) return;
           message.textContent = errorText(e);
         } finally {
           button.disabled = false;
@@ -251,6 +378,7 @@ export async function initBook() {
     return section;
   }
   function render() {
+    if (!scope.active) return;
     history.replaceChildren();
     if (!jobs.size) {
       const p = document.createElement("p");
@@ -277,6 +405,7 @@ export async function initBook() {
             if (["queued", "running"].includes(job.status))
               poll(id, attempt + 1);
           } catch (e) {
+            if (!scope.active) return;
             message.textContent = errorText(e);
             if (attempt < 5) poll(id, attempt + 1);
           }
@@ -312,12 +441,18 @@ export async function initBook() {
       }
       list.forEach((j: any) => target.append(result(j, false)));
     } catch (e) {
+      if (!scope.active) return;
       target.textContent = errorText(e);
     }
   }
   try {
-    const [s, c] = await Promise.all([session(), api("/api/config")]);
+    const [s, c] = await Promise.all([
+      options.initialSession || session(),
+      api("/api/config"),
+    ]);
+    guard();
     authenticated = s.authenticated;
+    scope.setAuthenticated(authenticated);
     aiEnabled = c.aiConfigured;
     if (aiEnabled) published();
     else
@@ -334,19 +469,23 @@ export async function initBook() {
       document.getElementById("metadata-editor")!.hidden = false;
       try {
         await editor.load(async () => {
-          const info = await api(`/api/books/${book}`);
+          const info = options.initial || (await api(`/api/books/${book}`));
           if (Number.isInteger(info.metadataVersion))
             metadataVersion = info.metadataVersion;
           applyMetadata(info.book || info);
         });
+        guard();
       } catch (e) {
+        if (!scope.active) return;
         document.getElementById("metadata-message")!.textContent = errorText(e);
       }
       if (c.privateHistory !== false) await refreshHistory();
     }
   } catch (e) {
+    if (!scope.active) return;
     document.getElementById("ai-session")!.textContent = errorText(e);
   }
+  guard();
   const op = document.getElementById("operation") as HTMLSelectElement;
   op.onchange = () => {
     document.getElementById("chapter-label")!.hidden =
@@ -355,7 +494,7 @@ export async function initBook() {
   };
   document.getElementById("ai-form")!.onsubmit = async (e) => {
     e.preventDefault();
-    if (!authenticated || !aiEnabled) return;
+    if (!scope.active || !authenticated || !aiEnabled) return;
     const question = (
         document.getElementById("question") as HTMLTextAreaElement
       ).value.trim(),
@@ -387,8 +526,10 @@ export async function initBook() {
       if (["queued", "running"].includes(j.status)) poll(j.id);
       message.textContent = "任务已保存。处理期间可以离开，返回后继续查看。";
     } catch (e) {
+      if (!scope.active) return;
       message.textContent = errorText(e);
     } finally {
+      if (!scope.active) return;
       submit.disabled = false;
     }
   };

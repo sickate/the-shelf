@@ -1,3 +1,9 @@
+import { base } from "../lib/client";
+import {
+  bookDetailHref,
+  readHref,
+  canonicalId,
+} from "../lib/book-navigation.mjs";
 import { api, apiBinary, errorText } from "../lib/api";
 import {
   bookTitle,
@@ -10,6 +16,7 @@ import {
 } from "../lib/manage-ui.mjs";
 import { canAccessFile } from "../lib/file-availability.mjs";
 import { supportsBrowserReader } from "../lib/reader-formats.mjs";
+import { privateView } from "../lib/private-view.mjs";
 
 type ManagementEntry = {
   book: any;
@@ -69,7 +76,12 @@ function renderEntry(
   const card = document.createElement("article");
   card.className = "manage-card";
   const title = document.createElement("h3");
-  title.textContent = bookTitle(book);
+  if (!entry.trashed && canonicalId(book.id)) {
+    const link = document.createElement("a");
+    link.href = bookDetailHref(book.id, base);
+    link.textContent = bookTitle(book);
+    title.append(link);
+  } else title.textContent = bookTitle(book);
   card.append(title);
   const details = document.createElement("p");
   details.className = "muted manage-book-meta";
@@ -112,7 +124,8 @@ function renderEntry(
         continue;
       const link = document.createElement("a");
       link.className = "button";
-      link.href = `../read/?book=${encodeURIComponent(book.id)}&file=${encodeURIComponent(file.id)}`;
+      if (!canonicalId(book.id)) continue;
+      link.href = readHref(book.id, file.id, base);
       link.textContent = supportsBrowserReader(file.format)
         ? `阅读 ${file.format} →`
         : `查看 ${file.format} →`;
@@ -217,6 +230,54 @@ export function initManage() {
   const identificationRequests = new Map<string, Promise<any>>();
   let uploadFormats = ["PDF", "EPUB", "MOBI", "AZW", "AZW3"];
   let maxUploadBytes = 20_000_000;
+  let pageGeneration = 0;
+  let currentCursor = "";
+  let cursorHistory: string[] = [];
+  let nextCursor: string | null = null;
+  const pagination = byId<HTMLElement>("manage-pagination");
+  const previousPage = byId<HTMLButtonElement>("manage-previous");
+  const nextPage = byId<HTMLButtonElement>("manage-next");
+  const pageLabel = byId<HTMLElement>("manage-page-label");
+  const scope = privateView({
+    checkSession: () => api("/api/session"),
+    clear: () => {
+      authEpoch++;
+      pageGeneration++;
+      authenticated = false;
+      uploadReady = false;
+      identifyPending = false;
+      identifyConfig = null;
+      currentCursor = "";
+      cursorHistory = [];
+      nextCursor = null;
+      booksList.replaceChildren();
+      trashList.replaceChildren();
+      byId<HTMLElement>("books-count").textContent = "—";
+      byId<HTMLElement>("trash-count").textContent = "—";
+      pagination.hidden = true;
+      previousPage.disabled = true;
+      nextPage.disabled = true;
+      booksStatus.textContent = "会话已结束，请重新登录后载入私人书库。";
+      byId<HTMLElement>("trash-status").textContent = "登录后加载回收站。";
+      capability.textContent = "登录状态已失效。请重新登录后再操作。";
+      loginCta.hidden = false;
+      fileInput.value = "";
+      currentFile = null;
+      currentFileKey = "";
+      activeIdentifyKey = "";
+      identificationRequests.clear();
+      dirtyFields.clear();
+      metadataInputs.forEach((input) => {
+        input.value = "";
+      });
+      preview.textContent = "";
+      metadataPreview.textContent = "";
+      identifyStatus.textContent = "会话已结束。";
+      uploadStatus.textContent = "";
+      submit.disabled = true;
+      byId<HTMLButtonElement>("manage-reload").disabled = true;
+    },
+  });
 
   const keyForFile = (file: File) =>
     `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
@@ -510,23 +571,78 @@ export function initManage() {
       updateMetadataPreview();
     });
 
-  const loadBooks = async () => {
-    const result = await api("/api/manage");
+  const loadBooks = async (cursor = currentCursor, history = cursorHistory) => {
+    if (!scope.active || !authenticated) return;
+    const epoch = authEpoch;
+    const generation = ++pageGeneration;
+    previousPage.disabled = true;
+    nextPage.disabled = true;
+    let result;
+    try {
+      result = await api(
+        `/api/manage${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+      );
+    } catch (error) {
+      if (
+        !scope.active ||
+        !authenticated ||
+        epoch !== authEpoch ||
+        generation !== pageGeneration
+      )
+        return;
+      throw error;
+    }
+    if (
+      !scope.active ||
+      !authenticated ||
+      epoch !== authEpoch ||
+      generation !== pageGeneration
+    )
+      return;
+    const page = result.pagination;
+    const paginated = page?.mode === "keyset-v1";
+    if (
+      paginated &&
+      (!Number.isSafeInteger(page.returned) ||
+        page.returned < 0 ||
+        page.returned > 100 ||
+        page.pageSize !== 100 ||
+        (page.nextCursor !== null &&
+          (typeof page.nextCursor !== "string" ||
+            !/^[A-Za-z0-9_-]{1,100}$/.test(page.nextCursor) ||
+            page.nextCursor <= cursor)))
+    )
+      throw new Error("分页状态无法核对，请重新载入。 ");
+    currentCursor = paginated ? cursor : "";
+    cursorHistory = paginated ? [...history] : [];
+    nextCursor = paginated ? page.nextCursor : null;
+    pagination.hidden = !paginated;
+    previousPage.disabled = !cursorHistory.length;
+    nextPage.disabled = nextCursor === null;
+    pageLabel.textContent = `第 ${cursorHistory.length + 1} 页 · 每页最多 100 本`;
     booksList.replaceChildren();
     trashList.replaceChildren();
     const entries = Array.isArray(result.books) ? result.books : [];
     const current = entries.filter((entry: ManagementEntry) => !entry.trashed);
     const trashed = entries.filter((entry: ManagementEntry) => entry.trashed);
-    byId<HTMLElement>("books-count").textContent = `${current.length} 本`;
-    byId<HTMLElement>("trash-count").textContent = `${trashed.length} 本`;
+    byId<HTMLElement>("books-count").textContent =
+      `${paginated ? "本页 " : ""}${current.length} 本`;
+    byId<HTMLElement>("trash-count").textContent =
+      `${paginated ? "本页 " : ""}${trashed.length} 本`;
     booksStatus.textContent = current.length
       ? "只对当前所有者会话显示。"
-      : "书库还是空的，可以在上方登记新书。";
+      : paginated
+        ? "本页没有当前书籍，可翻页查看。"
+        : "书库还是空的，可以在上方登记新书。";
     byId<HTMLParagraphElement>("trash-status").textContent = trashed.length
       ? "书籍可恢复到当前书库。"
-      : "回收站为空。";
-    for (const entry of current) renderEntry(entry, booksList, loadBooks);
-    for (const entry of trashed) renderEntry(entry, trashList, loadBooks);
+      : paginated
+        ? "本页没有回收站书籍。"
+        : "回收站为空。";
+    for (const entry of current)
+      renderEntry(entry, booksList, () => loadBooks());
+    for (const entry of trashed)
+      renderEntry(entry, trashList, () => loadBooks());
     const upload = result.upload || {};
     uploadReady = upload.enabled === true && upload.code === "ready";
     if (Number.isSafeInteger(upload.maxBytes) && upload.maxBytes > 0)
@@ -548,16 +664,39 @@ export function initManage() {
     maybeIdentifyCurrentFile();
   };
 
+  const navigate = async (cursor: string, history: string[]) => {
+    try {
+      await loadBooks(cursor, history);
+    } catch (error) {
+      if (!scope.active) return;
+      booksStatus.textContent = `${errorText(error)} 本页状态未确认，请重新核对书库。`;
+      requiresRefresh = true;
+      updateSubmit();
+    }
+  };
+  previousPage.addEventListener("click", () => {
+    if (previousPage.disabled || !cursorHistory.length) return;
+    void navigate(cursorHistory.at(-1)!, cursorHistory.slice(0, -1));
+  });
+  nextPage.addEventListener("click", () => {
+    if (nextPage.disabled || nextCursor === null) return;
+    void navigate(nextCursor, [...cursorHistory, currentCursor]);
+  });
+
   byId<HTMLButtonElement>("manage-reload").addEventListener(
     "click",
     async (event) => {
       const button = event.currentTarget as HTMLButtonElement;
       button.disabled = true;
       booksStatus.textContent = "正在重新核对私人书库…";
+      const pending = loadBooks();
+      const generation = pageGeneration;
       try {
-        await loadBooks();
+        await pending;
+        if (!scope.active || generation !== pageGeneration) return;
         booksStatus.textContent = "书库状态已重新核对。";
       } catch (error) {
+        if (!scope.active) return;
         booksStatus.textContent = `${errorText(error)} 书库状态仍未确认。`;
         requiresRefresh = true;
         if (
@@ -570,15 +709,17 @@ export function initManage() {
           capability.textContent = "登录状态已失效。请重新登录后再操作。";
         }
       } finally {
-        button.disabled = false;
+        button.disabled = !scope.active;
         updateSubmit();
       }
     },
   );
 
   void (async () => {
+    const epoch = authEpoch;
     try {
       const current = await api("/api/session");
+      if (!scope.active || epoch !== authEpoch) return;
       sessionChecked = true;
       if (current.authenticated !== true) {
         authEpoch++;
@@ -592,10 +733,12 @@ export function initManage() {
         return;
       }
       authenticated = true;
+      scope.setAuthenticated(true);
       loginCta.hidden = true;
       updateSubmit();
       await loadBooks();
     } catch (error) {
+      if (!scope.active || epoch !== authEpoch) return;
       sessionChecked = true;
       authenticated = false;
       booksStatus.textContent = `${errorText(error)} 私人书库未加载，管理操作保持关闭。`;

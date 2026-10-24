@@ -4,7 +4,7 @@ import { supportsBrowserReader } from "../reader-formats.mjs";
 export const supportsReader = supportsBrowserReader;
 export async function readBoundedResponse(
   response,
-  { timeoutMs = 45000 } = {},
+  { timeoutMs = 45000, guard = () => {}, signal } = {},
 ) {
   const declared = Number(response.headers.get("content-length"));
   if (declared > LIMITS.file) {
@@ -18,16 +18,29 @@ export async function readBoundedResponse(
     chunks = [];
   let size = 0,
     reads = 0;
-  let timer;
+  let timer, abort;
   const deadline = new Promise((_, reject) => {
     timer = setTimeout(
       () => reject(new Error("文件读取超时，请稍后重新打开阅读。")),
       timeoutMs,
     );
   });
+  const cancelled = new Promise((_, reject) => {
+    abort = () => reject(new Error("阅读页面已关闭。"));
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+  });
+  // A closed view's guard can throw before the first race attaches.
+  cancelled.catch(() => {});
   try {
     for (;;) {
-      const { done, value } = await Promise.race([reader.read(), deadline]);
+      guard();
+      const { done, value } = await Promise.race([
+        reader.read(),
+        deadline,
+        cancelled,
+      ]);
+      guard();
       if (done) break;
       if (++reads > 20000 || (size += value.length) > LIMITS.file)
         throw new Error("文件响应超过安全限制。");
@@ -35,6 +48,7 @@ export async function readBoundedResponse(
     }
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
     // Cancellation is best effort: a broken source cannot mask the original error
     // or keep the reader pending forever.
     try {
@@ -50,7 +64,7 @@ export async function readBoundedResponse(
   }
   return bytes.buffer;
 }
-async function parseBinary(bytes, format) {
+async function parseBinary(bytes, format, signal) {
   const worker = new Worker(new URL("./parse-worker.mjs", import.meta.url), {
     type: "module",
   });
@@ -62,6 +76,7 @@ async function parseBinary(bytes, format) {
     function finish(error, value) {
       clearTimeout(timer);
       window.removeEventListener("pagehide", cancel);
+      signal?.removeEventListener("abort", cancel);
       worker.terminate();
       error ? reject(error) : resolve(value);
     }
@@ -69,6 +84,11 @@ async function parseBinary(bytes, format) {
       finish(new Error("阅读页面已关闭。"));
     }
     window.addEventListener("pagehide", cancel, { once: true });
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) {
+      cancel();
+      return;
+    }
     worker.onmessage = (event) =>
       event.data.ok
         ? finish(null, event.data.book)
@@ -81,7 +101,7 @@ async function parseBinary(bytes, format) {
     worker.postMessage({ bytes: copy, format }, [copy]);
   });
 }
-export function sanitizeIsolated(book) {
+export function sanitizeIsolated(book, signal) {
   const frame = document.createElement("iframe");
   frame.hidden = true;
   frame.setAttribute("sandbox", "allow-scripts");
@@ -98,6 +118,7 @@ export function sanitizeIsolated(book) {
     function finish(error, value) {
       clearTimeout(timer);
       window.removeEventListener("pagehide", cancel);
+      signal?.removeEventListener("abort", cancel);
       window.removeEventListener("message", receive);
       frame.remove();
       error ? reject(error) : resolve(value);
@@ -106,6 +127,11 @@ export function sanitizeIsolated(book) {
       finish(new Error("阅读页面已关闭。"));
     }
     window.addEventListener("pagehide", cancel, { once: true });
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) {
+      cancel();
+      return;
+    }
     function receive(event) {
       if (event.source !== frame.contentWindow || event.data?.token !== token)
         return;
@@ -132,15 +158,22 @@ export async function mountTextReader({
   position,
   progress,
   save,
+  guard = () => {},
+  cleanup = () => {},
+  signal,
 }) {
-  const book = await parseBinary(bytes, format),
-    chapters = await sanitizeIsolated(book);
+  guard();
+  const book = await parseBinary(bytes, format, signal);
+  guard();
+  const chapters = await sanitizeIsolated(book, signal);
+  guard();
   const frame = document.createElement("iframe");
   frame.className = "ebook-text-frame";
   frame.title = "安全文字阅读区域";
   frame.setAttribute("sandbox", "");
   frame.setAttribute("referrerpolicy", "no-referrer");
   container.replaceChildren(frame);
+  cleanup(() => frame.remove());
   let chapter = Math.max(
     0,
     Math.min(
@@ -155,6 +188,7 @@ export async function mountTextReader({
     toc.append(option);
   }
   function render() {
+    guard();
     const dark = theme.value === "dark";
     frame.srcdoc = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'"><meta name="referrer" content="no-referrer"><style>html{background:${dark ? "#262820" : "#fffdf8"};color:${dark ? "#f7f4ed" : "#282820"};font-size:${Number(zoom.value) * 100}%}body{max-width:48rem;padding:1.5rem;margin:auto;font-family:serif;line-height:1.9;overflow-wrap:anywhere}h1,h2,h3{line-height:1.4}pre{white-space:pre-wrap}table{border-collapse:collapse;max-width:100%}td,th{border:1px solid;padding:.3em}img{display:none}</style></head><body>${chapters[chapter].html}</body></html>`;
     position.textContent = `${chapter + 1} / ${chapters.length} · 章节`;

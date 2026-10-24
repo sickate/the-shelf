@@ -511,6 +511,168 @@ CF-02 已验收：新站点全部 1,303 个静态资源与 1,264 个书籍详情
 
 # The Shelf 开发计划
 
+## 2026-10-24 用户优先级调整：独立交付书籍上传
+
+最终本机放行：独立完整2195项Node和8项Python通过（`/private/tmp/shelf-upload-full-final-20261024.log`），disabled/same-origin两构建各1282页、public/static检查通过，两产物实际私密值扫描均1634文件、0命中/0不安全项。生产仅只读auth核验2HTTP，generation1/enabled1且无未决auth mutation；尚无新生产DDL、上传或发布。进入commit→push→两CI→固定生产迁移/部署→真实上传验收，不再扩大开发范围。
+
+上传最终候选已由主Agent独立review，联合226/226通过（日志`/private/tmp/shelf-upload-independent-final-20261024.log`）。第二阶段固定operator、部署/auth/静态回退及专项完成；最后修复关闭generation围栏，允许enabled0执行close并推进generation，迟到旧enable不能重新开写，未知claim继续保留。该必要修复覆盖下方首阶段旧pin：013=`3b6b3b9686ed98e26cfbf873bd0869c15cba5103a9cd555383aa388147596866`，runtime helper=`dadbfe6f82843529c64160d2539e224b43e24d8b466843a47b6b60d45ce01e3a`；新完整schema两pin为`f37ec22776cfc94299af08f31af6944282a7bc8afd152df5739007add7b48626`/`f91bff01a7b5ce50b497ad58d061787f7895df8125cddc5924c00e7424169c7b`。实际安装41HTTP/20DDL，seed4HTTP，API部署5显式HTTP（Wrangler内部另计），auth enable实测11/上限12，policy enable6、close4。尚未执行生产安装、上传或发布，完整回归/构建/隐私与CI仍待本轮最终检查。
+
+授权已落实：用户明确选择“按此规则开发并开放常规上传”，已按原话和完整风险说明在AGENTS.md新增2026-10-24条款，覆盖旧“后续上传关闭”对新模式的限制。每本20MB、原唯一authority全部已登记责任合计8GB、未知责任和首本永久保留；明确接受账号实量/未登记旧写未知及项目费用，不假装证明账号≤8GB/零费用。之后网页逐本提交即可，不逐本聊天求许可。授权不等于已部署或已上传。
+
+本轮发布验收方法：真实浏览器工具再次确认Chrome原生cgWindowNotFound、IAB不可用；不重复要求用户准备窗口，也不将同一工具故障无限转化为功能开发的前置任务。上传版本必须先通过生产handleRequest+真实SQLite/实际workerd的上传/读取/并发/unknown/会话/Origin/CSRF验证、生产TS的合成DOM回归、完整测试/构建/隐私检查，再commit→push→CI和受控发布。线上必须独立检查固定版本/绑定、上传门槛、一次有界合成文件上传、目录/详情/全文hash/Range及注销撤销；不重跑F4真实AI、不改secret。CUA完整23场景及视觉/实际阅读器交互保留为明确未验收项，不把合成DOM或真实HTTP记成浏览器通过；若这些检查出现产品失败则停止开放/关闭policy并修复，工具本身不可连接不触发无限重复发布等待。此调整是主Agent针对当前可用验证手段的发布方案，不声称此前未完成的F3已验收。
+
+主Agent线上独立验收清单：固定新建合成单页PDF（本机生成、无私人正文、≤20KB），在`.local/isolated-upload/live-acceptance/`先以不可覆盖plan固定文件/hash，再记录唯一bytes发送claim；最多24次固定同源业务HTTP、其中仅一次文件bytes POST，不调用AI，不自动重试。检查匿名拒绝、登录与能力、intent/唯一bytes、重复intent不再上传、私人目录/动态详情、access/HEAD/全文hash/Range、回收站拒读/恢复可读、旧首本读取及注销后撤销；合成书最终留在回收站，不删除对象或释放责任。未知立即保留plan/claim/收据并停止，失败后的注销最多一次包含在上限内。运维控制HTTP与部署工具独立计数，实际执行前以冻结实现的预算为准。
+
+上传第一阶段已主审：013/helper及相对N2b基线的management/worker完整diff已阅读；独立63/63联合通过，含实际workerd和旧45项（日志`/private/tmp/shelf-isolated-upload-main-review-20261024.log`）。修复schema读取必须在admission/CSRF后、trial root/子路径零IO关闭、最后session验证后不再异步读target。仅格式化后冻结013=`ed3073da4670d80e7f222bd61c60e2c7a2f1b8e2b31ed83a9d182ec9b0d8ee8e`，helper=`2b01b80e7b3510ef3587a0e30f72c72eca0967d5daf7d660f06cafe743ca7737`，management=`ec21180c0c636851b040fb9c1b2ba5445e983a31316c95176ef353b0c2ebecb5`，worker=`11c90ccefbc963f2da0b2b4d9f11887c6804587105bb56055f73f52fd13389eb`，新专项=`7862a5acdb2b21fca2e28b5a2d0d339baf2939468bad1eb9dac6d0e5dc673a3a`。
+
+第二阶段已批准原Sol/high线程新增scripts/isolated-upload.mjs、operator/deploy两专项，窄改cf-api-deploy/cf-production-auth/cf-deploy；显式isolated-uploads仅production+single-trial+filename-ai、不混prepared/v2，固定本轮consent。安装前加固定临时阻写guard，避免DROP/CREATE间原imported入口出现空窗；逐DDL持久intent/unknown停止，独立完整schema及全部旧数据/责任保留后移临时guard；seed默认关闭，enable独立CAS，关闭写不删除对象/预留，新增上传后只允许保留读取检查的修复或静态回退。实际HTTP/DDL预算由实现冻结后主审，不在开发期间执行生产调用。
+
+第一实施范围已审：Sol/high上传线程新增013-isolated-upload.sql、isolated-upload.mjs及独立tests/isolated-upload.test.mjs，窄改management/worker；009+013直接工作，不为上传强制安装无关010/011。复用现隔离桶和原authority，新增固定policy及browser_uploads显式target_id，旧NULL目标不可转换；固定view集中映射不存另一余额。3个旧guard增严格新模式分支，原phase/首本/其他guard保留；enabled仅控制reserve/claim，读取/已claim确认保留。先交真实SQLite/Worker闭环给主Agentreview，再完成部署/auth/静态回退的精确新profile，全部在既有授权内自动推进。
+
+用户要求先启动一个subagent单独完成书籍上传，并指出页面长期没有可见新增功能。本轮以可用上传流程为第一优先级，停止扩展无关底层工作。主Agent负责集成、代码review、独立功能验证及发布；专属upload_delivery子Agent使用gpt-6.1-sol/high（鉴权、隐私、AI和持久写任务），单独负责查清并实现最小可交付增量。
+
+目标和范围：从页面选择PDF/EPUB/无DRM MOBI/AZW/AZW3，按现有20MB门槛及8GB责任预算，文件名自动识别书名/作者/分类并可修正，单文件上传后目录出现且可进入既有阅读器；先复用现有鉴权、识别、账本与读取能力，避免为本次交付新增通用框架。必须区分当前本机可用、待发布代码和真实生产门槛。首本许可已消耗，不复用或重置；保留旧unknown/对象/账本/收据，不推断未知用量为零，不修改套餐或扩大账号权限。
+
+方案与依赖：子Agent先限时核对现有upload UI/API/authority/部署事实和阻断原因，交出一条精确最短实施路径及其文件范围。无需等待N2c全部完成即可开发与其无依赖的上传功能；不得把历史计划文字当额外授权或永久架构约束。先提交具体方案由主Agent审查，随即实施最小可运行补丁。若真实生产门槛确实无法由现有授权和能力满足，须以明确缺失事实/可选解决办法上报，不再反复搭建同类证明或以合成测试冒充生产上传。
+
+验证与交付：主Agent独立检查选择文件、自动metadata、成功上传/列表/阅读、20MB拒绝、重复点击/网络结果未知零重传、未登录与错误Origin/CSRF、删除恢复不重复占用、私人字段不进入公开产物。适用专项、完整回归、构建和隐私检查通过后，按commit→push→CI→受控部署→独立线上验证交付；真实PUT须在具体逐文件计划和原有安全/预算证据门槛成立后执行。浏览器连接当前仍报cgWindowNotFound，继续修复和其他可独立验证工作，不重复要求用户准备同一窗口。失败保留当前部署；回退代码/配置，不删除账本/对象或重开旧写入口。
+
+并行任务收口：legacy status只完成当前已实现五文件的冻结交付；index proposal只补最终边界说明，不继续扩大实现。主Agent先审已产生改动，避免遗留半成品污染上传任务。此优先级调整不表示已上传或已上线。
+
+## 2026-10-24 N2c 只读运维兼容接续
+
+最新收口：legacy五文件已由主Agent完整review并独立联合176/176通过（新150+旧26，零失败/跳过/取消），日志`/private/tmp/shelf-n2c-legacy-main-review-20261024.log`；六profile实际9/10/11，legacy7/8/9，status首GET起受1MiB/4096/30秒保护，旧apply回归保留。冻结SHA见子任务交付，不再扩大本轮实现。index-status/publish提案已只读探针通过并冻结，未批准实施，整个N2c仍未完成。完整回归在普通sandbox曾因24项listen EPERM失败（2009中1985通过，Python未启动），保留`/private/tmp/shelf-n2c-schema-full-main-20261024.log`，不是最终验收。用户已将第一优先级调整为上传，暂不为N2c继续整批发布。
+
+接续状态核验：当前live inventory仅主Agent，原source/deploy/runtime线程均已不在列表，runtime最后报429限流；不把旧交付消息当当前运行handle。工作区已存在schema-readonly helper、prepared schema分支和两个新专项（实际名prepared-schema-readonly/schema-readonly），尚未由主Agent验收。按原指定gpt-6.1-sol/high新建接续任务，先核对现有实现和冻结边界再收尾；不静默更换模型，不重复启动任何云动作。
+
+prepared schema阶段主Agent现已逐项review四文件及相对原冻结脚本的完整diff，独立三专项74/74通过，零失败/跳过/取消，日志`/private/tmp/shelf-n2c-schema-main-review-20261024.log`。真实run合成transport的六profile10/11请求、011 apply11只读/0DDL且无write-ddl intent、两读schema漂移、4表完整指纹、32表列与artifact独立PRAGMA、超1MiB/块数/迟到deadline及旧partial/unknown流程通过。prepared-index SHA=`c36f6a6a299526465b01f9905c3f397d25fe1bf05c5706956c643ae5ca3c9079`，共同helper SHA=`bc22fdf2e06280b2d9bae0b416012b811015197caaec8a342216aa979cc895a7`；原prepared-schema、旧专项、N2b/shared及010/011/012全与本轮基线一致。仅本机验收，不代表011已安装或整个N2c完成；index-status/publish及三个旧operator仍待后续实现和主审，不发布部分接线。
+
+当前N2b冻结验证已完成：1963项Node和8项Python全部通过，两种构建、public/static及秘密扫描通过；尚未提交、推送或部署，F3完整23项真实浏览器验收仍待完成。下一项先处理`prepared-index schema-status`对完整011布局的只读识别，随后按依赖推进`index-status`及其他只读operator；不得把本计划当作实际兼容或云验收结果。
+
+范围与方案：保留旧完整profile的10HTTP与原010逐对象精确检查；完整011状态通过原两条schema查询精确识别整库profile，保留原七组全量有序数据快照，并增加activation/receipts/evidence/legacy liabilities四表一组，完整状态最多11HTTP。每组响应仍受1MiB/块数/30秒限制，不静默截断、不忽略陌生对象/部分011。`schema-apply`在011仅允许同样只读状态检查后明确停止，旧布局的33HTTP/13DDL及未知DDL不重放规则保持；不提供v2 apply或index-publish许可，不提高限额掩盖额外请求。
+
+分工与依赖：source_finalize（gpt-6.1-sol，high；复杂schema/数据安全任务）先只读审查prepared工具、共享精确profile和现有测试，交具体SQL/返回结构、请求预算和测试提案；可用本机合成SQLite探针，不改repo实现或冻结N2b文件、不调用云。主Agent审查提案后再批准其在工具/helper与独立专项内实现。`index-status`依赖该方案及主审通过，须在原5+P D1/3 R2内将完整manifest并入既有source前后语句，另行具体审查；本阶段不提前改它。
+
+可并行的只读调查另交deploy_wiring（gpt-6.1-sol/high）：盘点book-management-schema、filename-identification-schema、identify-observation-schema的status如何精确兼容010/011及其数据快照，列出当前/目标HTTP、返回尺寸、旧apply拒绝新布局的最早安全位置。仅交提案与临时合成探针，不改代码或共享文件、不云调用；主Agent另审范围与预算后才实施，避免与prepared工具并发修改。
+
+调查纠正旧计划的现状描述：007/008/009三个operator的oldSchema目前只是hash而非精确整库比对，010/011不一定被拒绝；007/008在129行探测达到阈值才停止，008还会将009替换后的admit trigger视为partial。实际status请求分别7/8/9（原上限9/10/10），fresh apply为21/22/25（原上限23/24/26）。这些差额不自动授权增加读取；新完整profile分支须精确验证、保留全数据和有界transport，历史apply不得悄悄处理新布局。007/008现transport仍有10MB响应、无chunk帽，不能误报已有1MiB保护；是否收紧及其兼容影响须在具体提案中审查。
+
+prepared提案主审已读并独立运行`/private/tmp/the-shelf-source-finalize-n2c/probe.mjs`：六完整profile分别112/113、125/126、149/150对象；旧10、新11候选读数成立，最大合成schema响应101553B；原25张业务表全部由七组覆盖，新增四表全列有序组SQL1635B，逐表数据变化均改变指纹。partial011、011缺010、陌生/平台DDL漂移、两schema读之间010漂移、重复/257行和超1MiB均拒绝。探针不是实际工具/transport验收；早期主Agent两个临时空库probe因未seed导入前态被既有约束拒绝，正确seed后149对象复核通过，未修改repo或云状态。
+
+现批准source_finalize（Sol/high）实施`schema-readonly.mjs`、prepared-index schema分支及两个新专项：共同helper仅引用冻结公共profiles，严格整库classifier（未知返回null只能由调用者固定legacy规则处理），固定32张业务表全列map/七legacy组/010三表组/011四表组及无LIMIT有序snapshot SQL；不执行环境/私人IO、SQLite或网络。运行时SQL仅去外围空白和一个末分号，保留字面量。prepared独立保留精确trial009基础+已知010 subset的历史恢复，不将partial称完整；两schema中010子集必须一致。保持旧nonPrepared hash与全部持久index plan/budgets原语义，另加whole hash/layout摘要；011精确识别后才启用11读/0DDL预算，apply完整只读后明确disabled并留私有receipt，零DDL/write-ddl intent。原HTTP前本地immutable身份/010 pin保持，它不是云写许可。主Agent独立验收实际run计数、旧33/13恢复与unknown、责任指纹、超限/迟到；其他工具和index-status待后续审查，不改冻结N2b/shared/DDL。
+
+runtime_wiring（gpt-6.1-sol/high）可并行只读提出下一项index-status方案：实际SQLite探针复核5+P D1/3 R2内的整库profile及source前后同statement manifest、normal/trial全局来源唯一性，不能伪造Worker会话/配置来硬套消费者decoder。index-publish须将原010查询换为完整profile并最早拒绝011，旧profile写前后仍须能发现011跃迁且不增加未核定请求；本次不授予v2发布。只交临时SQL/提案，不改prepared-index或任何repo文件，依赖schema阶段主审通过后才另批实现。
+
+三个旧schema工具提案主审已阅读并独立运行`/private/tmp/deploy-wiring-n2c-status-probe.mjs`及legacy probe，全部业务表分组无遗漏；完整009/010/011只读actual预算9/10/11，20k chunks整组7598923B将按1MiB明确失败而非截断。批准下一Sol/high任务实施三个工具及专用共同helper、新专项：以原第2次own-schema查询等价替换为固定完整schema查询，优先判共同完整profile；新status用七旧组+可选010组+可选011组，全量全列指纹，仅输出摘要。每响应复用已有boundedControlResponse的1MiB/4096块/30秒；旧apply原上限及unknown/claim规则不变，legacy fallback须由冻结公开DDL编译精确pre/known-own-subset，不能未知hash兜底。007/008在完整009及以后的apply最早第2HTTP停止，009 apply在完整010/011也第2HTTP停止；但完整009是009自身原生终态，必须保留既有零DDL重复检查兼容（旧专项明确要求），不得为测试删掉此行为。新status明确布局预算并持久记录，无额外拆页/无mutation。helper仅消费已主审schema-readonly，不修改其冻结文件、旧专项或N2b/shared/DDL；真实run六profile/旧恢复/陌生partial/责任指纹/超限与迟到必须由主Agent独立验收。该任务若指定模型持续不可用，暂停其具体开发，主Agent继续现有代码review/验证，不换模型。
+
+验收：主Agent逐项review schema精确性、平台对象、保留数据完整性和只读边界，独立运行旧/011/部分与陌生DDL、四表责任变化、超限、未知响应及apply零DDL专项；旧schema/status/apply回归必须保持。随后按实际修改范围重跑完整测试、两构建和隐私检查。无真实HTTP、上传、AI、secret写入或010/011/012安装。发布仍依赖F3及整批门槛，之后commit→push→CI→受控部署→独立验证；失败保留现有部署，撤回本地工具改动即可，不回滚DDL、不删除对象/账本/unknown/收据、不重开旧写入口。
+
+## 2026-10-24 接续复审与读取接线
+
+本次继续沿用已批准分工与依赖，不重新签发试运行或重放云操作。CF01隔离CLI夹具仅补两个公开shared依赖，主Agent逐行review后独立15/15通过；原preload网络/配置拦截、断言和5秒上限保持。原完整回归1706/1707及Python未运行记录保留，最终冻结后重跑。3b-1坚持单条primary SELECT的原子快照语义，返回后检查配置/方法与会话当前到期时间，不声称能观测查询完成之后才发生的数据库撤销；不存在额外查询或逐file读取。CUA本轮再次观察到Chrome进程但browser列表为空、原生连接cgWindowNotFound；不重复要求用户准备同一窗口，继续独立本机验收，真实DOM门槛仍未通过。
+
+N2b发布后的v2读取验收工具仍缺，补分配已完成fixture的deploy_wiring（gpt-6.1-sol/high）先只读核对现有cf-reading-smoke及专项，提交最小具体v2 plan/19正常20上限请求序列与HEAD处理提案；主Agent审后才改该工具及专项。目标仅同源双来源closed profile，复用既有private receipt/timeout/stream/no-retry，不产生CLI默认执行、配置发现或真实HTTP。14项原trial读取+HEAD+4个operator关闭样本为初始设计，必须核定实际计数，保留legacy/trial行为。此任务不改其他agent文件、共享contract/DDL/auth/deploy，不发真实上传/AI/secret/登录/云请求；后续真实运行仍须代码发布门槛和单独固定计划。
+
+v2 reading-smoke提案已主审批准deploy_wiring实施工具及独立专项。schemaVersion2 exact plan显式storageMode=authority-v2/writeMode=closed/source=normal|trial及对应固定bucket，旧schema1原样；来源只能由固定confirmed私有证据给定，HTTP结果不能独立证明源桶，normal仅离线。实际19序列为匿名access/content、login、坏CSRF logout、session、book、local access、坏Origin content、content HEAD、全文/hash、Range、4 operator、logout、session false、旧cookie access/content。operator分别GET根、POST upload空JSON、HEAD object、OPTIONS未知深路径，均匿名且无uploadsecret/PUT；坏Origin样本仍404。HEAD内容必须广告精确size/MIME/ETag/Accept-Ranges且零body，不能用空body hash代替；HEAD operator bodyless不解析JSON，其余严格not_found/no-store。保持64KiB JSON/20MB对象/32B range/30秒/块数界限；未知login/logout零重放，logout unknown停止后续撤销探针并标generationRevocationRequired，已知cookie失败最多一次failure-logout且journal pin失败不清理。无真实请求，主Agentreview与合成计数/旧行为回归后才接受。
+
+3b-1主Agent逐项review并独立120/120通过（含真实MF完整Worker普通/首本/冲突、分页/匿名/登出与生产TS合成DOM；`/private/tmp/shelf-book-routes-main-review-20261024.log`），最终SQL15341/15339B、6bind。首次57项中唯一失败为capability两SELECT的错误期望，修正为2且零projection后通过，原失败保留。此为本机路由验收，非真实浏览器或上线结果。
+
+3b-2 metadata/生命周期实际SQL主Agent阅读并独立运行合成probe后批准runtime_wiring（gpt-6.1-sol/high）实施：初始full detail一次→batch admission/guarded CAS/final full detail，共4statement，不新增逐file或查询guard。metadata初始15698B/7bind、mutation15725B/10、final15440B/6；初始投影仅metadata置null与SQL不读metadata的guard逐字相同，管理/catalog/source/schema/authority/session均保留；另用expectedMetadataVersion CAS。生命周期初始15339B/6、mutation15871B/10、final15437B/6，guard检查完整preimage，expectedManagementVersion CAS，final owner allowTrash=true，从最终双源安全投影生成删除/恢复响应。主Agent独立probe成功写version1、旧expected0拒绝、trash1→2且final完整书保留；source/management/metadata-version/session/catalog/schema/authority race均零mutation。实现须保留原validation/category派生/冲突响应，patch32KiB/SQL16KiB/response1MiB/30秒及captured配置方法当前expiry，无unknown重放；补真实MF全部路由、normal/trial/conflict/竞态和原v1回归。只改runtime拥有控制器/新mutations helper及worker/management/专项，不改pure source/shared/prepared/deploy、DDL或云状态。
+
+3c主Agent已逐项review六文件及窄export相对已接受3b纯模块的diff，反馈修复captured primary.prepare/bind/first/all漂移与最终await期间到期复核后，独立9文件联合581/581通过（零失败/跳过/取消；`/private/tmp/shelf-prepared-v2-main-review-20261024.log`）。真实workerd20k块为26业务D1（API3+control3+page20）、仅prepared3 R2、一次access；trialonly/同ID冲突零R2。最终source read9070B/10bind、admission9392B/14；构造前26字段raw总和16KiB，原source/guard/010哈希保持。冻结source=`597698dc9c7ec3c77d1d599cfafeeef6871efb194ba91c97838fb573c8f82a21`、prepared-source=`d52c95416e79f9323dd1a3169f60411d3e7f5c42bb81e7fb9dd5fd6bd63541e3`、prepared=`30fc8dd7b0be40d900ea52d66d0cd4924a7d1644fa9e28a06f09df255431067a`。结果仅本机验收，未安装010/011、未部署或执行真实正文同步。
+
+v2 reading-smoke工具/新专项主Agent逐项review及独立74/74（含旧40项不变）通过，日志`/private/tmp/shelf-v2-reading-main-review-20261024.log`；工具冻结SHA=`2cd34677c50040a8c083ed486dc19641c1ccdbe1d8bfefbe6fd2861d2271a4b0`。实测19请求/20上限、HEAD零body、同源Cookie、4匿名operator、unknown停止及private journal等覆盖通过，仅合成transport，尚未真实运行。未执行真实登录、HTTP、上传或云操作；发布后运行须由固定私有confirmed证据生成plan，不手写云事实或宣称HTTP证明桶来源。
+
+3b-2管理UI的closed reason随同复杂接线由runtime_wiring补一条已有manage-ui文本映射：storage_write_closed显示“当前版本尚未开放新增文件上传”，避免新明确状态落入泛化未知条件；不显示账本术语、不改gate或开启条件，不为此低风险文案另加镜像测试，复用原manage-ui专项。
+
+3b-2主Agent逐项review实现/SQL/路由/专项，独立7文件272/272通过（`/private/tmp/shelf-book-mutations-main-review-fixed-20261024.log`）。首次269项中MF POST被模拟器/cdn-cgi自身Origin allowlist拒绝的失败日志保留；仅fixture配置精确站点hostname route后，原真实Origin/CSRF和错误http Origin/错误CSRF均由未改产品代码返回预期JSON，真实MF metadata/trash/restore/冲突全部通过。MAX_SAFE版本在写前拒绝，batch整包≤1MiB且results数严格0/≤1/1，未知结果一次batch后停止。mutation SHA=`1892dc3309a64437faa5d731102828f4c60aa72774d488a55e2a6a272f1efdb5`，controller=`becffb658d0fa7f422ba1f32d42972cb1d878f7aa995ea16ba3ec90e93423b5d`。管理文案原7项通过；该批业务代码已冻结，进入完整Node/Python、两构建、public/static及真实秘密扫描。真实浏览器仍不可用，不作新生产发布或010/011安装。
+
+3b纯展示API和4b鉴权/静态回退接线已主Agent逐项review、修正反馈后独立通过：projection/source/controller/旧Worker共475/475（含真实workerd），deploy/auth/static联合192/192，均零失败/跳过/取消；日志分别`/private/tmp/shelf-storage-projection-main-review-20261024.log`、`/private/tmp/shelf-v2-auth-static-main-review-20261024.log`。pure source冻结SHA=`afaa17a4d44fb036b627b14b2a1ba72146c60135876b776304835e82c3a4e861`；4b probe3289B/1bind、CAS2761B/6bind。主审纠正了旧singleTrial enable密钥校验及旧静态boolean入口两处兼容回归，追加回归已通过。共享contract/artifact及DDL哈希保持，剩余3b路由/客户端和3c prepared仍未接线；不部署半成品。
+
+分页SQL原型出现SQLite嵌套深度限制，不能把原型当通过。分配已冻结4b的deploy_wiring（仍gpt-6.1-sol/high）只读协助检查runtime的/tmp合成原型，可复制到自己的临时文件做浅化/预算实测，不改repo、不覆写runtime原型；runtime继续拥有3b接线。优先固定浅层CTE与精确有序聚合，不通过增加请求/忽略体量绕过。两者交可运行SQL与实测后再批准repo实现。source_finalize转为3c prepared只读提案，仍不改冻结模块或010。
+
+3b-1浅化SQL已审批准实施：runtime_wiring（gpt-6.1-sol/high）负责新storage-book控制器、management/Worker详情接线及manage客户端/分页UI和专项，不改pure source/deploy/prepared。固定单页SQL9567B/6bind（原型），schema/header构造前有界，reference/normal/targets/raw各20001探测并以spill确定完整前缀，最多100本；分开的book_payload/source_payload/window_count浅聚合通过真实Miniflare SQL，保留有序JSON子类型。保守UTF8外层预算对共享source重复收费、预留4096标点/分页壳，最后精确JSON.stringify(row)≤1MiB；不要求预算最紧，不增加请求。公开1264目录+1086合成confirmed实测13页、64–100本，max row344450B；大catalog前缀3本874456B、后置超大返回之前5本、超大首本overflow，转义/patch前缀2本950112B。详情复用同一单书投影且全局fileId冲突，owner会话和配置方法在await后复核；无逐file查询。metadata方向为原4statement同源snapshot排除metadata自身字段+guarded CAS+最终投影，但具体SQL须再交实测主审，不在3b-1提前写。全部本地验收后仍须3b-2/3c闭包才发布。
+
+3c实际SQL及合成probe已主审，批准source_finalize（gpt-6.1-sol/high）实施prepared-source新helper、prepared消费者v2分支及窄pure export/专项；不改worker、010或其他冻结SQL。初/末sourceRow将原封source SQL嵌入一条statement，读取7751B/10bind；guarded admission8073B/14bind，比对初始完整source+prepared原文并绑定requestId/ip，只一次access。prepared固定26字段去重复catalog，descriptor/identity构造前帽、prepared≤16384B/source≤524224B/outer≤1MiB；其余raw文本总和也在JSON构造前有界，合法字段不受影响。纯`decodePreparedNormalSource`复用原decodeSnapshot/selection/结构及字节帽、强制normal，不注册read grant；不得裁同书其他file或伪造raw0硬套book decoder。normal原件及prepared pin逐项相等，trialonly/跨来源冲突初始零R2；完整raw pair在guarded INSERT与最终primary闭合，所有await后检查已捕获配置/DB/两来源及prepared方法，R2使用捕获方法。v2不调用旧admitAccess closure，v1保留旧行为；直load unknown/partial模式拒绝。总业务控制3 D1+P，连既有API3为6+P≤26，R2≤3，维护序数另计。合成probe实际source79886B/prepared2531B/outer85987B，版本漂移guard零新增admission；Node及真实workerd、20k块、await漂移/未知/取消/旧分支回归由主Agent独立验收。
+
+完整pre-route整合回归发现cf01-history-inspect的隔离CLI fixture仅复制旧cf-deploy，漏掉新增公开shared依赖；不是生产CF01功能回归。deploy_wiring（gpt-6.1-sol/high）仅补该fixture的两个公开shared文件，保留preload零网络/配置拦截和原错误断言，不改CF01实现。主Agent独立复验后再跑冻结最终全套；本次失败原日志保留，Python未进入执行不算通过。
+
+接续主审结果：N2b-4a部署接线已独立156/156通过，N2b-3a文件读取控制器已逐项review并独立375/375通过（含两项真实workerd，日志`/private/tmp/shelf-storage-read-main-review-verified-20261024.log`）。最初受限回环测试失败保留，最终本机提升测试零失败/跳过/取消。3a成功路径4 D1+1 R2、admission固定5456B/9 bind；旧入口关闭与旧v1回归通过。仍为未提交、未发布的本地结果。
+
+批准source_finalize（gpt-6.1-sol/high）实施3b纯展示投影decoder，范围仅storage-sources及其新专项：单一高层`decodeStorageBookProjection(config,{projection_json,overflow},{audience,allowTrash})`复用精确schema/authority、normal/trial decoder及catalog归属校验，不能创建read grant。header一次、每书catalog一次、每file完整named facts；全局raw冲突先于book/visibility/trash过滤，raw=0允许未上传文件但不能产生confirmed事实。owner可展示回收站，anonymous仅public且非trash；输出仅安全registry及管理事实。原阅读wrapper继续拒绝trash，所有既有界限/strict结构保持；需要配置await复核时只增加复用原unchangedConfiguration的无副作用断言。依赖3a冻结，不改路由/shared/DDL/deploy。先交纯模块主审再接线。
+
+3b展示接口补齐现有metadata/回收站兼容：books输入附一次metadata:null或精确scope/book_id/patch_json/version，patch≤32768B、{}合法，复用既有安全字段及categoryId ID校验。输出安全mergePublicBook结果、已验证patch/metadataVersion和deletedAt（trash时已验证updated_at，否则null），runtime不二次解析未清理payload。匿名public书继续应用其公开override，private/trash书及其事实不输出。新增canonical持久patch限制须先证明所有D1 producer契约，不将本地Python导入与云bootstrap校验混为一谈，不默默更改持久数据。
+
+3b管理列表采用按book_id的用户点击keyset分页，不自动拉全库；旧Node/v1无pagination时保持原响应。runtime_wiring（gpt-6.1-sol/high）先继续细化单条primary投影及精确字节前缀方案，确认后才实施：每页最多100本，schema/header一次，按必要完整facts计算UTF-8预算，1MiB外层transport与20,000候选为独立硬上限；过大单本明确失败，不能跳过或静默截断。cursor严格校验且绑定SQL；UI说明本页数量，上一页/下一页，每点击一次请求一页，authEpoch/pageGeneration和登出/pagehide清理阻止迟到数据回填。详情/metadata仍须同源归属和全局fileId冲突；不得逐file新增查询。4b auth/static尚待精确设计，不提前实现。整批主审、完整回归/两构建/隐私及浏览器门槛通过后才按既有发布与回退流程执行。
+
+4b精确提案已审，批准deploy_wiring（gpt-6.1-sol/high）仅改auth/static工具、guard完整snapshot摘要及其专项。仅v2 enable读取target配置，不将upload secret作为能力；status/init/close不读storage/target、不观测Worker，坏storage不能阻断close。初始与独立auth probe各合入同statement完整guard，仍1 verifier bind；CAS为固定≤16KiB SQL、6 bind，末参初始固定五字段storage_guard_json，重建后逐字匹配才enable。完整snapshot包含schema、authority phase及全部retained事实，内存/参数原文不入收据。保留两轮实际100%version/settings/subdomain及临CAS deployment验证，11实际HTTP/12上限，不增加读取；transport仍1,000,000B/30秒，新增4096块硬界。静态回退显式v2/closed/filename-ai及精确prepared状态，只接受对应完整动态前态，后态仅ASSETS与相同四secret名；settings前后2HTTP、close4另计、Wrangler内部另计。未知保留私有intent、零自动重发，成功仅settings_verified、codeVersionVerified=false。无云操作/close/enable/secret写/DDL/上传/AI；主Agent独立SQLite/CAS/漂移与旧流程回归后再集成。
+
+本次接续先完成N2b-2最终主审：真实Miniflare/D1发现平台自带`_cf_METADATA`未被N2b-1整库契约识别，当前按设计503；prepared_finish（原gpt-6.1-sol/high）先交精确sqlite_master结构和本地平台来源证据，再由主Agent审查最小精确兼容，不按前缀忽略、不删除系统对象、不读平台表内容或云账号。主审另要求最终primary查询返回后复核env/binding/method，覆盖await期间配置漂移及已取body取消。通过后独立运行source/trial/contract/旧trial/CLI/workerd联合回归。
+
+依赖明确后继续N2b-3/4，detail_finish（原gpt-6.1-sol/high）先只读提出deploy/auth/static的最小具体接线及预算，主审批准后实施；不与source文件并发修改，不云调用、不安装DDL/secret、不重放既定F4验收或部署。当前源码仍有F3浏览器待验范围，不能把全工作区直接发布；发布仍依赖同批controller/deploy/auth/static闭包和原完整门槛。浏览器本次再次检查无可用Chrome provider，保留原4418夹具，不重复要求用户提供同一准备确认。
+
+本轮agent运行状态核对发现原prepared_finish/detail_finish已不在live inventory，旧followup未恢复任务；现由source_finalize与deploy_wiring分别接续上述两项，均显式使用gpt-6.1-sol/high，未换模型。新source agent确认无旧agent并发修改后才接管；两项仍先交只读提案，主Agent验收与发布责任不变。
+
+平台兼容提案已主审批准实施：source_finalize仅扩展原N2b-1三文件与其测试、新source及专项，在离线生成器新增精确`_cf_METADATA`完整schema三变体（原三个profile不变），固定DDL为平台观测的INTEGER PRIMARY KEY/BLOB形状，row保留在原查询与raw快照；逐变体生成一致hash/计数/字节数，prepared仍拒绝009，trial-v1仍拒绝011。任意DDL/类型/附加平台对象仍拒绝，不忽略前缀。最终DB await后复核已在当前源码，须补deferred测试，并固定DB.withSession方法身份，覆盖resolve和最终verify期间env/DB/两R2方法或binding漂移；拒绝后取消已取body且不等待取消。真实Miniflare双桶和contract/旧trial/CLI联合回归由主Agent独立验收。010/011/012及N2a原profile不改，零云请求。
+
+N2b-4a主审批准deploy_wiring（gpt-6.1-sol/high）先实现新的storage-deploy-guard与cf-api-deploy v2闭写接线及专项，不改auth/static两个工具（后两项待4a主审后接续）。采用显式`--storage-mode authority-v2 --write-mode closed --filename-ai`，与single-trial互斥；前后态仅trial+filename→v2（prepared不变）、精确v2重发、显式prepared开启或rollback，不接受partial/遗漏/反向trial。guard一条固定SELECT、0参数、≤16KiB，完整schema LIMIT257/接受256，authority≤2行/identity≤2048B、retained trial≤2行/descriptor≤4096B/target≤256B及其fileId普通confirmed冲突计数；精确复用shared contract/纯decoder，历史permit到期不阻断，unknown/部分DDL仍拒绝。控制响应≤1MiB/4096块/30秒，迟到body取消不等待，404也有界。v2显式管理HTTP为identity→settings前→guard→settings后共4，prepared共用guard，不含Wrangler内部请求；收据仅证明settings_verified，独立代码版本100%仍是实际发布门槛，不能把已有enabled状态当作可跳过。先交4a可审diff/实际计数与测试，再接auth enable投影与static精确回退；不云调用、DDL、secret写、部署、AI或书上传。未完成Worker/controller闭包前绝不发布此批。
+
+N2b-3由runtime_wiring（gpt-6.1-sol/high）同步先交具体只读接线提案：Worker文件读取、详情/metadata/list同源唯一性、prepared原normal限定、最早关闭trial operator及普通upload gate。依赖source最终验收；不得先改source/shared/deploy及现有controller文件。提案须列每类实际SQL/参数/返回字节与access admission原子闭包、管理列表上限、匿名/私有展示边界，主审后才实施。该分工与4a文件互斥，继续零云操作。
+
+N2b-2已由主Agent完整review并独立296项联合通过（source/trial/contract/activation/schema/remote-authority/single-trial-authority，含真实workerd双桶），日志`/private/tmp/shelf-source-main-review-20261024.log`；schema-only本机独立复验确认精确平台DDL及零外网，artifact --check SHA=`1120fee5ec07248f162793be667f1946e426a7463222b2215a92f4b9f6734757`、118565B。该结论限模块离线验收，无路由或线上发布。
+
+批准runtime_wiring先实施N2b-3a：新storage-read-controller、Worker v2配置/文件路由分派/API config，以及Worker和两个trial导出入口最早404、management capability/intent/bytes最早closed；保留旧v1。source文件不改，bulk/metadata/prepared暂不接线。新文件控制器使用现有grant/只读adapter，最多resolve→R2后assert→guarded INSERT→INSERT后assert四条D1及一次选定R2；最终INSERT用guard CTE及编号参数共9bind，SQL≤16KiB，原快照/响应/deadline上限不变；任一漂移取消body，API/access各一次，不退回签名或其他bucket。新增专项必须有真实SQLite/workerd、Range/HEAD/If-Match、0/1admission、await漂移及operator零secret/D1/R2、closed零body/storage/claim/PUT。3a冻结交主审后，再批准3b所需批量纯解码接口与完整有界SQL；不得用逐file resolve形成N查询。未完成3b/3c/4b前不发布半接线版本。
+
+F3夹具诊断先行：normal_transition（gpt-6.1-sol/high）只改scripts/book-browser-fixture.mjs，为parent原无界iframe.onload加覆盖load与结果的4秒wall-clock截止，harness原2秒wait改按实际耗时计时，写静态phase/readyState及合成route计数诊断；保留23场景、全部隐私/业务/一次POST断言。模块顶层await改为void async run以避免模块求值等待初始pageshow的潜在循环，仍同步登记并等待真实trusted初始pageshow，不伪造边界；iframe改为页面内可见。已知无界框架等待被修正不等于rich产品缺陷已定位，必须CUA恢复后重跑真实DOM。无浏览器时仅验生成JS/HTTP/断言保留，不记浏览器PASS；不改产品源码、不访问线上、不发真实书或AI。
+
+本轮检查点：N2b-1主审联合140项通过，J0主审代码/SQL及独立47项（41 Node+6真实workerd）通过。J0修正延迟permit复核、terminal并发唯一消费、call到期后迟到成功隔离，012仍离线且默认closed。控制层实际SQL预算已核定：新admit 6SELECT+2mutation，planning 3+1，savePlan 3+(k+1)最多8条，claim 3+2，consume 3+0，workflowOutcome/finish各1+1，cancel 5+1，stop 3+1；失败回读admit最多加2、claim加1，trigger内部SQL另计。首轮受限测试57失败含回环端口EPERM及SQL/hash编辑中间快照，保留日志；提升为本机回环测试后1255项Node中1252通过、3项CLI smoke因隔离fixture漏拷新增prepared-schema依赖失败，Python未启动，不能称全套通过。detail_finish（gpt-6.1-sol/high）只修fixture公开依赖闭包，保留零真网络/错误断言，主Agent复审再重跑最终冻结快照。
+
+N4的201行设计已由主Agent完整review接受为条件性结论：当前REST/GraphQL来源无法证明所需fresh/complete/account/billing证据；LIST不能替代账号覆盖或未决PUT终态，B残留上界仍缺历史writer全集且N1明确不接受B。该结论不是producer实现。N4a–c暂不继续编码，优先完成读取接线，不通过新增返回unsupported的抽象层掩盖普通上传阻塞；不申请新例外、不追加账号读取。
+
+N2b-1四文件主Agent逐项审阅完成，独立契约/activation/schema-state/remote-authority共140项通过，artifact --check一致。原011与010 SQL保持冻结，012未知整库对象继续拒绝。进入N2b-2的第一小步：由prepared_finish（gpt-6.1-sol/high）只实现独立Workers双source只读解析模块、必要的纯trial历史decoder及合成专项；依赖已通过的shared contract与normal-read-wiring-plan。先提交精确接口/SQL/参数/返回字节预算供主审，再编码。暂不修改worker路由、management/prepared/deploy/auth/static控制器，不云调用、不安装DDL、不改生产gate。source必须全局fileId冲突先判、无跨桶fallback、归属与registry/reservation精确匹配，R2后最终primary复核；历史首本读取不依赖已过期permit或上传secret，旧trial-v1行为保留。
+
+验收先覆盖真实SQLite/workerd双binding、同key异bytes、跨source同fileId和异book、残缺描述、catalog重复、生命周期/source/schema/auth漂移及有界投影，主Agent独立review后才安排控制器接线。该模块离线完成不等于生产可读或可上传；发布必须等N2b控制器成批接线、全套/构建/公开与秘密检查、两CI和独立有界线上验收。未发布时撤回新模块即可，保留现有生产版本及全部对象/旧unknown/消耗首本事实。
+
+J0继续原Sol/high修正延迟permit、并发terminal context及调用deadline晚到结果隔离；N4继续原Sol/high只读证据设计。主Agent完成已审范围的整合验证，浏览器当前Chrome进程存在但CUA仍报cgWindowNotFound，F3 23场景仍未通过；既往前九项通过不能写成全部通过。5445388文档提交的远端CI查询本轮因api.github.com连接失败未取得结果，不重复发布已验F4或真实AI。
+
+## 2026-10-23 全量未完成任务持续实施
+
+N2b设计主Agent完整review通过（normal-read-wiring-plan）：采用精确shared deployment contract与生成的纯schema artifact、authority-v2/closed双源、保留四secret、旧trial mode不存在、prepared普通来源限定、raw冲突先于book过滤、trial operator最早零IO关闭；deploy/auth/static须同批接线后才能发布。先批准prepared_finish（gpt-6.1-sol/high）实施N2b-1纯contract/schema artifact及生成一致性/严格配置测试，不改Worker业务/部署/auth入口，不云调用。014等未来schema不自动允许；012当前仅离线，须后续明确扩展完整profile，不能宽松忽略未知对象。其余N2b-2 source/路由和N2b-3控制器接线在contract交付主审后实施。查询参数、语句、体量必须有硬断言，不能以新增上限掩盖超额。
+
+N2a主Agent完整diff/helper审查及独立48专项、78项N1/trial/operator/selected整合通过，原子manifest覆盖紧邻mutation的结构漂移，冻结N1未变。尚未完整新快照回归/提交发布。normal_transition（gpt-6.1-sol/high）接续N4只读设计：逐项对照现有已授权证据源与公开官方契约，研究完整账号用量producer和A/B闭包可证明上界，给出真实可实现接口/证据覆盖与明确unsupported缺项，不能仅把现有验证器重命名成producer。只读项目代码/现有安全投影和公开资料，不读凭证明文、不云账号调用、不改数据或旧operator，不伪造完整性/零量/终态、不申请新例外。先交设计供主审再实现。
+
+J0精确提案主Agent已审阅通过（cloud-jobs-plan第198行起）：10表/3视图/34trigger、queued起共享slot、append-only unit/release、SQL当前source精确快照、event驱动CAS与receipt原子终结。批准detail_finish（gpt-6.1-sol/high）按该提案仅新增012/jobs-state及必要专项/合成helper；主Agent后续逐行审查及独立SQLite/workerd验证。当前生产开关/路由/Workflows/secret均不变；不将草稿schema安装到云端，结构变化先报。旧filename行与009 guard不改、不复制消耗、不从回读/缓存nonce恢复发送权。
+
+N2b接线先行设计分工：prepared_finish（gpt-6.1-sol/high）只读审查normal-upload-transition-plan的双来源闭写模式及当前prepared/auth/deploy/static validator，交付可共享的精确配置profile、读路径source冲突/归属处理、各operator预算和迁移前后兼容清单。依赖N2a最终schema profile，先不实现、不改现有业务文件、不云调用；不得抢先安装011、开放普通上传、恢复trial operator或将trial正文投影进normal registry。主Agent审查方案后再分配N2b实现。
+
+T4设计主Agent已完整审阅docs/cloud-jobs-plan.md，采用其三项决策：Luna/low单活动、文件名与业务共享UTC每日20且J1一调用/J2最多四；未知逻辑永不重发，结束本地transport的unknown仅允许明确独立新任务，崩溃pending不按lease释放；J1开启依赖真实CF04来源/CPU、原session及独立Key。批准detail_finish（gpt-6.1-sol/high）仅J0离线实现：新012持久jobs/调用意图/预算/共享准入schema及纯业务状态模块，真实SQLite多连接与workerd合成；业务capability仍关闭，不改routes/Workflow/deploy/auth/现有009 SQL，不云DDL/凭证/AI。先交精确表/trigger事务接口与共享计数方案，再实施；保留旧filename行和唯一消耗，默认关闭业务gate不影响既有安全阅读，旧pending不释放。已完成的F3源码冻结，浏览器验收仍待完成。
+
+F4最小发布隔离：当前CUA仍报cgWindowNotFound，F3的23项浏览器验收未完成，不随本次发布。主Agent先从30309a8建立临时源码快照，仅覆盖identify的manual redirect修复、两项对应测试和已安装的精确Miniflare/esbuild直接依赖；独立运行完整Node/Python、disabled/same-origin两构建、public/static及实际凭证扫描。计划与结果记入非公开docs/filename-runtime-release.md；不包含F1、F2、N1、N2a或其schema/绑定。快照全部通过后只提交该批文件，推送并等待两CI，以对应提交的隔离快照受控部署现有single-trial/filename-ai配置。显式管理HTTP上限3（前后settings及D1身份），Wrangler内部请求单独计；独立active version回读1HTTP，三个公开字节比对、既有14项阅读HTTP回归及前述唯一F4合成验收另按各自runner预算执行。部署不新装secret、不迁移、不上传书；未知部署停止不重试，已有收据与旧unknown保留。失败保留现有生产版本，若需代码回退须先核定明确版本和完整配置，不能自动部署或复用AI请求。
+
+F4修复验收的执行前固定契约：仅合成文件名`书名：星际航线_作者：虚构导航员_分类：科幻短篇.epub`，固定requestId=`7e3d62af-9518-4e24-a236-96c8f1b3b80c`，仅一次新identify POST。私有runner `/private/tmp/shelf-filename-identify-repair-acceptance.mjs` SHA256=`70cdcf6cb16e55f5cb44691f4911c9872da2fa6a91264130bddd48112d2073ba`，主Agent独立18项测试通过。总上限10 HTTP：匿名结果拒绝、登录、能力、两条历史unknown各GET、新POST、新结果GET、能力余量、登出、旧会话拒绝；每请求70秒、整轮240秒，预留最后两个清理槽。任何失败停止该轮，不换输入/requestId或新run重试；调用前落全局不可覆盖attempt，两条旧收据前后hash相等。只发送文件名，不上传原件、不重发secret PUT。必须先完成runtime修复的commit/两CI/受控部署和回读，再执行。
+
+F1后续部署接线设计已由主Agent review：prepared_finish（gpt-6.1-sol/high）实施独立无云依赖的010 schema helper、显式production `--prepared-text` / `--prepared-text-rollback`、完整前后态配置校验与部署前只读schema/authority guard，以及显式静态回退识别。`PREPARED_BOOKS`仅绑定普通`the-shelf-books`；保留现有隔离`BOOKS`及trial/filename配置，四个prepared配置必须完整匹配，省略flag不能隐式移除。部署器不DDL、不上传、不安装secret，缺010在Wrangler前停止。验证含参数前置拒绝、双桶/账号/部分配置、010篡改/缺失、旧→prepared/重部署/显式回退、缺表零R2与首本阅读回归。此为离线实施授权；须主Agent独立review、专项/完整测试及两构建/隐私检查后提交发布。之后010 schema-status/apply/独立status上限10+33+10=53 HTTP/13 DDL，固定010 SHA=b70ad99611023bde6aa08901cd8eeebbdeeae0cd38e96f0ea8dec93e566afd0f，先于011；未知DDL停，仅只读恢复不重放。实际prepared启用部署另行核定前后置请求与Wrangler范围，不能把显式管理HTTP误作整次部署上限；无已确认正文仅做负向和既有PDF回归，不称云正文消费通过。
+
+T4前置设计由detail_finish（gpt-6.1-sol/high）在F3交付冻结后只读进行：对照Node jobs、AI契约和Workers安全/预算，实现前先划分CF-05持久任务最小批次与接口。须明确D1持久dispatch intent、去重/每日与逐任务预算、Workflows重试关闭、上游无状态查询时unknown永久保留及零重发、来源快照/主动公开权限、查询/取消与真实验收预算。仅形成非公开设计，不实现或接线、不读凭证/云调用/真实AI；主Agent review设计后再分配具体代码。F3浏览器问题仍归原任务，不能以新设计替代其验收。
+
+N1已由主Agent审查SQL/module并独立41项通过。批准normal_transition（gpt-6.1-sol/high）实施其`docs/normal-upload-transition-plan.md`的N2a：新增Node精确schema profile与责任读取模块，RemoteStorageAuthority识别完整旧/005/011布局，所有audit始终计normal+trial+legacy；schema2历史activation按当时activatedAt验证，新reserve/claim仍实时核验证据，v2禁止旧重新导入及首本操作。缺项/混合/陌生schema失败关闭，重新核定固定查询及operator预算；不得扩大旧registry为跨桶来源。仅离线实现及测试，不改Worker/deploy/auth/prepared接线、不云写/安装011/激活/上传；N2b/N2c先保留设计。主Agent需独立审查读写边界、竞争/迟到/旧测试兼容及完整回归后才发布。
+
+接续批次（主Agent复核后实施）：F3通用动态详情页采用`/book/?id=`空壳，静态SEO页保留；复用现有单书API，由API决定公开/私有/回收站可见性，动态内容用安全DOM填充，新书详情与reader返回不依赖构建时ID。详情、reader须固定book/file归属，迟到响应和登出清理私人数据。此任务涉及隐私边界，交由新Sol/high实施（而非Luna）；task_inventory（Luna/medium）只更新事实清单与文档。验收含新ID、匿名私有/回收站拒绝、错误file归属零content请求、无页面浏览触发AI、basepath、静态回归和真实DOM。F4由manage_api（Sol/high）准备修复后的唯一独立合成AI验收方案/runner，主Agent独立review和部署后才能执行。两次历史任务及同名去重永远保留；新增验收仅因真实workerd证明redirect:error在发送前TypeError、已修复manual的实质新证据。原诊断轮两次上限仍是该轮事实；新修复验收轮最多一个新合成文件名/一个固定requestId/一次POST，不重复secret PUT，失败停止该轮并记unknown，不自行续次。精确输入/HTTP预算由runner设计后执行前补充。F1消费者继续主Agentreview；cloud_tasks（Sol/high）先修复行字段比较脆弱性，再设计路由和索引发布operator，批准细化范围后实施，不云写。各项最终仍按完整测试、两CI、受控部署及真实验收发布；失败保留全部对象、旧记录、schema和当前安全阅读版本。
+
+目标：按用户最新目标完成项目全部未完成开发，不在单项结束后停止；逐项实现、测试、更新清单，最终以完整测试/构建及每项对应验收证据判断完成。先建立统一当前任务清单，逐条对照本计划、implementation-plan、remote-storage-plan、cf03-plan及实际代码和运维证据，历史计划不直接视为当前状态。延后事项也纳入盘点，依赖外部AI契约的能力明确记录，不伪造已支持。
+
+F5普通上传迁移设计由normal_transition（gpt-6.1-sol/high）接续：检查当前003/005永久trial guard、原authority目标与生产隔离BOOKS、registrySource读取和全部账本责任。目标是在保留已上传首本可读及一次许可永久消耗的前提下完成正常模式；先交增量迁移、独立激活CAS、双来源读取/恢复及部署契约设计，再获主Agentreview实施。不得改冻结迁移、手填ready或新鲜完整证据、清unknown/责任、重放旧写、开新上传例外；未满足真实门槛仍不云写。验收应覆盖首本+普通责任精确计账、8GB边界竞争、模式/目标错配、部分迁移崩溃、撤销/回收站及唯一PUT，部署回退保留对象和全账本。按实际平台证据区分可实现技术缺口与确切外部限制，不把旧drain方案当唯一解，也不将其不可能条件永久挂在产品入口。
+
+实施依赖：T0主Agent核对工作区、未推送提交和网络，恢复11364f3/30309a8发布及009/文件名识别真实验收；原两次AI任务上限和未知不重发规则继续适用。T1统一当前任务/证据清单；T2普通上传的旧入口收口、唯一账本、完整用量证据及隔离目标迁移；T3 CF-04私有正文同步与D1索引；T4 CF-05持久任务、去重/预算、问答/章节/全书总结、作者资料与主动发布；T5 CF-06上传核对、未知任务处理、备份恢复与跨设备进度；T6格式转换/OCR/只读MCP及流式输出契约逐项评估实施。依赖未满足时继续其他可独立开发任务，不能把临时关闭的入口记成普通功能可用。
+
+本轮初始分工：task_inventory由gpt-6-luna/medium只读全量任务与实现证据，编写docs/task-status.md，避免把旧历史表当当前事实；normal_upload由gpt-6.1-sol/high先核对普通上传的实际阻塞、旧能力与用量证据链，给出最小可执行迁移/实现设计及测试，不云写；cloud_tasks由gpt-6.1-sol/high先盘点CF-04/05生产缺口、共享契约及独立可开发模块，提出实现范围/依赖/验收再实施。主Agent负责计划、接口裁决、review、集成、发布及最终验收。指定模型不可用时明确暂停对应分工。云端动作仍由主Agent在既有授权与具体请求预算内执行，不重置首本许可、不改未知事实、不修改计费。
+
+首批新增实现细化：F1由cloud_tasks（Sol/high）补齐已确认正文版本的Workers消费及D1私有定位索引，复用selected-sync/registry/shared校验，保留20MB/20,000chunk/6000字符原契约；索引header、逐chunk原语与publication分表，避免D1单行2MB限制，不存正文、不新造预算。固定file/version与同书原件授权；head→条件get/hash→head最多3次R2、30秒整流期限，所有外部await后复核会话、管理版本及源身份。D1最多26条statement、最多20页，API仅返回有界摘要/locator，不输出私有路径/hash/ETag。本阶段仅新模块、增量010及测试，后续独立接路由、导入operator和部署绑定；合成通过不称已上线。F2由normal_upload（Sol/high）在当前009发布完成后实施已有reservation恰好占满8GB仍可claim的边界修复与条件PUT；intent仍禁止无余额新增，超1byte、身份或证据不符仍拒绝。onlyIf If-None-Match:*冲突/null/未知保留uncertain且唯一PUT资格不重给，不能靠此开放普通上传。主Agent逐项review与独立专项后继续下批。
+
+验收与发布：每项完成必须附当前文件/测试/实际行为证据，并在任务清单更新状态；代码完成、本机浏览器、远端CI和线上验证分别记录。每个实现批次主Agent独立review与适用专项，最终完整Node/Python、构建、public/static和实际秘密扫描通过，再commit→push→两CI→受控部署→对应真实HTTP/浏览器。旧用量未知及只允许首本试运行的既有规则没有被最新宽泛目标自动豁免；持续解决其技术依赖，不以解除disabled或伪造ready代替迁移。无法满足的外部契约/权限须有实际证据并列入清单，不能宣告全部完成。
+
+回退：保留当前可用私人阅读、所有schema/registry/对象/unknown及收据。每批按自身迁移状态选择保留安全读取的修复回退；完全关闭按显式trial/filename-ai静态回退并撤销会话，不自动恢复旧写能力，不删除责任或重发未知上传/AI/secret。私有数据和新运维文档不加入公开导出清单。
+
 ## 2026-10-23 识别失败隔离与有限诊断
 
 目标：真实首个合成文件名识别返回未知后，纠正“任何未知都会永久阻止所有其他文件识别”的调度设计。主Agent和两个Sol独立复核确认，这不是AGENTS对AI的硬性要求；不得把上传authority的未知阻断类推为所有独立AI推理不可继续。原调用仍未知、没有结果，绝不删除/改判/重发；普通上传及旧存储未知边界完全保留。

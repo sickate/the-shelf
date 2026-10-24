@@ -10,6 +10,18 @@ import {
 } from "./core.mjs";
 import { trialSha256 } from "./single-trial.mjs";
 import { identifyCapability, identifyRoute } from "./identify.mjs";
+import { storageReadConfiguration } from "./storage-sources.mjs";
+import { storageBooks, storageBookCursor } from "./storage-book-controller.mjs";
+import { storageLifecycle } from "./storage-book-mutations.mjs";
+import {
+  ISOLATED_UPLOAD_TARGET,
+  ISOLATED_CONFIRMED_SQL,
+  isolatedUploadConfiguration,
+  assertIsolatedConfiguration,
+  loadIsolatedPolicy,
+  isolatedPolicyTuple,
+  assertIsolatedUploadRow,
+} from "./isolated-upload.mjs";
 const FORMATS = ["PDF", "EPUB", "MOBI", "AZW", "AZW3"];
 const fail = (code, status = 400) => {
   throw new LibraryError(code, status);
@@ -24,7 +36,53 @@ const mime = (f) =>
     AZW3: "application/vnd.amazon.ebook",
   })[f];
 const validNumber = (n) => Number.isSafeInteger(n) && n >= 0;
-export async function uploadCapability(env, context, d) {
+const closedUpload = (env) =>
+  env.STORAGE_MODE === "authority-v2"
+    ? {
+        enabled: false,
+        code: "normal_upload_unavailable",
+        reasons: ["storage_write_closed"],
+        maxBytes: THRESHOLD,
+        formats: FORMATS,
+      }
+    : null;
+const uploadBlocked = (d, upload) =>
+  d.response(409, { error: { code: "upload_blocked" }, upload });
+export async function uploadCapability(env, context, d, { claimUpload } = {}) {
+  const closed = closedUpload(env);
+  if (closed) return closed;
+  const isolated = isolatedUploadConfiguration(env);
+  if (isolated) {
+    const reasons = [];
+    try {
+      const p = await loadIsolatedPolicy(env, d, isolated, { write: true });
+      if (claimUpload) {
+        const current = await assertIsolatedUploadRow(
+          env,
+          d,
+          isolated,
+          claimUpload,
+        );
+        if (
+          current.state !== "reserved" ||
+          current.put_attempted !== 0 ||
+          current.content_verified !== 0 ||
+          current.etag !== null
+        )
+          reasons.push("authority_accounting_mismatch");
+      } else if (p.committed_bytes + p.reserved_bytes === p.budget_bytes)
+        reasons.push("storage_budget_exceeded");
+    } catch {
+      reasons.push("storage_write_closed");
+    }
+    return {
+      enabled: reasons.length === 0,
+      code: reasons.length ? "normal_upload_unavailable" : "ready",
+      reasons,
+      maxBytes: THRESHOLD,
+      formats: FORMATS,
+    };
+  }
   const reasons = [];
   if (
     env.NORMAL_UPLOAD_MODE !== "authority-v1" ||
@@ -105,10 +163,40 @@ export async function uploadCapability(env, context, d) {
       a.reserved_bytes !== a.actual_reserved)
   )
     reasons.push("authority_accounting_mismatch");
+  // A claimed upload consumes an existing responsibility, rather than reserving
+  // more bytes. Verify its persisted relationship before allowing an exact-full
+  // budget; an ID supplied by itself cannot establish that responsibility.
+  if (claimUpload) {
+    let reservation;
+    try {
+      reservation = await d
+        .prepare(
+          env,
+          `SELECT r.size_bytes FROM browser_uploads u JOIN shelf_storage_reservations r ON r.reservation_id=u.reservation_id JOIN book_management m ON m.scope=u.scope AND m.book_id=u.book_id WHERE u.scope=? AND u.upload_id=? AND u.reservation_id=? AND u.descriptor_json=? AND r.descriptor_json=u.descriptor_json AND r.state='reserved' AND r.put_attempted=0 AND r.content_verified=0 AND r.etag IS NULL AND r.logical_key=('original:'||u.scope||':'||u.file_id||':original') AND r.object_key=json_extract(u.descriptor_json,'$.objectKey') AND r.size_bytes=json_extract(u.descriptor_json,'$.sizeBytes') AND json_extract(u.descriptor_json,'$.kind')='original' AND json_extract(u.descriptor_json,'$.scope')=u.scope AND json_extract(u.descriptor_json,'$.bookId')=u.book_id AND json_extract(u.descriptor_json,'$.fileId')=u.file_id AND json_extract(u.descriptor_json,'$.sha256')=u.sha256 AND m.trashed=0 AND m.version=?`,
+          context.scope,
+          claimUpload.upload_id,
+          claimUpload.reservation_id,
+          claimUpload.descriptor_json,
+          claimUpload.management_version,
+        )
+        .first();
+    } catch {}
+    if (
+      !reservation ||
+      !validNumber(reservation.size_bytes) ||
+      reservation.size_bytes < 1 ||
+      reservation.size_bytes > THRESHOLD ||
+      !a ||
+      reservation.size_bytes > a.reserved_bytes
+    )
+      reasons.push("authority_accounting_mismatch");
+  }
+  const total = a && a.observed_bytes + a.committed_bytes + a.reserved_bytes;
   if (
     a &&
-    (!validNumber(a.observed_bytes + a.committed_bytes + a.reserved_bytes) ||
-      a.observed_bytes + a.committed_bytes + a.reserved_bytes >= 8000000000)
+    (!validNumber(total) ||
+      total > 8000000000 ||
+      (!claimUpload && total === 8000000000))
   )
     reasons.push("storage_budget_exceeded");
   return {
@@ -262,6 +350,9 @@ export function validateUploadMagic(bytes, format) {
   if (v.getUint16(offset + 12, false) !== 0) fail("drm_not_supported");
 }
 async function intent(request, env, context, session, d) {
+  const isolated = isolatedUploadConfiguration(env);
+  const closed = closedUpload(env);
+  if (closed) return uploadBlocked(d, closed);
   const capability = await uploadCapability(env, context, d);
   if (!capability.enabled)
     return d.response(409, {
@@ -306,7 +397,10 @@ async function intent(request, env, context, session, d) {
       .first(),
   );
   if (existing) {
+    if (isolated) await assertIsolatedUploadRow(env, d, isolated, existing);
+    else if (existing.target_id != null) fail("upload_target_conflict", 409);
     await assertCurrent(env, context, session, d, existing.book_id);
+    if (isolated) assertIsolatedConfiguration(env, isolated, session);
     return d.response(200, {
       upload: { ...stateInfo(existing), canSubmit: false },
       bookId: existing.book_id,
@@ -370,7 +464,9 @@ async function intent(request, env, context, session, d) {
         ),
         d.prepare(
           env,
-          "INSERT INTO browser_uploads(upload_id,scope,book_id,file_id,sha256,reservation_id,descriptor_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
+          isolated
+            ? "INSERT INTO browser_uploads(upload_id,scope,book_id,file_id,sha256,reservation_id,descriptor_json,created_at,target_id) VALUES(?,?,?,?,?,?,?,?,?)"
+            : "INSERT INTO browser_uploads(upload_id,scope,book_id,file_id,sha256,reservation_id,descriptor_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
           uploadId,
           context.scope,
           bookId,
@@ -379,6 +475,7 @@ async function intent(request, env, context, session, d) {
           reservationId,
           JSON.stringify(descriptor),
           now,
+          ...(isolated ? [ISOLATED_UPLOAD_TARGET] : []),
         ),
         d.prepare(
           env,
@@ -405,12 +502,19 @@ async function intent(request, env, context, session, d) {
         .first(),
     );
     if (!concurrent) throw error;
+    if (isolated) await assertIsolatedUploadRow(env, d, isolated, concurrent);
+    else if (concurrent.target_id != null) fail("upload_target_conflict", 409);
     await assertCurrent(env, context, session, d, concurrent.book_id);
+    if (isolated) assertIsolatedConfiguration(env, isolated, session);
     return d.response(200, {
       upload: { ...stateInfo(concurrent), canSubmit: false },
       bookId: concurrent.book_id,
       fileId: concurrent.file_id,
     });
+  }
+  if (isolated) {
+    await assertCurrent(env, context, session, d, bookId, 1);
+    assertIsolatedConfiguration(env, isolated, session);
   }
   return d.response(201, {
     upload: {
@@ -424,8 +528,13 @@ async function intent(request, env, context, session, d) {
   });
 }
 async function bytes(request, env, context, session, id, d) {
+  const isolated = isolatedUploadConfiguration(env);
+  const closed = closedUpload(env);
+  if (closed) return uploadBlocked(d, closed);
   let row = await uploadRow(env, id, d);
   if (!row) fail("upload_not_found", 404);
+  if (isolated) row = await assertIsolatedUploadRow(env, d, isolated, row);
+  else if (row.target_id != null) fail("upload_target_conflict", 409);
   const lifecycleVersion = row.management_version;
   if (row.state !== "reserved" || row.put_attempted)
     fail(
@@ -434,7 +543,9 @@ async function bytes(request, env, context, session, id, d) {
         : "upload_uncertain",
       409,
     );
-  let capability = await uploadCapability(env, context, d);
+  let capability = await uploadCapability(env, context, d, {
+    claimUpload: row,
+  });
   if (!capability.enabled)
     return d.response(409, {
       error: { code: "upload_blocked" },
@@ -447,7 +558,8 @@ async function bytes(request, env, context, session, id, d) {
   if ((await trialSha256(data)) !== descriptor.sha256)
     fail("file_hash_mismatch");
   validateUploadMagic(data, descriptor.format);
-  capability = await uploadCapability(env, context, d);
+  if (isolated) assertIsolatedConfiguration(env, isolated, session);
+  capability = await uploadCapability(env, context, d, { claimUpload: row });
   if (!capability.enabled)
     return d.response(409, {
       error: { code: "upload_blocked" },
@@ -469,29 +581,40 @@ async function bytes(request, env, context, session, id, d) {
         row.book_id,
         lifecycleVersion,
         env.R2_ACCOUNT_ID,
-        env.R2_BUCKET,
+        isolated ? "the-shelf-books" : env.R2_BUCKET,
       ),
     ]),
   );
+  if (isolated) assertIsolatedConfiguration(env, isolated, session);
   if (!claim[1].results?.length) fail("upload_uncertain", 409);
   let etag;
   try {
-    // A timeout does not cancel an uncertain remote write or grant another claim.
-    await deadline(
-      env.BOOKS.put(descriptor.objectKey, data, {
-        httpMetadata: { contentType: mime(descriptor.format) },
-        customMetadata: { sha256: descriptor.sha256 },
-        sha256: descriptor.sha256,
-      }),
-    );
     const file = {
       size_bytes: descriptor.sizeBytes,
       sha256: descriptor.sha256,
       format: descriptor.format,
     };
+    // A timeout does not cancel an uncertain remote write or grant another claim.
+    const stored = await deadline(
+      env.BOOKS.put(descriptor.objectKey, data, {
+        onlyIf: new Headers({ "If-None-Match": "*" }),
+        httpMetadata: { contentType: mime(descriptor.format) },
+        customMetadata: { sha256: descriptor.sha256 },
+        sha256: descriptor.sha256,
+      }),
+    );
+    etag = normalizedEtag(stored?.etag);
+    if (
+      !stored ||
+      typeof stored !== "object" ||
+      Array.isArray(stored) ||
+      stored.key !== descriptor.objectKey ||
+      !etag ||
+      !objectHeadMatches({ ...file, etag }, stored)
+    )
+      throw Error("verification");
     const first = await deadline(env.BOOKS.head(descriptor.objectKey));
-    etag = normalizedEtag(first?.etag);
-    if (!etag || !objectHeadMatches({ ...file, etag }, first))
+    if (!objectHeadMatches({ ...file, etag }, first))
       throw Error("verification");
     const object = await deadline(
       env.BOOKS.get(descriptor.objectKey, { onlyIf: { etagMatches: etag } }),
@@ -509,6 +632,10 @@ async function bytes(request, env, context, session, id, d) {
     if (!objectHeadMatches({ ...file, etag }, last))
       throw Error("verification");
     // Content confirmation is retained even if the owner revoked/trashes during verification.
+    if (isolated) {
+      assertIsolatedConfiguration(env, isolated);
+      await assertIsolatedUploadRow(env, d, isolated, row);
+    }
     await d.query(() =>
       d
         .prepare(
@@ -543,7 +670,9 @@ async function bytes(request, env, context, session, id, d) {
   row = await uploadRow(env, id, d);
   if (row.state !== "confirmed") fail("upload_uncertain", 409);
   const info = await d.bookInfo(env, context.scope, row.book_id, true);
+  if (isolated) await assertIsolatedUploadRow(env, d, isolated, row);
   await assertCurrent(env, context, session, d, row.book_id, lifecycleVersion);
+  if (isolated) assertIsolatedConfiguration(env, isolated, session);
   return d.response(201, {
     upload: stateInfo(row),
     book: info.book,
@@ -577,6 +706,8 @@ async function deadline(operation, timeout = 30000) {
   }
 }
 async function lifecycle(request, env, context, session, bookId, trashed, d) {
+  if (env.STORAGE_MODE === "authority-v2")
+    return storageLifecycle(request, env, context, session, bookId, trashed, d);
   const input = await readJson(request);
   if (
     Object.keys(input).length !== 1 ||
@@ -631,6 +762,18 @@ export async function managementRoute(request, env, context, session, d) {
   )
     return identifyRoute(request, env, context, session, d);
   if (path === "/api/manage" && request.method === "GET") {
+    if (env.STORAGE_MODE === "authority-v2") {
+      const cursor = storageBookCursor(request);
+      const configuration = storageReadConfiguration(env);
+      // Capability has at most two SELECTs. The primary book projection is last,
+      // so no further await can make its private session/source snapshot stale.
+      const identify = await identifyCapability(env, d);
+      const page = await storageBooks(env, context, session, {
+        cursor,
+        configuration,
+      });
+      return d.response(200, { ...page, upload: closedUpload(env), identify });
+    }
     const result = await d.query(() =>
       env.DB.batch([
         d.prepare(
@@ -663,12 +806,15 @@ export async function managementRoute(request, env, context, session, d) {
       managementVersion: row.version,
       deletedAt: row.trashed ? row.updated_at : null,
     }));
-    if (env.NORMAL_UPLOAD_MODE === "authority-v1") {
+    if (
+      env.NORMAL_UPLOAD_MODE === "authority-v1" ||
+      isolatedUploadConfiguration(env)
+    ) {
       const uploads = await d.query(() =>
         d
           .prepare(
             env,
-            `SELECT u.book_id,u.upload_id,r.state,r.put_attempted FROM browser_uploads u JOIN shelf_storage_reservations r ON r.reservation_id=u.reservation_id WHERE u.scope=?`,
+            `SELECT u.book_id,u.upload_id,r.state,r.put_attempted FROM browser_uploads u JOIN shelf_storage_reservations r ON r.reservation_id=u.reservation_id WHERE u.scope=?${isolatedUploadConfiguration(env) ? " AND u.target_id='isolated-project-20261024'" : ""}`,
             context.scope,
           )
           .all(),
@@ -712,25 +858,45 @@ export async function managedFileAccess(
   content,
   d,
 ) {
+  const isolated = isolatedUploadConfiguration(env);
   if (
-    env.NORMAL_UPLOAD_MODE !== "authority-v1" ||
-    env.SINGLE_TRIAL_MODE !== undefined ||
-    env.R2_BUCKET !== "the-shelf-books"
+    !isolated &&
+    (env.NORMAL_UPLOAD_MODE !== "authority-v1" ||
+      env.SINGLE_TRIAL_MODE !== undefined ||
+      env.R2_BUCKET !== "the-shelf-books")
   )
     fail("files_unconfigured", 503);
-  const row = await d.query(() =>
-    d
-      .prepare(
-        env,
-        `SELECT f.*,m.version AS management_version,u.descriptor_json FROM file_registry f JOIN browser_uploads u ON u.scope=f.scope AND u.file_id=f.file_id JOIN book_management m ON m.scope=f.scope AND m.book_id=f.book_id JOIN shelf_storage_authority a ON a.id=1 WHERE f.scope=? AND f.file_id=? AND f.state='confirmed' AND m.trashed=0 AND json_extract(a.identity_json,'$.accountId')=? AND json_extract(a.identity_json,'$.bucket')=?`,
-        context.scope,
-        id,
-        env.R2_ACCOUNT_ID,
-        env.R2_BUCKET,
+  const policy = isolated ? await loadIsolatedPolicy(env, d, isolated) : null;
+  const row = isolated
+    ? await d.query(() =>
+        d
+          .prepare(
+            env,
+            `${ISOLATED_CONFIRMED_SQL} AND f.scope=? AND f.file_id=? AND u.account_id=? AND u.bucket=? AND u.consent_sha256=? AND u.trial_target_sha256=?`,
+            context.scope,
+            id,
+            isolated.accountId,
+            isolated.bucket,
+            isolated.consent,
+            isolated.trialTarget,
+          )
+          .first(),
       )
-      .first(),
-  );
-  if (!row) fail("file_unavailable", 409);
+    : await d.query(() =>
+        d
+          .prepare(
+            env,
+            `SELECT f.*,m.version AS management_version,u.descriptor_json FROM file_registry f JOIN browser_uploads u ON u.scope=f.scope AND u.file_id=f.file_id JOIN book_management m ON m.scope=f.scope AND m.book_id=f.book_id JOIN shelf_storage_authority a ON a.id=1 WHERE f.scope=? AND f.file_id=? AND f.state='confirmed' AND m.trashed=0 AND json_extract(a.identity_json,'$.accountId')=? AND json_extract(a.identity_json,'$.bucket')=?`,
+            context.scope,
+            id,
+            env.R2_ACCOUNT_ID,
+            env.R2_BUCKET,
+          )
+          .first(),
+      );
+  if (!row || (isolated && row.target_tuple !== isolatedPolicyTuple(policy)))
+    fail("file_unavailable", 409);
+  if (isolated) assertIsolatedConfiguration(env, isolated, session);
   let range = null;
   const expected = normalizedEtag(row.etag);
   if (!expected) fail("file_unavailable", 409);
@@ -785,6 +951,16 @@ export async function managedFileAccess(
     discard();
     fail("file_changed", 409);
   }
+  if (isolated) {
+    try {
+      assertIsolatedConfiguration(env, isolated, session);
+      await loadIsolatedPolicy(env, d, isolated);
+      assertIsolatedConfiguration(env, isolated, session);
+    } catch (error) {
+      discard();
+      throw error;
+    }
+  }
   const now = Date.now();
   let result;
   try {
@@ -792,7 +968,7 @@ export async function managedFileAccess(
       env.DB.batch([
         d.prepare(
           env,
-          `INSERT INTO admissions(scope,request_id,kind,ip_key,created_at,session_hash,generation,file_id) SELECT ?,?,'access',?,?,?,?,? WHERE EXISTS(SELECT 1 FROM file_registry f JOIN book_management m ON m.scope=f.scope AND m.book_id=f.book_id JOIN catalog_books b ON b.scope=f.scope AND b.book_id=f.book_id JOIN json_each(b.public_json,'$.files') j WHERE f.scope=? AND f.file_id=? AND f.state='confirmed' AND f.version=? AND f.object_key=? AND f.sha256=? AND f.etag=? AND f.size_bytes=? AND f.format=? AND m.trashed=0 AND m.version=? AND json_extract(j.value,'$.id')=f.file_id AND json_extract(j.value,'$.format')=f.format AND json_extract(j.value,'$.sizeBytes')=f.size_bytes AND json_extract(j.value,'$.status')='candidate') RETURNING request_id`,
+          `INSERT INTO admissions(scope,request_id,kind,ip_key,created_at,session_hash,generation,file_id) SELECT ?,?,'access',?,?,?,?,? WHERE EXISTS(SELECT 1 FROM file_registry f JOIN book_management m ON m.scope=f.scope AND m.book_id=f.book_id JOIN catalog_books b ON b.scope=f.scope AND b.book_id=f.book_id JOIN json_each(b.public_json,'$.files') j WHERE f.scope=? AND f.file_id=? AND f.state='confirmed' AND f.version=? AND f.object_key=? AND f.sha256=? AND f.etag=? AND f.size_bytes=? AND f.format=? AND m.trashed=0 AND m.version=? AND json_extract(j.value,'$.id')=f.file_id AND json_extract(j.value,'$.format')=f.format AND json_extract(j.value,'$.sizeBytes')=f.size_bytes AND json_extract(j.value,'$.status')='candidate'${isolated ? ` AND EXISTS(SELECT 1 FROM (${ISOLATED_CONFIRMED_SQL}) mapped WHERE mapped.file_id=? AND mapped.descriptor_json=? AND mapped.target_tuple=?)` : ""}) RETURNING request_id`,
           context.scope,
           randomKey(),
           context.ip,
@@ -809,6 +985,7 @@ export async function managedFileAccess(
           row.size_bytes,
           row.format,
           row.management_version,
+          ...(isolated ? [id, row.descriptor_json, row.target_tuple] : []),
         ),
         d.prepare(
           env,
@@ -824,6 +1001,14 @@ export async function managedFileAccess(
   } catch (e) {
     discard();
     throw e;
+  }
+  if (isolated) {
+    try {
+      assertIsolatedConfiguration(env, isolated, session);
+    } catch (error) {
+      discard();
+      throw error;
+    }
   }
   if (!result[1].results?.length) {
     discard();

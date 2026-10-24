@@ -317,6 +317,70 @@ const sync = (f, object, mock, more = {}) =>
     ...more,
   });
 
+for (const action of ["reserve", "claim", "confirm"])
+  test(`atomic manifest rejects schema drift immediately before ordinary ${action}`, async (t) => {
+    const f = await fixture(t),
+      o = await original();
+    if (action !== "reserve")
+      await f.remote.reserve(
+        identity(),
+        "one",
+        o.descriptor,
+        o.bytes,
+        evidence(),
+      );
+    if (action === "confirm") await f.remote.claimPut(identity(), "one");
+    let injected = false;
+    f.setFault(({ options, db }) => {
+      if (!options.body) return;
+      const { sql } = JSON.parse(options.body);
+      const target =
+        action === "reserve"
+          ? sql.startsWith("UPDATE shelf_storage_authority SET observed_bytes")
+          : sql.startsWith(
+              `UPDATE shelf_storage_reservations SET state='${action === "claim" ? "uploading" : "confirmed"}'`,
+            );
+      if (target && !injected) {
+        injected = true;
+        db.exec("CREATE TABLE shelf_storage_manifest_drift(id INTEGER)");
+      }
+    });
+    if (action === "reserve")
+      await assert.rejects(
+        f.remote.reserve(identity(), "one", o.descriptor, o.bytes, evidence()),
+        { code: "storage_migration_required" },
+      );
+    else if (action === "claim")
+      await assert.rejects(f.remote.claimPut(identity(), "one"), {
+        code: "storage_put_already_claimed",
+      });
+    else {
+      const mock = store();
+      await mock.store.put(o.descriptor.objectKey, o.bytes, {
+        ifNoneMatch: "*",
+        sha256: o.descriptor.sha256,
+        contentType: objectContentType(o.descriptor),
+      });
+      await assert.rejects(f.remote.reconcile(identity(), "one", mock.store), {
+        code: "object_changed",
+      });
+    }
+    assert.equal(injected, true);
+    const row = f.dbs.production
+      .prepare(
+        "SELECT state FROM shelf_storage_reservations WHERE reservation_id='one'",
+      )
+      .get();
+    assert.equal(
+      row?.state ?? null,
+      action === "reserve"
+        ? null
+        : action === "claim"
+          ? "reserved"
+          : "uploading",
+    );
+  });
+
 test("real SQL frozen empty sources import atomically and independent complete readback opens one authority", async (t) => {
   const f = await fixture(t);
   assert.equal(f.receipt.cloudWriteFreezeProven, true);
@@ -665,6 +729,29 @@ test("nonempty exact legacy sources retain uncertain, disabled committed and ver
       .get().state,
     "disabled",
   );
+});
+
+test("ten-row migration batch retains parameter and statement bounds with one manifest parameter", async (t) => {
+  const objects = await Promise.all(
+    Array.from({ length: 10 }, (_, i) => original("production", `batch_${i}`)),
+  );
+  const f = await fixture(t, {
+    seed: async (dbs, catalog) => {
+      for (let i = 0; i < objects.length; i++)
+        await seedLegacy(dbs, catalog, objects[i], "uncertain", `batch${i}`);
+    },
+  });
+  const batches = f.calls
+    .filter((c) => c.options.body)
+    .map((c) => JSON.parse(c.options.body))
+    .filter((c) =>
+      c.sql.startsWith("INSERT OR IGNORE INTO shelf_storage_staging"),
+    );
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].params.length, 91);
+  assert.ok(Buffer.byteLength(batches[0].sql) < 100000);
+  assert.equal(typeof batches[0].params.at(-1), "string");
+  assert.equal(f.receipt.importedReservations, 10);
 });
 
 test("database-only freeze proof cannot make ready without independently supplied structured writer-closure verifier", async (t) => {

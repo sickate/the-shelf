@@ -1,20 +1,14 @@
 // Explicit first-book capability. This module has no environment discovery or retries.
 import { LibraryError, isCanonicalKey } from "./security.mjs";
-import { normalizedEtag, objectHeadMatches, THRESHOLD } from "./core.mjs";
+import { normalizedEtag, objectHeadMatches } from "./core.mjs";
+import { decodeTrialRecord } from "./trial-record.mjs";
 
 export const SINGLE_TRIAL_MODE = "first-book-20261023";
 export const SINGLE_TRIAL_BUCKET = "the-shelf-first-book-20261023";
 const hash = /^[a-f0-9]{64}$/;
-const id = /^[A-Za-z0-9_-]{1,100}$/;
 const fail = (code = "file_unavailable", status = 409) => {
   throw new LibraryError(code, status);
 };
-const exact = (v, keys) =>
-  v &&
-  typeof v === "object" &&
-  !Array.isArray(v) &&
-  Object.keys(v).length === keys.length &&
-  keys.every((k) => Object.hasOwn(v, k));
 const hex = (bytes) =>
   [...new Uint8Array(bytes)]
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -42,117 +36,21 @@ export function trialMode(env) {
 }
 export const trialMime = (d) =>
   d.format === "PDF" ? "application/pdf" : "application/epub+zip";
-export function decodeTrialRow(row, env, { confirmed = true } = {}) {
-  try {
-    if (
-      !trialMode(env) ||
-      !row ||
-      row.id !== 1 ||
-      row.consent_id !== "2026-10-23-first-book" ||
-      !id.test(row.permit_id || "") ||
-      ![row.issued_at, row.expires_at, row.updated_at].every(
-        (n) => Number.isSafeInteger(n) && n >= 0,
-      ) ||
-      row.updated_at < row.issued_at ||
-      row.expires_at <= row.issued_at ||
-      row.expires_at > row.issued_at + 86400000 ||
-      row.isolated_target_config_sha256 !== env.SINGLE_TRIAL_TARGET_SHA256
-    )
-      fail();
-    const target = JSON.parse(row.target_json),
-      d = JSON.parse(row.descriptor_json),
-      authority = JSON.parse(row.authority_identity_json);
-    if (
-      !exact(target, ["accountId", "bucket"]) ||
-      target.accountId !== env.R2_ACCOUNT_ID ||
-      target.bucket !== SINGLE_TRIAL_BUCKET ||
-      !exact(authority, [
-        "schemaVersion",
-        "authorityId",
-        "accountId",
-        "bucket",
-        "legacyDatabases",
-      ]) ||
-      authority.schemaVersion !== 1 ||
-      authority.authorityId !== "shelf-remote-storage-v1" ||
-      !exact(authority.legacyDatabases, ["check", "production"]) ||
-      !Object.values(authority.legacyDatabases).every(
-        (v) =>
-          typeof v === "string" &&
-          /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
-            v,
-          ),
-      ) ||
-      authority.legacyDatabases.check ===
-        authority.legacyDatabases.production ||
-      authority.accountId !== target.accountId ||
-      authority.bucket !== "the-shelf-books" ||
-      !exact(d, [
-        "kind",
-        "scope",
-        "fileId",
-        "bookId",
-        "format",
-        "sizeBytes",
-        "sha256",
-        "objectKey",
-        "versionHash",
-        "source",
-      ]) ||
-      d.kind !== "original" ||
-      d.scope !== "production" ||
-      !id.test(d.fileId || "") ||
-      !id.test(d.bookId || "") ||
-      !["PDF", "EPUB"].includes(d.format) ||
-      !Number.isSafeInteger(d.sizeBytes) ||
-      d.sizeBytes < 1 ||
-      d.sizeBytes > THRESHOLD ||
-      d.sizeBytes !== row.size_bytes ||
-      !hash.test(d.sha256 || "") ||
-      d.versionHash !== null ||
-      d.source !== null ||
-      d.objectKey !==
-        `books/cf03/${d.fileId}/${d.sha256}.${d.format.toLowerCase()}` ||
-      !["reserved", "uploading", "uncertain", "confirmed"].includes(row.state)
-    )
-      fail();
-    if (
-      (row.state === "reserved" &&
-        (row.put_attempted !== 0 ||
-          row.content_verified !== 0 ||
-          row.etag !== null)) ||
-      (["uploading", "uncertain"].includes(row.state) &&
-        (row.put_attempted !== 1 ||
-          row.content_verified !== 0 ||
-          row.etag !== null))
-    )
-      fail();
-    if (
-      confirmed &&
-      (row.state !== "confirmed" ||
-        row.content_verified !== 1 ||
-        row.put_attempted !== 1 ||
-        !normalizedEtag(row.etag))
-    )
-      fail();
-    return {
-      row,
-      descriptor: d,
-      file: {
-        file_id: d.fileId,
-        book_id: d.bookId,
-        object_key: d.objectKey,
-        format: d.format,
-        size_bytes: d.sizeBytes,
-        sha256: d.sha256,
-        etag: row.etag,
-        state: row.state,
-      },
-    };
-  } catch (e) {
-    if (e instanceof LibraryError) throw e;
-    fail();
-  }
+export function decodeTrialRow(row, env, options) {
+  if (!trialMode(env)) fail();
+  const decoded = decodeTrialRecord(
+    row,
+    {
+      accountId: env.R2_ACCOUNT_ID,
+      targetSha256: env.SINGLE_TRIAL_TARGET_SHA256,
+    },
+    options,
+  );
+  return {
+    row: decoded.row,
+    descriptor: decoded.descriptor,
+    file: decoded.file,
+  };
 }
 export async function loadTrial(env, options) {
   let row;
@@ -166,6 +64,7 @@ export async function loadTrial(env, options) {
   return decodeTrialRow(row, env, options);
 }
 export async function trialOperatorAuthorized(request, env) {
+  if (env.STORAGE_MODE === "authority-v2") fail("not_found", 404);
   const expected = env.SINGLE_TRIAL_UPLOAD_SECRET,
     supplied = request.headers.get("x-shelf-trial-secret");
   if (!isCanonicalKey(expected) || !isCanonicalKey(supplied))
@@ -274,6 +173,7 @@ function objectHeaders(file) {
   };
 }
 export async function trialOperatorRoute(request, env) {
+  if (env.STORAGE_MODE === "authority-v2") fail("not_found", 404);
   trialMode(env);
   await trialOperatorAuthorized(request, env);
   const t = await loadTrial(env, { confirmed: false });

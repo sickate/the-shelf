@@ -493,6 +493,15 @@ test("real CLI preview and execution stay inside a synthetic project and never r
       new URL(`../scripts/${name}`, import.meta.url),
       path.join(f.root, "scripts", name),
     );
+  await fs.mkdir(path.join(f.root, "shared"));
+  for (const name of [
+    "storage-deployment-contract.mjs",
+    "storage-schema-profiles.mjs",
+  ])
+    await fs.copyFile(
+      new URL(`../shared/${name}`, import.meta.url),
+      path.join(f.root, "shared", name),
+    );
   const preload = path.join(f.root, "blocked.mjs");
   await fs.writeFile(
     preload,

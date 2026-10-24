@@ -2,7 +2,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
-import { d1Client } from "./cf-library-clients.mjs";
+import { createHash } from "node:crypto";
+import {
+  storageDeploymentContract,
+  validateRemoteStorageBindings,
+} from "../shared/storage-deployment-contract.mjs";
+import {
+  readDeploymentControlJson,
+  verifyStorageDeployGuard,
+  STORAGE_DEPLOY_GUARD_LIMITS,
+} from "./storage-deploy-guard.mjs";
 import {
   SINGLE_TRIAL_MODE,
   SINGLE_TRIAL_BUCKET,
@@ -24,6 +33,24 @@ import {
   PRIVATE_KEYS,
 } from "./cf-deploy.mjs";
 
+import {
+  PREPARED_SCHEMA_SHA256,
+  PREPARED_SCHEMA_DEFINITIONS,
+} from "./prepared-schema.mjs";
+export const PREPARED_TEXT_MODE = "registry-v1";
+const PREPARED_NAMES = [
+  "PREPARED_TEXT_MODE",
+  "PREPARED_BOOKS",
+  "PREPARED_R2_ACCOUNT_ID",
+  "PREPARED_R2_BUCKET",
+];
+const preparedOptions = (profile, singleTrialTarget, preparedText) => {
+  if (
+    typeof preparedText !== "boolean" ||
+    (preparedText && (profile !== "production" || !singleTrialTarget))
+  )
+    fail("config");
+};
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 export const PROFILES = Object.freeze({
   check: {
@@ -187,28 +214,30 @@ export async function readProjectEnvironment(root, environment = {}) {
     credentials: selectCredentials(environment, fileEnvironment),
   };
 }
-export async function readRemoteSettings(credentials, name, fetcher = fetch) {
+export async function readRemoteSettings(
+  credentials,
+  name,
+  fetcher = fetch,
+  options = {},
+) {
   if (!Object.values(PROFILES).some((p) => p.name === name)) fail("target");
-  let response, data;
+  let data;
   try {
-    response = await fetcher(
-      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/workers/scripts/${name}/settings`,
-      {
-        headers: { Authorization: `Bearer ${credentials.token}` },
-        redirect: "error",
-        signal: AbortSignal.timeout(30_000),
-      },
-    );
-    if (response.status === 404) return null;
-    const text = await response.text();
-    if (text.length > 1024 * 1024) fail("remote");
-    data = JSON.parse(text);
+    data = await readDeploymentControlJson({
+      url: `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/workers/scripts/${name}/settings`,
+      fetcher,
+      allowNotFound: true,
+      timeoutMs: options.timeoutMs,
+      init: { headers: { Authorization: `Bearer ${credentials.token}` } },
+    });
+    if (data === null) return null;
   } catch {
     fail("remote");
   }
   if (
-    !response.ok ||
     data.success !== true ||
+    (data.errors !== undefined &&
+      (!Array.isArray(data.errors) || data.errors.length)) ||
     !Array.isArray(data.result?.bindings)
   )
     fail("remote");
@@ -251,8 +280,233 @@ export function safeStaticBindings(settings, { filenameAi = false } = {}) {
     )
   );
 }
-export async function verifyDatabaseIdentity(credentials, resource, options) {
-  await d1Client(credentials, resource, options).verify();
+export async function verifyDatabaseIdentity(
+  credentials,
+  resource,
+  { fetchImpl = fetch, timeoutMs } = {},
+) {
+  if (
+    !/^[a-f0-9]{32}$/.test(credentials?.accountId || "") ||
+    !credentials.token ||
+    !/^[a-f0-9-]{36}$/.test(resource?.databaseId || "") ||
+    !Object.values(PROFILES).some(
+      (p) => p.databaseName === resource.databaseName,
+    )
+  )
+    fail("database_identity");
+  try {
+    const data = await readDeploymentControlJson({
+      url: `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/d1/database/${resource.databaseId}`,
+      fetcher: fetchImpl,
+      timeoutMs,
+      init: {
+        headers: {
+          authorization: `Bearer ${credentials.token}`,
+          "content-type": "application/json",
+        },
+      },
+    });
+    if (
+      data?.success !== true ||
+      (data.errors !== undefined &&
+        (!Array.isArray(data.errors) || data.errors.length)) ||
+      data.result?.uuid !== resource.databaseId ||
+      data.result?.name !== resource.databaseName
+    )
+      fail("database_identity");
+  } catch {
+    fail("database_identity");
+  }
+}
+const cancel = (value) => {
+  try {
+    void Promise.resolve(value?.cancel()).catch(() => {});
+  } catch {}
+};
+// An independent deadline also bounds custom fetchers/readers that ignore abort.
+// Consume incrementally, never buffer an unbounded response before checking it.
+async function preparedControlResponse(
+  fetcher,
+  url,
+  options,
+  timeoutMs = 30_000,
+) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000)
+    fail("config");
+  const controller = new AbortController();
+  let timer, response, reader;
+  const operation = (async () => {
+    response = await fetcher(url, {
+      ...options,
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) {
+      cancel(response?.body);
+      fail("unknown");
+    }
+    if (
+      response?.status !== 200 ||
+      response.redirected ||
+      (response.url && response.url !== url) ||
+      !response.body ||
+      !/^application\/json(?:\s*;|$)/i.test(
+        response.headers.get("content-type") || "",
+      )
+    )
+      fail("unknown");
+    const length = response.headers.get("content-length");
+    if (
+      length !== null &&
+      (!/^\d+$/.test(length) || Number(length) > 1_048_576)
+    )
+      fail("unknown");
+    reader = response.body.getReader();
+    const chunks = [];
+    let count = 0,
+      size = 0;
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      if (
+        !(part.value instanceof Uint8Array) ||
+        ++count > 4096 ||
+        (size += part.value.byteLength) > 1_048_576
+      )
+        fail("unknown");
+      chunks.push(Buffer.from(part.value));
+    }
+    return new Response(Buffer.concat(chunks), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  })();
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          cancel(reader);
+          cancel(response?.body);
+          reject(new ApiDeployError("unknown"));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch {
+    controller.abort();
+    cancel(reader);
+    cancel(response?.body);
+    fail("unknown");
+  } finally {
+    clearTimeout(timer);
+    cancel(reader);
+    try {
+      reader?.releaseLock();
+    } catch {}
+  }
+}
+
+export const PREPARED_DEPLOY_GUARD_SQL =
+  "SELECT (SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql',sql)) FROM (SELECT type,name,tbl_name,sql FROM sqlite_master WHERE substr(name,1,15)='shelf_prepared_' ORDER BY type,name LIMIT 14)) AS schema_json,(SELECT json_group_array(json_object('id',id,'identity_json',identity_json)) FROM (SELECT id,identity_json FROM shelf_storage_authority ORDER BY id LIMIT 2)) AS authority_json";
+/** One bounded read-only request, after the caller's separate fixed D1 identity GET. */
+export async function verifyPreparedSchema(
+  credentials,
+  resource,
+  identity,
+  { fetcher = fetch, timeoutMs = 30_000 } = {},
+) {
+  if (
+    !/^[a-f0-9]{32}$/.test(credentials?.accountId || "") ||
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+      resource?.databaseId || "",
+    ) ||
+    resource.databaseName !== PROFILES.production.databaseName ||
+    identity?.accountId !== credentials.accountId ||
+    identity?.bucket !== "the-shelf-books" ||
+    identity?.legacyDatabases?.production !== resource.databaseId
+  )
+    fail("config");
+  try {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/d1/database/${resource.databaseId}/query`;
+    const response = await preparedControlResponse(
+      fetcher,
+      url,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sql: PREPARED_DEPLOY_GUARD_SQL, params: [] }),
+      },
+      timeoutMs,
+    );
+    const data = await response.json();
+    if (
+      data.success !== true ||
+      !Array.isArray(data.result) ||
+      data.result.length !== 1 ||
+      data.result[0].success !== true ||
+      !Array.isArray(data.result[0].results) ||
+      data.result[0].results.length !== 1
+    )
+      fail("prepared_schema");
+    const row = data.result[0].results[0];
+    if (
+      !own(row, ["schema_json", "authority_json"]) ||
+      typeof row.schema_json !== "string" ||
+      typeof row.authority_json !== "string"
+    )
+      fail("prepared_schema");
+    const definitions = JSON.parse(row.schema_json),
+      authorities = JSON.parse(row.authority_json);
+    const normalize = (v) =>
+      typeof v === "string" ? v.trim().replace(/;$/, "") : null;
+    if (
+      !Array.isArray(definitions) ||
+      definitions.length !== PREPARED_SCHEMA_DEFINITIONS.length ||
+      new Set(definitions.map((v) => v.name)).size !== definitions.length ||
+      definitions.some((v) => {
+        const expected = PREPARED_SCHEMA_DEFINITIONS.find(
+          (e) => e.name === v.name,
+        );
+        return (
+          !expected ||
+          !own(v, ["type", "name", "tbl_name", "sql"]) ||
+          v.type !== expected.type ||
+          v.tbl_name !== expected.tbl_name ||
+          normalize(v.sql) !== normalize(expected.sql)
+        );
+      }) ||
+      !Array.isArray(authorities) ||
+      authorities.length !== 1 ||
+      !own(authorities[0], ["id", "identity_json"]) ||
+      authorities[0].id !== 1 ||
+      typeof authorities[0].identity_json !== "string"
+    )
+      fail("prepared_schema");
+    const actual = JSON.parse(authorities[0].identity_json);
+    if (
+      !own(actual, [
+        "schemaVersion",
+        "authorityId",
+        "accountId",
+        "bucket",
+        "legacyDatabases",
+      ]) ||
+      !own(actual.legacyDatabases, ["check", "production"]) ||
+      actual.schemaVersion !== 1 ||
+      actual.authorityId !== "shelf-remote-storage-v1" ||
+      actual.accountId !== identity.accountId ||
+      actual.bucket !== identity.bucket ||
+      actual.legacyDatabases.check !== identity.legacyDatabases.check ||
+      actual.legacyDatabases.production !== identity.legacyDatabases.production
+    )
+      fail("prepared_schema");
+  } catch {
+    fail("prepared_schema");
+  }
 }
 export function validateRemoteBindings(
   settings,
@@ -265,6 +519,10 @@ export function validateRemoteBindings(
     singleTrialTarget,
     filenameAi = false,
     allowFilenameAiTransition = false,
+    isolatedUploadConsentSha256,
+    allowIsolatedUploadTransition = false,
+    preparedText = false,
+    allowPreparedTextTransition = false,
   } = {},
 ) {
   if (
@@ -280,6 +538,23 @@ export function validateRemoteBindings(
     (filenameAi !== true || !singleTrialTarget || profile !== "production")
   )
     fail("config");
+  preparedOptions(profile, singleTrialTarget, preparedText);
+  if (
+    typeof allowPreparedTextTransition !== "boolean" ||
+    (allowPreparedTextTransition && !preparedText)
+  )
+    fail("config");
+  if (
+    (isolatedUploadConsentSha256 !== undefined &&
+      (!/^[a-f0-9]{64}$/.test(isolatedUploadConsentSha256) ||
+        !filenameAi ||
+        !singleTrialTarget ||
+        profile !== "production" ||
+        preparedText)) ||
+    typeof allowIsolatedUploadTransition !== "boolean" ||
+    (allowIsolatedUploadTransition && !isolatedUploadConsentSha256)
+  )
+    fail("config");
   const secretNames = filenameAi
     ? FILENAME_AI_SECRET_NAMES
     : singleTrialTarget
@@ -287,6 +562,7 @@ export function validateRemoteBindings(
       : SECRET_NAMES;
   const bucket = singleTrialTarget ? SINGLE_TRIAL_BUCKET : "the-shelf-books";
   if (!settings) {
+    if (preparedText && !allowPreparedTextTransition) fail("bindings");
     if (requireSecrets) fail("secrets");
     return;
   }
@@ -296,12 +572,47 @@ export function validateRemoteBindings(
     new Set(bindings.map((b) => b.name)).size !== bindings.length
   )
     fail("bindings");
+  const isolatedEntries = bindings.filter((b) =>
+    ["ISOLATED_UPLOAD_MODE", "ISOLATED_UPLOAD_CONSENT_SHA256"].includes(b.name),
+  );
+  const isolatedPresent = isolatedEntries.length > 0;
+  if (
+    (!isolatedUploadConsentSha256 && isolatedPresent) ||
+    (isolatedUploadConsentSha256 &&
+      isolatedEntries.length !== 2 &&
+      !(allowIsolatedUploadTransition && !isolatedPresent))
+  )
+    fail("bindings");
+  const preparedEntries = bindings.filter((b) =>
+    PREPARED_NAMES.includes(b.name),
+  );
+  const preparedPresent = preparedEntries.length > 0;
+  if (
+    (!preparedText && preparedPresent) ||
+    (preparedText &&
+      preparedEntries.length !== 4 &&
+      !(allowPreparedTextTransition && !preparedPresent))
+  )
+    fail("bindings");
   const expectedVars = {
     APP_SCOPE: PROFILES[profile].scope,
     SITE_ORIGIN: PROFILES[profile].origin,
     R2_ACCOUNT_ID: accountId,
     R2_BUCKET: bucket,
+    ...(preparedText && preparedPresent
+      ? {
+          PREPARED_TEXT_MODE,
+          PREPARED_R2_ACCOUNT_ID: accountId,
+          PREPARED_R2_BUCKET: "the-shelf-books",
+        }
+      : {}),
     ...(filenameAi ? { FILENAME_AI_MODE } : {}),
+    ...(isolatedUploadConsentSha256 && isolatedPresent
+      ? {
+          ISOLATED_UPLOAD_MODE: "project-v1",
+          ISOLATED_UPLOAD_CONSENT_SHA256: isolatedUploadConsentSha256,
+        }
+      : {}),
     ...(singleTrialTarget
       ? {
           SINGLE_TRIAL_MODE,
@@ -342,7 +653,31 @@ export function validateRemoteBindings(
   )
     fail("bindings");
   for (const b of bindings) {
+    if (
+      ["BOOKS", "PREPARED_BOOKS"].includes(b.name) &&
+      (Object.keys(b).some(
+        (k) =>
+          ![
+            "name",
+            "type",
+            "bucket_name",
+            "jurisdiction",
+            "account_id",
+          ].includes(k),
+      ) ||
+        (Object.hasOwn(b, "account_id") && b.account_id !== accountId) ||
+        (Object.hasOwn(b, "jurisdiction") && b.jurisdiction !== "default"))
+    )
+      fail("bindings");
     if (b.name === "DB" || b.name === "BOOKS") continue;
+    if (
+      preparedText &&
+      b.name === "PREPARED_BOOKS" &&
+      b.type === "r2_bucket" &&
+      b.bucket_name === "the-shelf-books" &&
+      (!Object.hasOwn(b, "jurisdiction") || b.jurisdiction === "default")
+    )
+      continue;
     if (b.name === "ASSETS" && b.type === "assets" && profile === "production")
       continue;
     if (secretNames.includes(b.name) && b.type === "secret_text") continue;
@@ -354,6 +689,19 @@ export function validateRemoteBindings(
       continue;
     fail("bindings");
   }
+  if (
+    preparedPresent &&
+    PREPARED_NAMES.filter((n) => n !== "PREPARED_BOOKS").some(
+      (name) =>
+        !bindings.some(
+          (b) =>
+            b.name === name &&
+            b.type === "plain_text" &&
+            b.text === expectedVars[name],
+        ),
+    )
+  )
+    fail("bindings");
   if (
     requireSecrets &&
     secretNames.some(
@@ -392,7 +740,13 @@ export function workerConfig(
   resource,
   accountId,
   root,
-  { singleTrialTarget, filenameAi = false } = {},
+  {
+    singleTrialTarget,
+    filenameAi = false,
+    preparedText = false,
+    storageContract,
+    isolatedUploadConsentSha256,
+  } = {},
 ) {
   const p = PROFILES[profile];
   if (!p) fail("target");
@@ -406,9 +760,46 @@ export function workerConfig(
     fail("config");
   if (
     filenameAi !== false &&
-    (filenameAi !== true || !singleTrialTarget || profile !== "production")
+    (filenameAi !== true ||
+      (!singleTrialTarget && !storageContract) ||
+      profile !== "production")
   )
     fail("config");
+  if (
+    isolatedUploadConsentSha256 !== undefined &&
+    (!/^[a-f0-9]{64}$/.test(isolatedUploadConsentSha256) ||
+      !filenameAi ||
+      !singleTrialTarget ||
+      preparedText ||
+      storageContract)
+  )
+    fail("config");
+  if (storageContract) {
+    if (
+      profile !== "production" ||
+      singleTrialTarget ||
+      storageContract.profile !== "authority-v2-closed" ||
+      storageContract.identity.accountId !== accountId ||
+      storageContract.d1Bindings[0].database_id !== resource.databaseId ||
+      storageContract.filenameAi !== filenameAi ||
+      storageContract.preparedText !== preparedText
+    )
+      fail("config");
+    // The shared validator verifies that this is a genuine contract instance.
+    validateRemoteStorageBindings(
+      {
+        bindings: [
+          { name: "ASSETS", type: "assets" },
+          ...storageContract.secretNames.map((name) => ({
+            name,
+            type: "secret_text",
+          })),
+        ],
+      },
+      storageContract,
+      { staticOnly: true },
+    );
+  } else preparedOptions(profile, singleTrialTarget, preparedText);
   const bucket = singleTrialTarget ? SINGLE_TRIAL_BUCKET : "the-shelf-books";
   const config = {
     name: p.name,
@@ -422,7 +813,20 @@ export function workerConfig(
       SITE_ORIGIN: p.origin,
       R2_ACCOUNT_ID: accountId,
       R2_BUCKET: bucket,
+      ...(preparedText
+        ? {
+            PREPARED_TEXT_MODE,
+            PREPARED_R2_ACCOUNT_ID: accountId,
+            PREPARED_R2_BUCKET: "the-shelf-books",
+          }
+        : {}),
       ...(filenameAi ? { FILENAME_AI_MODE } : {}),
+      ...(isolatedUploadConsentSha256
+        ? {
+            ISOLATED_UPLOAD_MODE: "project-v1",
+            ISOLATED_UPLOAD_CONSENT_SHA256: isolatedUploadConsentSha256,
+          }
+        : {}),
       ...(singleTrialTarget
         ? {
             SINGLE_TRIAL_MODE,
@@ -437,7 +841,12 @@ export function workerConfig(
         database_id: resource.databaseId,
       },
     ],
-    r2_buckets: [{ binding: "BOOKS", bucket_name: bucket }],
+    r2_buckets: [
+      { binding: "BOOKS", bucket_name: bucket },
+      ...(preparedText
+        ? [{ binding: "PREPARED_BOOKS", bucket_name: "the-shelf-books" }]
+        : []),
+    ],
   };
   if (profile === "production")
     config.assets = {
@@ -447,7 +856,52 @@ export function workerConfig(
       not_found_handling: "404-page",
       run_worker_first: ["/api", "/api/*"],
     };
+  if (storageContract) {
+    config.vars = { ...storageContract.vars };
+    config.d1_databases = storageContract.d1Bindings.map((b) => ({ ...b }));
+    config.r2_buckets = storageContract.r2Bindings.map((b) => ({ ...b }));
+  }
   return config;
+}
+
+/** Closed enumeration: legacy transition flags are never used for v2. */
+export function validateV2DeploymentTransition(
+  settings,
+  contract,
+  { preparedTextRollback = false } = {},
+) {
+  if (
+    contract?.profile !== "authority-v2-closed" ||
+    typeof preparedTextRollback !== "boolean" ||
+    (preparedTextRollback && contract.preparedText)
+  )
+    fail("config");
+  const build = (profile, preparedText) =>
+    storageDeploymentContract({
+      profile,
+      identity: contract.identity,
+      trialTargetSha256: contract.vars.TRIAL_TARGET_SHA256,
+      filenameAi: true,
+      preparedText,
+      retainedSecrets: "trial-retained-filename-v1",
+    });
+  const candidates = preparedTextRollback
+    ? [build("authority-v2-closed", true)]
+    : [
+        contract,
+        build("trial-v1", contract.preparedText),
+        ...(contract.preparedText ? [build("authority-v2-closed", false)] : []),
+      ];
+  for (const candidate of candidates) {
+    try {
+      return {
+        ...validateRemoteStorageBindings(settings, candidate),
+        profile: candidate.profile,
+        preparedText: candidate.preparedText,
+      };
+    } catch {}
+  }
+  fail("bindings");
 }
 export async function deployApi({
   root = ROOT,
@@ -456,18 +910,57 @@ export async function deployApi({
   runner = runChild,
   inspector = readRemoteSettings,
   identityChecker = verifyDatabaseIdentity,
+  preparedChecker = verifyPreparedSchema,
+  storageChecker = verifyStorageDeployGuard,
+  isolatedChecker,
+  storageMode,
+  writeMode,
   singleTrial = false,
   filenameAi = false,
+  isolatedUploads = false,
+  preparedText = false,
+  preparedTextRollback = false,
 } = {}) {
   let directory, credentials;
   let phase = "files";
+  const v2 = storageMode === "authority-v2";
+  const controlLimit = isolatedUploads
+    ? 5
+    : STORAGE_DEPLOY_GUARD_LIMITS.maxTotalHttp;
+  let controlRequests = 0;
+  const control = async (operation) => {
+    if (++controlRequests > controlLimit) fail("request_budget");
+    return operation();
+  };
   try {
     if (
+      ((storageMode !== undefined || writeMode !== undefined) &&
+        (!v2 ||
+          writeMode !== "closed" ||
+          profile !== "production" ||
+          singleTrial !== false ||
+          filenameAi !== true)) ||
       !PROFILES[profile] ||
+      typeof isolatedUploads !== "boolean" ||
+      (isolatedUploads &&
+        (profile !== "production" ||
+          !singleTrial ||
+          !filenameAi ||
+          v2 ||
+          storageMode !== undefined ||
+          writeMode !== undefined ||
+          preparedText ||
+          preparedTextRollback)) ||
+      typeof singleTrial !== "boolean" ||
+      typeof preparedText !== "boolean" ||
+      typeof preparedTextRollback !== "boolean" ||
+      (preparedText && preparedTextRollback) ||
+      ((preparedText || preparedTextRollback) &&
+        (profile !== "production" || (!v2 && singleTrial !== true))) ||
       (filenameAi !== false &&
         (filenameAi !== true ||
           profile !== "production" ||
-          singleTrial !== true))
+          (!v2 && singleTrial !== true)))
     )
       fail("target");
     root = await fs.realpath(root);
@@ -475,18 +968,21 @@ export async function deployApi({
     credentials = loaded.credentials;
     const privacySecrets = await loadPrivacySecrets(root);
     let singleTrialTarget;
-    if (singleTrial) {
-      if (singleTrial !== true || profile !== "production") fail("target");
+    if (singleTrial || v2) {
+      if (profile !== "production") fail("target");
       if (
+        !v2 &&
         typeof privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET !==
-        "string"
+          "string"
       )
         fail("secrets");
       try {
         singleTrialTarget = validateSingleTrialTarget(
           await readPrivateJson(root, SINGLE_TRIAL_TARGET_PATH),
           credentials.accountId,
-          privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET,
+          v2
+            ? undefined
+            : privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET,
         );
       } catch {
         fail("config");
@@ -499,21 +995,94 @@ export async function deployApi({
       await readPrivateJson(root, ".local/cf03/deploy.json"),
     );
     const resource = resources.profiles[profile];
+    const identity = {
+      schemaVersion: 1,
+      authorityId: "shelf-remote-storage-v1",
+      accountId: credentials.accountId,
+      bucket: "the-shelf-books",
+      legacyDatabases: {
+        check: resources.profiles.check.databaseId,
+        production: resources.profiles.production.databaseId,
+      },
+    };
+    let isolatedPolicy, isolatedConsent;
+    if (isolatedUploads) {
+      isolatedPolicy = await import("./isolated-upload.mjs");
+      isolatedConsent = isolatedPolicy.validateIsolatedConsent(
+        await readPrivateJson(root, isolatedPolicy.ISOLATED_CONSENT_PATH),
+        identity,
+      );
+    }
+    const storageContract = v2
+      ? storageDeploymentContract({
+          profile: "authority-v2-closed",
+          identity,
+          trialTargetSha256: singleTrialTarget.configSha256,
+          filenameAi,
+          preparedText,
+          retainedSecrets: "trial-retained-filename-v1",
+        })
+      : undefined;
     phase = "database_identity";
-    await identityChecker(credentials, resource);
+    await control(() => identityChecker(credentials, resource));
     await inspectParents(root, "cloudflare/library/worker.mjs");
     await regularFile(path.join(root, "cloudflare/library/worker.mjs"));
     await inspectAssets(path.join(root, "cloudflare/library"));
     phase = "bindings";
-    const before = await inspector(credentials, PROFILES[profile].name);
-    validateRemoteBindings(before, profile, resource.databaseId, {
-      requireSecrets: filenameAi,
-      allowStatic: true,
-      accountId: credentials.accountId,
-      singleTrialTarget,
-      filenameAi,
-      allowFilenameAiTransition: filenameAi,
-    });
+    const before = await control(() =>
+      inspector(credentials, PROFILES[profile].name),
+    );
+    const beforeObservation = v2
+      ? validateV2DeploymentTransition(before, storageContract, {
+          preparedTextRollback,
+        })
+      : undefined;
+    if (!v2)
+      validateRemoteBindings(before, profile, resource.databaseId, {
+        requireSecrets: filenameAi,
+        allowStatic: true,
+        accountId: credentials.accountId,
+        singleTrialTarget,
+        filenameAi,
+        allowFilenameAiTransition: filenameAi,
+        isolatedUploadConsentSha256: isolatedConsent?.sha256,
+        allowIsolatedUploadTransition: isolatedUploads,
+        preparedText: preparedText || preparedTextRollback,
+        allowPreparedTextTransition: preparedText,
+      });
+    let isolatedObservation;
+    if (isolatedUploads) {
+      phase = "isolated_guard";
+      isolatedObservation = await control(() =>
+        (isolatedChecker || isolatedPolicy.verifyIsolatedDeployment)(
+          credentials,
+          resource,
+          identity,
+          isolatedConsent,
+        ),
+      );
+    }
+    let storageObservation;
+    if (v2) {
+      phase = "storage_guard";
+      storageObservation = await control(() =>
+        storageChecker(credentials, resource, storageContract),
+      );
+    } else if (preparedText) {
+      phase = "prepared_schema";
+      await control(() =>
+        preparedChecker(credentials, resource, {
+          schemaVersion: 1,
+          authorityId: "shelf-remote-storage-v1",
+          accountId: credentials.accountId,
+          bucket: "the-shelf-books",
+          legacyDatabases: {
+            check: resources.profiles.check.databaseId,
+            production: resource.databaseId,
+          },
+        }),
+      );
+    }
     // Fresh Worker secret placeholders may be installed before its first code upload.
     const names =
       before?.bindings
@@ -556,8 +1125,11 @@ export async function deployApi({
       configPath,
       JSON.stringify(
         workerConfig(profile, resource, credentials.accountId, root, {
-          singleTrialTarget,
+          singleTrialTarget: v2 ? undefined : singleTrialTarget,
           filenameAi,
+          preparedText,
+          storageContract,
+          isolatedUploadConsentSha256: isolatedConsent?.sha256,
         }),
         null,
         2,
@@ -591,6 +1163,39 @@ export async function deployApi({
         if (result.code !== 0 || result.signal) fail("preflight");
       }
     phase = "deploy";
+    if (v2 || isolatedUploads)
+      await privateFile(
+        path.join(directory, "deployment-attempt.json"),
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            outcome: "dispatch_not_proven",
+            storageProfile: isolatedUploads
+              ? "isolated-project-v1"
+              : storageContract.profile,
+            ...(isolatedUploads
+              ? {
+                  isolatedConsentSha256: isolatedConsent.sha256,
+                  isolatedObservation,
+                }
+              : {}),
+            beforeSettingsSha256: createHash("sha256")
+              .update(
+                isolatedUploads
+                  ? JSON.stringify(before)
+                  : beforeObservation.canonicalSettingsJson,
+              )
+              .digest("hex"),
+            storageObservation,
+            explicitControlHttpBeforeDeploy: controlRequests,
+            maxTotalExplicitControlHttp: controlLimit,
+            wranglerInternalHttp: "not_counted",
+            codeVersionVerified: false,
+          },
+          null,
+          2,
+        ),
+      );
     const result = await runner({
       command: process.execPath,
       args: [
@@ -612,22 +1217,85 @@ export async function deployApi({
     });
     if (result.code !== 0 || result.signal) fail("deploy");
     phase = "postflight";
-    validateRemoteBindings(
-      await inspector(credentials, PROFILES[profile].name),
-      profile,
-      resource.databaseId,
-      { accountId: credentials.accountId, singleTrialTarget, filenameAi },
+    const after = await control(() =>
+      inspector(credentials, PROFILES[profile].name),
     );
+    const afterObservation = v2
+      ? validateRemoteStorageBindings(after, storageContract)
+      : undefined;
+    if (!v2)
+      validateRemoteBindings(after, profile, resource.databaseId, {
+        accountId: credentials.accountId,
+        singleTrialTarget,
+        filenameAi,
+        preparedText,
+        isolatedUploadConsentSha256: isolatedConsent?.sha256,
+      });
+    if (isolatedUploads) {
+      const observed = await control(() =>
+        (isolatedChecker || isolatedPolicy.verifyIsolatedDeployment)(
+          credentials,
+          resource,
+          identity,
+          isolatedConsent,
+        ),
+      );
+      if (observed.observationSha256 !== isolatedObservation.observationSha256)
+        fail("isolated_guard");
+    }
     const receipt = {
       schemaVersion: 1,
+      ...(isolatedUploads
+        ? {
+            isolatedUploadMode: "project-v1",
+            isolatedConsentSha256: isolatedConsent.sha256,
+            isolatedObservation,
+            explicitControlHttp: controlRequests,
+            maxTotalExplicitControlHttp: controlLimit,
+            wranglerInternalHttp: "not_counted",
+            codeVersionVerified: false,
+          }
+        : {}),
       profile,
       worker: PROFILES[profile].name,
       databaseId: resource.databaseId,
-      bucket: singleTrialTarget ? SINGLE_TRIAL_BUCKET : "the-shelf-books",
+      bucket:
+        singleTrialTarget && !v2 ? SINGLE_TRIAL_BUCKET : "the-shelf-books",
+      ...(v2
+        ? {
+            storageMode,
+            writeMode,
+            storageProfile: storageContract.profile,
+            outcome: "settings_verified",
+            explicitControlHttp: controlRequests,
+            maxTotalExplicitControlHttp:
+              STORAGE_DEPLOY_GUARD_LIMITS.maxTotalHttp,
+            wranglerInternalHttp: "not_counted",
+            codeVersionVerified: false,
+            profileSha256: createHash("sha256")
+              .update(storageContract.canonicalProfile)
+              .digest("hex"),
+            beforeSettingsSha256: createHash("sha256")
+              .update(beforeObservation.canonicalSettingsJson)
+              .digest("hex"),
+            afterSettingsSha256: createHash("sha256")
+              .update(afterObservation.canonicalSettingsJson)
+              .digest("hex"),
+            storageObservation,
+          }
+        : {}),
       ...(singleTrialTarget
         ? { singleTrialTargetSha256: singleTrialTarget.configSha256 }
         : {}),
       ...(filenameAi ? { filenameAiMode: FILENAME_AI_MODE } : {}),
+      ...(preparedText
+        ? {
+            preparedTextMode: PREPARED_TEXT_MODE,
+            preparedBucket: "the-shelf-books",
+            preparedSchemaSha256: PREPARED_SCHEMA_SHA256,
+          }
+        : {}),
+      ...(preparedTextRollback ? { preparedTextRollback: true } : {}),
       at: new Date().toISOString(),
     };
     await privateFile(
@@ -636,6 +1304,13 @@ export async function deployApi({
     );
     return {
       ok: true,
+      ...(v2 || isolatedUploads
+        ? {
+            outcome: "settings_verified",
+            explicitControlHttp: controlRequests,
+            codeVersionVerified: false,
+          }
+        : {}),
       url: PROFILES[profile].origin,
       logPath: path.relative(root, logPath),
     };
@@ -652,23 +1327,63 @@ export async function deployApi({
         await scrubLog(path.join(directory, name), credentials.privateValues);
   }
 }
+export function parseApiDeployArguments(argv) {
+  if (!Array.isArray(argv) || argv[0] !== "--profile" || !PROFILES[argv[1]])
+    fail("target");
+  const result = {
+    profile: argv[1],
+    singleTrial: false,
+    filenameAi: false,
+    preparedText: false,
+    preparedTextRollback: false,
+  };
+  const names = {
+    "--single-trial": "singleTrial",
+    "--isolated-uploads": "isolatedUploads",
+    "--filename-ai": "filenameAi",
+    "--prepared-text": "preparedText",
+    "--prepared-text-rollback": "preparedTextRollback",
+  };
+  const seen = new Set();
+  for (let i = 2; i < argv.length; i++) {
+    const key = argv[i];
+    if (seen.has(key)) fail("target");
+    seen.add(key);
+    if (Object.hasOwn(names, key)) result[names[key]] = true;
+    else if (["--storage-mode", "--write-mode"].includes(key)) {
+      if (++i >= argv.length) fail("target");
+      result[key === "--storage-mode" ? "storageMode" : "writeMode"] = argv[i];
+    } else fail("target");
+  }
+  const v2 = result.storageMode === "authority-v2";
+  if (
+    ((result.storageMode !== undefined || result.writeMode !== undefined) &&
+      (!v2 ||
+        result.writeMode !== "closed" ||
+        result.singleTrial ||
+        !result.filenameAi ||
+        result.profile !== "production")) ||
+    (result.filenameAi && !result.singleTrial && !v2) ||
+    ((result.preparedText || result.preparedTextRollback) &&
+      ((!result.singleTrial && !v2) || result.profile !== "production")) ||
+    (result.isolatedUploads &&
+      (result.profile !== "production" ||
+        !result.singleTrial ||
+        !result.filenameAi ||
+        result.storageMode !== undefined ||
+        result.writeMode !== undefined ||
+        result.preparedText ||
+        result.preparedTextRollback)) ||
+    (result.preparedText && result.preparedTextRollback)
+  )
+    fail("target");
+  return result;
+}
 export async function main(argv = process.argv.slice(2)) {
   try {
-    if (
-      ![2, 3, 4].includes(argv.length) ||
-      argv[0] !== "--profile" ||
-      (argv.length >= 3 && argv[2] !== "--single-trial") ||
-      (argv.length === 4 &&
-        (argv[1] !== "production" || argv[3] !== "--filename-ai"))
-    )
-      fail("target");
-    const r = await deployApi({
-      profile: argv[1],
-      singleTrial: argv.length >= 3,
-      filenameAi: argv.length === 4,
-    });
+    const r = await deployApi(parseApiDeployArguments(argv));
     console.log(
-      `Cloudflare API deployment succeeded: ${r.url}\nPrivate deployment log: ${r.logPath}`,
+      `${r.outcome === "settings_verified" ? "Cloudflare API deployment settings verified" : "Cloudflare API deployment succeeded"}: ${r.url}\nPrivate deployment log: ${r.logPath}`,
     );
   } catch (error) {
     console.error(

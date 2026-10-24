@@ -43,6 +43,7 @@ export function managementCapabilityText(upload) {
   const reasons = Array.isArray(upload?.reasons) ? upload.reasons : [];
   const labels = {
     authority_not_ready: "上传前的存储用量核对尚未完成",
+    storage_write_closed: "当前版本尚未开放新增文件上传",
     storage_target_mismatch: "普通上传存储尚未启用",
     account_evidence_stale: "账号存储用量证据已过期或尚未确认",
     storage_budget_exceeded: "项目总存储预算不足以容纳新文件",

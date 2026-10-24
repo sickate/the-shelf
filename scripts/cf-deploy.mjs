@@ -3,6 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
+import { createHash } from "node:crypto";
+import {
+  storageDeploymentContract,
+  validateRemoteStorageBindings,
+} from "../shared/storage-deployment-contract.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 export const PUBLIC_URL = "https://the-shelf.iamzhutuo.workers.dev/";
@@ -299,11 +304,53 @@ export async function deploy({
   staticRollback = false,
   singleTrial = false,
   filenameAi = false,
+  isolatedUploads = false,
+  preparedText = false,
+  storageMode,
+  writeMode,
 } = {}) {
   let runDirectory, credentials;
   let phase = "files";
+  const v2 = storageMode === "authority-v2";
+  let explicitControlHttp = 0;
+  const inspect = async (apiPolicy, credentials) => {
+    if (++explicitControlHttp > 2) reject("remote");
+    return (inspector || apiPolicy.readRemoteSettings)(
+      credentials,
+      "the-shelf",
+    );
+  };
   try {
-    if (filenameAi !== false && (filenameAi !== true || singleTrial !== true))
+    if (
+      typeof isolatedUploads !== "boolean" ||
+      (isolatedUploads &&
+        (!staticRollback ||
+          !singleTrial ||
+          !filenameAi ||
+          preparedText ||
+          storageMode !== undefined ||
+          writeMode !== undefined))
+    )
+      reject("config");
+    if (
+      (storageMode !== undefined || writeMode !== undefined) &&
+      (!v2 ||
+        writeMode !== "closed" ||
+        staticRollback !== true ||
+        singleTrial !== false ||
+        filenameAi !== true)
+    )
+      reject("config");
+    if (
+      typeof preparedText !== "boolean" ||
+      (preparedText &&
+        (staticRollback !== true || (!v2 && singleTrial !== true)))
+    )
+      reject("config");
+    if (
+      filenameAi !== false &&
+      (filenameAi !== true || (!v2 && singleTrial !== true))
+    )
       reject("config");
     const repository = await fs.realpath(root);
     let fileEnvironment = {};
@@ -330,12 +377,13 @@ export async function deploy({
     const apiPolicy = await import("./cf-api-deploy.mjs");
     const privacySecrets = await apiPolicy.loadPrivacySecrets(repository);
     let singleTrialTarget;
-    if (singleTrial) {
+    if (singleTrial || v2) {
       if (
-        singleTrial !== true ||
         staticRollback !== true ||
-        typeof privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET !==
-          "string"
+        (!v2 &&
+          (singleTrial !== true ||
+            typeof privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET !==
+              "string"))
       )
         reject("config");
       const trialPolicy = await import("./single-trial-config.mjs");
@@ -346,23 +394,75 @@ export async function deploy({
             trialPolicy.SINGLE_TRIAL_TARGET_PATH,
           ),
           credentials.accountId,
-          privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET,
+          v2
+            ? undefined
+            : privacySecrets.SHELF_CF_PRODUCTION_SINGLE_TRIAL_UPLOAD_SECRET,
         );
       } catch {
         reject("config");
       }
     }
+    let storageContract;
+    if (v2) {
+      const resources = apiPolicy.validateDeployConfig(
+        await apiPolicy.readPrivateJson(repository, ".local/cf03/deploy.json"),
+      );
+      storageContract = storageDeploymentContract({
+        profile: "authority-v2-closed",
+        identity: {
+          schemaVersion: 1,
+          authorityId: "shelf-remote-storage-v1",
+          accountId: credentials.accountId,
+          bucket: "the-shelf-books",
+          legacyDatabases: {
+            check: resources.profiles.check.databaseId,
+            production: resources.profiles.production.databaseId,
+          },
+        },
+        trialTargetSha256: singleTrialTarget.configSha256,
+        filenameAi,
+        preparedText,
+        retainedSecrets: "trial-retained-filename-v1",
+      });
+    }
+    let isolatedConsent;
+    if (isolatedUploads) {
+      const isolated = await import("./isolated-upload.mjs"),
+        resources = apiPolicy.validateDeployConfig(
+          await apiPolicy.readPrivateJson(
+            repository,
+            ".local/cf03/deploy.json",
+          ),
+        );
+      isolatedConsent = isolated.validateIsolatedConsent(
+        await apiPolicy.readPrivateJson(
+          repository,
+          isolated.ISOLATED_CONSENT_PATH,
+        ),
+        {
+          schemaVersion: 1,
+          authorityId: "shelf-remote-storage-v1",
+          accountId: credentials.accountId,
+          bucket: "the-shelf-books",
+          legacyDatabases: {
+            check: resources.profiles.check.databaseId,
+            production: resources.profiles.production.databaseId,
+          },
+        },
+      );
+    }
     credentials.privateValues.push(...Object.values(privacySecrets));
     phase = "remote";
-    const settings = await (inspector || apiPolicy.readRemoteSettings)(
-      credentials,
-      "the-shelf",
-    );
+    const settings = await inspect(apiPolicy, credentials);
+    const beforeObservation = v2
+      ? validateRemoteStorageBindings(settings, storageContract)
+      : undefined;
     const bindings = settings?.bindings || [];
     const hasApi = !apiPolicy.safeStaticBindings(settings || { bindings: [] }, {
       filenameAi,
     });
-    if (hasApi) {
+    if (isolatedUploads && !hasApi) reject("bindings");
+    if (!v2 && hasApi) {
       if (!staticRollback) reject("bindings");
       const resources = apiPolicy.validateDeployConfig(
         await apiPolicy.readPrivateJson(repository, ".local/cf03/deploy.json"),
@@ -375,10 +475,13 @@ export async function deploy({
           accountId: credentials.accountId,
           singleTrialTarget,
           filenameAi,
+          preparedText,
+          isolatedUploadConsentSha256: isolatedConsent?.sha256,
           allowFilenameAiTransition: filenameAi && staticRollback,
         },
       );
-    } else if (staticRollback && !filenameAi) reject("bindings");
+    } else if (!v2 && ((staticRollback && !filenameAi) || preparedText))
+      reject("bindings");
     phase = "files";
     const assets = path.join(repository, "dist");
     await inspectAssets(assets);
@@ -416,7 +519,14 @@ export async function deploy({
     await privateFile(
       configPath,
       JSON.stringify(
-        { ...config, assets: { ...config.assets, directory: assets } },
+        {
+          ...config,
+          assets: {
+            ...config.assets,
+            directory: assets,
+            ...(v2 || isolatedUploads ? { binding: "ASSETS" } : {}),
+          },
+        },
         null,
         2,
       ),
@@ -443,6 +553,39 @@ export async function deploy({
       if (result.code !== 0 || result.signal) reject("preflight");
     }
     phase = "deploy";
+    if (v2 || isolatedUploads)
+      await privateFile(
+        path.join(runDirectory, "deployment-attempt.json"),
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            outcome: "dispatch_not_proven",
+            storageProfile: isolatedUploads
+              ? "isolated-project-v1"
+              : storageContract.profile,
+            ...(isolatedUploads
+              ? { isolatedConsentSha256: isolatedConsent.sha256 }
+              : {}),
+            preparedText,
+            retainedSecrets: isolatedUploads
+              ? "trial-retained-filename-v1"
+              : storageContract.retainedSecrets,
+            beforeSettingsSha256: createHash("sha256")
+              .update(
+                isolatedUploads
+                  ? JSON.stringify(settings)
+                  : beforeObservation.canonicalSettingsJson,
+              )
+              .digest("hex"),
+            explicitControlHttpBeforeDeploy: explicitControlHttp,
+            maxTotalExplicitControlHttp: 2,
+            wranglerInternalHttp: "not_counted",
+            codeVersionVerified: false,
+          },
+          null,
+          2,
+        ),
+      );
     const result = await runner({
       command: process.execPath,
       args: [
@@ -468,14 +611,72 @@ export async function deploy({
     });
     if (result.code !== 0 || result.signal) reject("deploy");
     phase = "remote";
-    const deployed = await (inspector || apiPolicy.readRemoteSettings)(
-      credentials,
-      "the-shelf",
-    );
-    if (!deployed || !apiPolicy.safeStaticBindings(deployed, { filenameAi }))
+    const deployed = await inspect(apiPolicy, credentials);
+    if (v2) {
+      const afterObservation = validateRemoteStorageBindings(
+        deployed,
+        storageContract,
+        { staticOnly: true },
+      );
+      await privateFile(
+        path.join(runDirectory, "receipt.json"),
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            outcome: "settings_verified",
+            codeVersionVerified: false,
+            explicitControlHttp,
+            maxTotalExplicitControlHttp: 2,
+            wranglerInternalHttp: "not_counted",
+            beforeSettingsSha256: createHash("sha256")
+              .update(beforeObservation.canonicalSettingsJson)
+              .digest("hex"),
+            afterSettingsSha256: createHash("sha256")
+              .update(afterObservation.canonicalSettingsJson)
+              .digest("hex"),
+          },
+          null,
+          2,
+        ),
+      );
+    } else if (
+      !deployed ||
+      !apiPolicy.safeStaticBindings(deployed, { filenameAi })
+    )
       reject("bindings");
+    if (isolatedUploads)
+      await privateFile(
+        path.join(runDirectory, "receipt.json"),
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            outcome: "settings_verified",
+            isolatedUploadMode: "project-v1",
+            isolatedConsentSha256: isolatedConsent.sha256,
+            explicitControlHttp,
+            maxTotalExplicitControlHttp: 2,
+            wranglerInternalHttp: "not_counted",
+            codeVersionVerified: false,
+            beforeSettingsSha256: createHash("sha256")
+              .update(JSON.stringify(settings))
+              .digest("hex"),
+            afterSettingsSha256: createHash("sha256")
+              .update(JSON.stringify(deployed))
+              .digest("hex"),
+          },
+          null,
+          2,
+        ),
+      );
     return {
       ok: true,
+      ...(v2 || isolatedUploads
+        ? {
+            outcome: "settings_verified",
+            codeVersionVerified: false,
+            explicitControlHttp,
+          }
+        : {}),
       url: PUBLIC_URL,
       logPath: path.relative(repository, logPath),
     };
@@ -503,23 +704,62 @@ export async function deploy({
   }
 }
 
+export function parseStaticDeployArguments(argv) {
+  if (!Array.isArray(argv) || (argv.length && argv[0] !== "--static-rollback"))
+    reject("config");
+  const result = {
+    staticRollback: argv.length > 0,
+    singleTrial: false,
+    filenameAi: false,
+    preparedText: false,
+  };
+  const flags = {
+      "--single-trial": "singleTrial",
+      "--isolated-uploads": "isolatedUploads",
+      "--filename-ai": "filenameAi",
+      "--prepared-text": "preparedText",
+    },
+    seen = new Set();
+  for (let i = 1; i < argv.length; i++) {
+    const key = argv[i];
+    if (seen.has(key)) reject("config");
+    seen.add(key);
+    if (Object.hasOwn(flags, key)) result[flags[key]] = true;
+    else if (["--storage-mode", "--write-mode"].includes(key)) {
+      if (++i >= argv.length) reject("config");
+      result[key === "--storage-mode" ? "storageMode" : "writeMode"] = argv[i];
+    } else reject("config");
+  }
+  if (
+    result.isolatedUploads &&
+    (!result.staticRollback ||
+      !result.singleTrial ||
+      !result.filenameAi ||
+      result.preparedText ||
+      result.storageMode !== undefined ||
+      result.writeMode !== undefined)
+  )
+    reject("config");
+  const v2 = result.storageMode === "authority-v2";
+  if (
+    (result.storageMode !== undefined || result.writeMode !== undefined) &&
+    (!v2 ||
+      result.writeMode !== "closed" ||
+      result.singleTrial ||
+      !result.filenameAi)
+  )
+    reject("config");
+  return result;
+}
+
 export async function main() {
   try {
-    const argv = process.argv.slice(2);
-    if (
-      argv.length &&
-      (![1, 2, 3].includes(argv.length) ||
-        argv[0] !== "--static-rollback" ||
-        (argv.length >= 2 && argv[1] !== "--single-trial") ||
-        (argv.length === 3 && argv[2] !== "--filename-ai"))
-    )
-      reject("config");
-    const result = await deploy({
-      staticRollback: argv[0] === "--static-rollback",
-      singleTrial: argv[1] === "--single-trial",
-      filenameAi: argv[2] === "--filename-ai",
-    });
-    console.log(`Cloudflare static deployment succeeded: ${result.url}`);
+    const result = await deploy(
+      parseStaticDeployArguments(process.argv.slice(2)),
+    );
+    console.log(
+      `${result.outcome === "settings_verified" ? "Cloudflare static deployment settings verified" : "Cloudflare static deployment succeeded"}: ${result.url}`,
+    );
     console.log(`Private deployment log: ${result.logPath}`);
   } catch (error) {
     console.error(

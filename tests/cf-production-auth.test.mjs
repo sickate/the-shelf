@@ -213,6 +213,46 @@ async function fixture(t) {
 import { createHash } from "node:crypto";
 const awaitHash = (v) =>
   createHash("sha256").update(JSON.stringify(v)).digest("hex");
+for (const invalidSecret of ["missing", "mismatched"]) {
+  test(`legacy trial auth enable rejects ${invalidSecret} upload secret before HTTP`, async (t) => {
+    const f = await fixture(t);
+    f.seed();
+    const upload = Buffer.alloc(32, 41).toString("base64url");
+    await fs.writeFile(
+      path.join(f.root, ".local/cf03/production/single-trial-target.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        mode: "first-book-20261023",
+        accountId: ACCOUNT,
+        bucket: "the-shelf-first-book-20261023",
+        worker: "the-shelf",
+        origin: ORIGIN,
+        uploadSecretSha256: createHash("sha256").update(upload).digest("hex"),
+      }),
+      { mode: 0o600 },
+    );
+    if (invalidSecret === "mismatched")
+      await fs.writeFile(
+        path.join(f.root, ".local/cf03/production/single-trial-upload-secret"),
+        Buffer.alloc(32, 42).toString("base64url") + "\n",
+        { mode: 0o600 },
+      );
+    await assert.rejects(
+      f.run({
+        action: "enable",
+        expectedVersion: VERSION,
+        ...f.expected(),
+        singleTrial: true,
+      }),
+      failCode("configuration_invalid"),
+    );
+    assert.equal(f.calls.length, 0);
+    assert.equal(
+      f.db.prepare("SELECT enabled FROM auth_config").get().enabled,
+      0,
+    );
+  });
+}
 test("trial auth enable requires explicit target config and rejects retained legacy S3 secret", async (t) => {
   const f = await fixture(t);
   f.seed();
@@ -737,7 +777,7 @@ test("empty chunk floods reach the chunk bound and cancel without retries", asyn
   );
   await assert.rejects(f.run(), failCode("response_limit"));
   assert.equal(f.calls.length, 1);
-  assert.ok(chunks >= 100001);
+  assert.ok(chunks >= AUTH_LIMITS.chunks + 1);
   assert.ok(cancelled);
 });
 

@@ -486,6 +486,7 @@ test("actual RemoteAuthority + R2 transport confirms one original, with private 
   });
   assert.equal(result.status, "confirmed");
   assert.equal(result.contentVerified, true);
+  assert.equal(f.calls.length, 29);
   assert.deepEqual(
     r2calls(f).map((c) => c.options.method),
     ["HEAD", "PUT", "HEAD", "GET", "HEAD"],

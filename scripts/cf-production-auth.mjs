@@ -18,6 +18,24 @@ import {
   SINGLE_TRIAL_SECRET_PATH,
 } from "./single-trial-config.mjs";
 
+import {
+  storageDeploymentContract,
+  validateRemoteStorageBindings,
+} from "../shared/storage-deployment-contract.mjs";
+import {
+  STORAGE_DEPLOY_GUARD_SQL,
+  STORAGE_DEPLOY_GUARD_JSON_SQL,
+  validateStorageDeployGuard,
+} from "./storage-deploy-guard.mjs";
+
+import {
+  ISOLATED_CONSENT_PATH,
+  validateIsolatedConsent,
+  ISOLATED_DEPLOY_SQL,
+  ISOLATED_DEPLOY_JSON_SQL,
+  validateIsolatedDeployRows,
+} from "./isolated-upload.mjs";
+
 const ROOT = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 const POLICY = PROFILES.production;
 export const AUTH_LIMITS = Object.freeze({
@@ -27,6 +45,9 @@ export const AUTH_LIMITS = Object.freeze({
   close: 4,
   responseBytes: 1_000_000,
   deadlineMs: 30_000,
+  chunks: 4096,
+  sqlBytes: 16_384,
+  parameters: 6,
 });
 const FIELDS = "scope,origin,scheme,generation,enabled,updated_at";
 export const AUTH_SQL = Object.freeze({
@@ -42,6 +63,25 @@ export const AUTH_SQL = Object.freeze({
 export const AUTH_PROBE_SQL = `SELECT
  (SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql',sql)) FROM (${AUTH_SQL.schema})) AS schema_json,
  (SELECT json_group_array(json_object('scope',scope,'origin',origin,'scheme',scheme,'generation',generation,'enabled',enabled,'updated_at',updated_at,'verifier_match',verifier=?,'unrevoked_sessions',(SELECT count(*) FROM sessions WHERE scope='production' AND revoked=0))) FROM (SELECT * FROM auth_config WHERE scope='production' LIMIT 2)) AS auth_json`;
+// Nested fixed CTEs retain the one verifier bind in each combined probe.
+export const AUTH_V2_PROBE_SQL = `WITH storage_guard AS MATERIALIZED (${STORAGE_DEPLOY_GUARD_SQL}), auth_probe AS MATERIALIZED (${AUTH_PROBE_SQL}) SELECT schema_json,auth_json,(SELECT ${STORAGE_DEPLOY_GUARD_JSON_SQL} FROM storage_guard) AS storage_guard_json FROM auth_probe`;
+export const AUTH_V2_ENABLE_SQL = `WITH storage_guard AS MATERIALIZED (${STORAGE_DEPLOY_GUARD_SQL}) ${AUTH_SQL.enable.replace(" RETURNING ", ` AND (SELECT ${STORAGE_DEPLOY_GUARD_JSON_SQL} FROM storage_guard)=? RETURNING `)}`;
+export const AUTH_ISOLATED_PROBE_SQL = `WITH isolated_guard AS MATERIALIZED (${ISOLATED_DEPLOY_SQL}),auth_probe AS MATERIALIZED (${AUTH_PROBE_SQL}) SELECT schema_json,auth_json,(SELECT ${ISOLATED_DEPLOY_JSON_SQL} FROM isolated_guard) AS isolated_guard_json FROM auth_probe`;
+export const AUTH_ISOLATED_ENABLE_SQL = `WITH isolated_guard AS MATERIALIZED (${ISOLATED_DEPLOY_SQL}) ${AUTH_SQL.enable.replace(" RETURNING ", ` AND (SELECT ${ISOLATED_DEPLOY_JSON_SQL} FROM isolated_guard)=? RETURNING `)}`;
+if (
+  [
+    AUTH_V2_PROBE_SQL,
+    AUTH_V2_ENABLE_SQL,
+    AUTH_ISOLATED_PROBE_SQL,
+    AUTH_ISOLATED_ENABLE_SQL,
+  ].some((sql) => Buffer.byteLength(sql) > AUTH_LIMITS.sqlBytes) ||
+  (AUTH_V2_PROBE_SQL.match(/\?/g) || []).length !== 1 ||
+  (AUTH_V2_ENABLE_SQL.match(/\?/g) || []).length !== 6 ||
+  (AUTH_ISOLATED_PROBE_SQL.match(/\?/g) || []).length !== 1 ||
+  (AUTH_ISOLATED_ENABLE_SQL.match(/\?/g) || []).length !== 6
+)
+  throw new Error("production_auth_sql_budget");
+
 const CODES = new Set([
   "options_invalid",
   "private_path_unsafe",
@@ -458,11 +498,31 @@ function deployment(value, expected) {
     fail("worker_precondition_failed");
   return { deploymentId: d.id, versionId: expected };
 }
-function bindings(settings, databaseId, accountId, singleTrialTarget) {
+function bindings(
+  settings,
+  databaseId,
+  accountId,
+  singleTrialTarget,
+  storageContract,
+  isolatedConsent,
+) {
+  if (storageContract) {
+    try {
+      const observed = validateRemoteStorageBindings(settings, storageContract);
+      return {
+        bindingsSha256: hash(observed.canonicalBindingsJson),
+        settingsSha256: hash(observed.canonicalSettingsJson),
+      };
+    } catch {
+      fail("worker_precondition_failed");
+    }
+  }
   try {
     validateRemoteBindings(settings, "production", databaseId, {
       accountId,
       singleTrialTarget,
+      filenameAi: !!isolatedConsent,
+      isolatedUploadConsentSha256: isolatedConsent?.sha256,
     });
   } catch {
     fail("worker_precondition_failed");
@@ -532,7 +592,7 @@ async function boundedJson(response, signal) {
       }
       if (
         !(next.value instanceof Uint8Array) ||
-        ++count > 100000 ||
+        ++count > AUTH_LIMITS.chunks ||
         (size += next.value.length) > AUTH_LIMITS.responseBytes
       )
         fail("response_limit");
@@ -565,6 +625,11 @@ export async function runProductionAuth({
   clock = Date.now,
   timeoutMs = AUTH_LIMITS.deadlineMs,
   singleTrial = false,
+  storageMode,
+  writeMode,
+  filenameAi = false,
+  isolatedUploads = false,
+  preparedText = false,
 } = {}) {
   // Preview precedes all file/configuration/clock/network access.
   if (!execute)
@@ -594,6 +659,24 @@ export async function runProductionAuth({
   )
     fail("options_invalid");
   if (action === "enable" && !uuid(expectedVersion)) fail("options_invalid");
+  const v2 = action === "enable" && storageMode === "authority-v2";
+  if (
+    action === "enable" &&
+    (typeof singleTrial !== "boolean" ||
+      typeof filenameAi !== "boolean" ||
+      typeof preparedText !== "boolean" ||
+      typeof isolatedUploads !== "boolean" ||
+      (isolatedUploads &&
+        (!singleTrial ||
+          !filenameAi ||
+          preparedText ||
+          storageMode !== undefined ||
+          writeMode !== undefined)) ||
+      ((storageMode !== undefined || writeMode !== undefined) &&
+        (!v2 || writeMode !== "closed" || singleTrial || !filenameAi)) ||
+      (!v2 && !isolatedUploads && (filenameAi || preparedText)))
+  )
+    fail("options_invalid");
   let context,
     unlock,
     receipt,
@@ -623,18 +706,57 @@ export async function runProductionAuth({
     }
     const resource = config.profiles.production;
     let singleTrialTarget;
-    if (singleTrial) {
-      if (singleTrial !== true) fail("options_invalid");
+    if (action === "enable" && (singleTrial || v2)) {
       try {
         singleTrialTarget = validateSingleTrialTarget(
           parse(await context.read(SINGLE_TRIAL_TARGET_PATH)),
           credentials.accountId,
-          (await context.read(SINGLE_TRIAL_SECRET_PATH, { limit: 100 })).trim(),
+          v2
+            ? undefined
+            : (
+                await context.read(SINGLE_TRIAL_SECRET_PATH, { limit: 100 })
+              ).trim(),
         );
       } catch {
         fail("configuration_invalid");
       }
     }
+    const isolatedIdentity = {
+      schemaVersion: 1,
+      authorityId: "shelf-remote-storage-v1",
+      accountId: credentials.accountId,
+      bucket: "the-shelf-books",
+      legacyDatabases: {
+        check: config.profiles.check.databaseId,
+        production: resource.databaseId,
+      },
+    };
+    const isolatedConsent =
+      action === "enable" && isolatedUploads
+        ? validateIsolatedConsent(
+            parse(await context.read(ISOLATED_CONSENT_PATH)),
+            isolatedIdentity,
+          )
+        : undefined;
+    const storageContract = v2
+      ? storageDeploymentContract({
+          profile: "authority-v2-closed",
+          identity: {
+            schemaVersion: 1,
+            authorityId: "shelf-remote-storage-v1",
+            accountId: credentials.accountId,
+            bucket: "the-shelf-books",
+            legacyDatabases: {
+              check: config.profiles.check.databaseId,
+              production: resource.databaseId,
+            },
+          },
+          trialTargetSha256: singleTrialTarget.configSha256,
+          filenameAi,
+          preparedText,
+          retainedSecrets: "trial-retained-filename-v1",
+        })
+      : undefined;
     const secretValues = [];
     for (const filename of [
       "owner-access-key",
@@ -718,6 +840,16 @@ export async function runProductionAuth({
     ) {
       if (receipt.requests.length >= AUTH_LIMITS[action])
         fail("request_budget");
+      if (
+        sql !== undefined &&
+        (typeof sql !== "string" ||
+          Buffer.byteLength(sql) > AUTH_LIMITS.sqlBytes ||
+          !Array.isArray(params) ||
+          params.length > AUTH_LIMITS.parameters ||
+          Buffer.byteLength(JSON.stringify({ sql, params })) >
+            AUTH_LIMITS.responseBytes)
+      )
+        fail("options_invalid");
       const entry = {
         sequence: receipt.requests.length + 1,
         label,
@@ -818,8 +950,81 @@ export async function runProductionAuth({
           mutation,
         }),
       );
-    const observeAuth = async (label) =>
-      statusRow(await query(AUTH_SQL.status, [verifier], label));
+    let initialStorageJson, initialStorageObservation;
+    function decodeProbe(projection) {
+      if (
+        projection.length !== 1 ||
+        !exact(
+          projection[0],
+          v2
+            ? ["schema_json", "auth_json", "storage_guard_json"]
+            : isolatedConsent
+              ? ["schema_json", "auth_json", "isolated_guard_json"]
+              : ["schema_json", "auth_json"],
+        )
+      )
+        fail("schema_invalid");
+      const schema = parse(projection[0].schema_json);
+      if (
+        !Array.isArray(schema) ||
+        schema.length >= 33 ||
+        JSON.stringify(schema) !== JSON.stringify(expectedSchema)
+      )
+        fail("schema_invalid");
+      let storage;
+      if (v2) {
+        if (typeof projection[0].storage_guard_json !== "string")
+          fail("schema_invalid");
+        try {
+          storage = validateStorageDeployGuard(
+            JSON.parse(projection[0].storage_guard_json),
+            storageContract,
+          );
+        } catch {
+          fail("worker_precondition_failed");
+        }
+      }
+      if (isolatedConsent) {
+        try {
+          const raw = JSON.parse(projection[0].isolated_guard_json);
+          storage = validateIsolatedDeployRows(
+            [raw],
+            isolatedIdentity,
+            isolatedConsent,
+          );
+          const stable = { ...raw };
+          delete stable.auth_json;
+          storage.storageSnapshotSha256 = hash(stable);
+        } catch {
+          fail("worker_precondition_failed");
+        }
+      }
+      return {
+        auth: statusRow(parse(projection[0].auth_json)),
+        storage,
+        storageJson: isolatedConsent
+          ? projection[0].isolated_guard_json
+          : projection[0].storage_guard_json,
+      };
+    }
+    const observeAuth = async (label) => {
+      if (!v2 && !isolatedConsent)
+        return statusRow(await query(AUTH_SQL.status, [verifier], label));
+      const observed = decodeProbe(
+        await query(
+          isolatedConsent ? AUTH_ISOLATED_PROBE_SQL : AUTH_V2_PROBE_SQL,
+          [verifier],
+          label,
+        ),
+      );
+      if (
+        observed.storage.storageSnapshotSha256 !==
+          initialStorageObservation.storageSnapshotSha256 ||
+        (!isolatedConsent && observed.storageJson !== initialStorageJson)
+      )
+        fail("worker_precondition_failed");
+      return observed.auth;
+    };
     const identity = await request(
       `/d1/database/${resource.databaseId}`,
       "database-identity",
@@ -829,24 +1034,24 @@ export async function runProductionAuth({
       identity?.name !== resource.databaseName
     )
       fail("database_identity_mismatch");
-    const projection = await query(
-      AUTH_PROBE_SQL,
-      [verifier],
-      "auth-schema-and-state",
+    const initial = decodeProbe(
+      await query(
+        isolatedConsent
+          ? AUTH_ISOLATED_PROBE_SQL
+          : v2
+            ? AUTH_V2_PROBE_SQL
+            : AUTH_PROBE_SQL,
+        [verifier],
+        "auth-schema-and-state",
+      ),
     );
-    if (
-      projection.length !== 1 ||
-      !exact(projection[0], ["schema_json", "auth_json"])
-    )
-      fail("schema_invalid");
-    const schema = parse(projection[0].schema_json);
-    if (
-      !Array.isArray(schema) ||
-      schema.length >= 33 ||
-      JSON.stringify(schema) !== JSON.stringify(expectedSchema)
-    )
-      fail("schema_invalid");
-    const before = statusRow(parse(projection[0].auth_json));
+    initialStorageJson = initial.storageJson;
+    initialStorageObservation = initial.storage;
+    if (v2 || isolatedConsent) {
+      receipt.storage = initialStorageObservation;
+      await context.write(receiptPath, receipt);
+    }
+    const before = initial.auth;
     if (action === "status") {
       receipt.outcome = "observed";
       receipt.auth = before;
@@ -884,6 +1089,8 @@ export async function runProductionAuth({
         resource.databaseId,
         credentials.accountId,
         singleTrialTarget,
+        storageContract,
+        isolatedConsent,
       );
       const s = subdomain(
         await request(workerBase + "/subdomain", `${prefix}-subdomain`),
@@ -911,13 +1118,18 @@ export async function runProductionAuth({
       sql = AUTH_SQL.initialize;
       params = [POLICY.origin, verifier, now];
     } else if (action === "enable") {
-      sql = AUTH_SQL.enable;
+      sql = isolatedConsent
+        ? AUTH_ISOLATED_ENABLE_SQL
+        : v2
+          ? AUTH_V2_ENABLE_SQL
+          : AUTH_SQL.enable;
       params = [
         now,
         POLICY.origin,
         verifier,
         expectedGeneration,
         before.row.updated_at,
+        ...(v2 || isolatedConsent ? [initialStorageJson] : []),
       ];
     } else {
       sql = AUTH_SQL.close;
@@ -963,6 +1175,7 @@ export async function runProductionAuth({
     )
       fail("worker_precondition_failed");
     receipt.auth = after;
+    if (v2 || isolatedConsent) receipt.storage = initialStorageObservation;
     receipt.outcome = "verified";
     await context.write(receiptPath, receipt);
     state.unresolved = state.unresolved.filter((r) => r.runId !== runId);
@@ -1003,6 +1216,8 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       "--expected-generation": "expectedGeneration",
       "--expected-row-sha256": "expectedRowSha256",
       "--expected-version": "expectedVersion",
+      "--storage-mode": "storageMode",
+      "--write-mode": "writeMode",
     };
     const seen = new Set();
     while (args.length) {
@@ -1013,8 +1228,22 @@ export async function main(argv = process.argv.slice(2), options = {}) {
         parsed.execute = true;
         continue;
       }
-      if (key === "--single-trial") {
-        parsed.singleTrial = true;
+      if (
+        [
+          "--single-trial",
+          "--filename-ai",
+          "--prepared-text",
+          "--isolated-uploads",
+        ].includes(key)
+      ) {
+        parsed[
+          {
+            "--single-trial": "singleTrial",
+            "--isolated-uploads": "isolatedUploads",
+            "--filename-ai": "filenameAi",
+            "--prepared-text": "preparedText",
+          }[key]
+        ] = true;
         continue;
       }
       if (!names[key] || !args.length) fail("options_invalid");

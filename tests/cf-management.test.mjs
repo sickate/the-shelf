@@ -28,13 +28,18 @@ class D1 {
     const db = this;
     const make = (args = []) => ({
       bind: (...a) => make(a),
-      first: async () => db.sql.prepare(sql).get(...args) || null,
+      first: async () => {
+        const result = db.sql.prepare(sql).get(...args) || null;
+        await db.afterFirst?.(sql, args, result);
+        return result;
+      },
       all: async () => ({ results: db.sql.prepare(sql).all(...args) }),
       run: async () => ({ meta: db.sql.prepare(sql).run(...args) }),
-      execute: () => ({
-        results: db.sql.prepare(sql).all(...args),
-        claim: sql.includes("SET state='uploading'"),
-      }),
+      execute: () => {
+        const claim = sql.includes("SET state='uploading'");
+        if (claim) db.beforeClaim?.();
+        return { results: db.sql.prepare(sql).all(...args), claim };
+      },
     });
     return make();
   }
@@ -135,11 +140,13 @@ async function fixture(t, { ready = true, observedAt = Date.now() - 5 } = {}) {
     db = new D1(sql),
     objects = new Map();
   let puts = 0;
+  const io = [];
   let beforeGet = () => {},
     beforeHead = () => {};
-  const head = (o) =>
+  const head = (o, key) =>
     o
       ? {
+          key,
           size: o.bytes.length,
           etag: "fixtureetag",
           httpEtag: '"fixtureetag"',
@@ -159,20 +166,26 @@ async function fixture(t, { ready = true, observedAt = Date.now() - 5 } = {}) {
     BOOKS: {
       async put(k, b, options) {
         puts++;
+        io.push("put");
+        assert.ok(options.onlyIf instanceof Headers);
+        assert.deepEqual([...options.onlyIf], [["if-none-match", "*"]]);
+        if (objects.has(k)) return null;
         objects.set(k, { bytes: Uint8Array.from(b), options });
-        return head(objects.get(k));
+        return head(objects.get(k), k);
       },
       async head(k) {
+        io.push("head");
         await beforeHead();
-        return head(objects.get(k));
+        return head(objects.get(k), k);
       },
       async get(k, options) {
+        io.push("get");
         await beforeGet();
         const o = objects.get(k);
         if (!o) return null;
         const r = options?.range;
         return {
-          ...head(o),
+          ...head(o, k),
           ...(r ? { range: r } : {}),
           body: new Response(
             r ? o.bytes.slice(r.offset, r.offset + r.length) : o.bytes,
@@ -257,6 +270,7 @@ async function fixture(t, { ready = true, observedAt = Date.now() - 5 } = {}) {
     intent,
     puts: () => puts,
     objects,
+    io,
     onGet: (f) => (beforeGet = f),
     onHead: (f) => (beforeHead = f),
   };
@@ -687,4 +701,276 @@ test("upload success rechecks private session after final bookInfo await", async
     "confirmed",
   );
   assert.ok(!(await r.text()).includes("Private synthetic"));
+});
+
+function assertRetainedUpload(f, state, attempted) {
+  assert.deepEqual(
+    {
+      ...f.sql
+        .prepare(
+          "SELECT state,put_attempted,content_verified,etag FROM shelf_storage_reservations",
+        )
+        .get(),
+    },
+    { state, put_attempted: attempted, content_verified: 0, etag: null },
+  );
+  assert.equal(
+    f.sql.prepare("SELECT reserved_bytes FROM shelf_storage_authority").get()
+      .reserved_bytes,
+    BYTES.length,
+  );
+  for (const table of ["file_registry", "shelf_storage_original_registry"])
+    assert.equal(f.sql.prepare(`SELECT count(*) n FROM ${table}`).get().n, 0);
+}
+
+test("an exact-full existing reservation can claim once while new intents stay blocked", async (t) => {
+  const f = await fixture(t);
+  f.sql
+    .prepare("UPDATE shelf_storage_authority SET observed_bytes=?")
+    .run(8000000000 - BYTES.length);
+  const intent = await f.intent();
+  const capability = (await (await f.send("/api/manage")).json()).upload;
+  assert.equal(capability.enabled, false);
+  assert.ok(capability.reasons.includes("storage_budget_exceeded"));
+  assert.equal(
+    (await f.send("/api/manage/uploads", { body: f.descriptor })).status,
+    409,
+  );
+  const results = await Promise.all([
+    f.send(intent.upload.bytesUrl, { binary: BYTES }),
+    f.send(intent.upload.bytesUrl, { binary: BYTES }),
+  ]);
+  assert.deepEqual(results.map((r) => r.status).sort(), [201, 409]);
+  assert.equal(f.puts(), 1);
+  assert.deepEqual(f.io, ["put", "head", "get", "head"]);
+  assert.equal(
+    f.sql.prepare("SELECT count(*) n FROM shelf_storage_reservations").get().n,
+    1,
+  );
+  assert.deepEqual(
+    {
+      ...f.sql
+        .prepare(
+          "SELECT observed_bytes+reserved_bytes+committed_bytes AS total,reserved_bytes,committed_bytes FROM shelf_storage_authority",
+        )
+        .get(),
+    },
+    { total: 8000000000, reserved_bytes: 0, committed_bytes: BYTES.length },
+  );
+});
+
+test("claim allowance never bypasses over-budget or persisted responsibility validation", async (t) => {
+  for (const change of ["over", "counters", "descriptor", "hash", "target"]) {
+    await t.test(change, async (t) => {
+      const f = await fixture(t),
+        intent = await f.intent();
+      f.sql
+        .prepare("UPDATE shelf_storage_authority SET observed_bytes=?")
+        .run(8000000000 - BYTES.length + (change === "over" ? 1 : 0));
+      if (change === "counters")
+        f.sql.exec(
+          "UPDATE shelf_storage_authority SET reserved_bytes=reserved_bytes+1",
+        );
+      if (change === "descriptor")
+        f.sql.exec(
+          "UPDATE browser_uploads SET descriptor_json=json_set(descriptor_json,'$.sizeBytes',1)",
+        );
+      if (change === "hash")
+        f.sql
+          .prepare("UPDATE browser_uploads SET sha256=?")
+          .run("0".repeat(64));
+      if (change === "target") f.env.R2_ACCOUNT_ID = "b".repeat(32);
+      const r = await f.send(intent.upload.bytesUrl, { binary: BYTES });
+      assert.equal(r.status, 409);
+      assert.equal((await r.json()).error.code, "upload_blocked");
+      assert.equal(f.puts(), 0);
+      assert.deepEqual(f.io, []);
+      assert.equal(
+        f.sql
+          .prepare("SELECT put_attempted FROM shelf_storage_reservations")
+          .get().put_attempted,
+        0,
+      );
+    });
+  }
+});
+
+test("evidence expiry during body consumption is rechecked before claim", async (t) => {
+  const f = await fixture(t),
+    intent = await f.intent(),
+    now = Date.now();
+  let capabilityChecks = 0,
+    consumed = false;
+  f.db.afterFirst = (sql) => {
+    if (sql.startsWith("SELECT a.*")) capabilityChecks++;
+  };
+  const body = new ReadableStream(
+    {
+      pull(controller) {
+        assert.equal(capabilityChecks, 1);
+        consumed = true;
+        t.mock.method(Date, "now", () => now + 300001);
+        controller.enqueue(BYTES);
+        controller.close();
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  const r = await f.send(intent.upload.bytesUrl, { binary: body });
+  assert.equal(r.status, 409);
+  assert.ok((await r.json()).upload.reasons.includes("account_evidence_stale"));
+  assert.equal(consumed, true);
+  assert.equal(capabilityChecks, 2);
+  assertRetainedUpload(f, "reserved", 0);
+  assert.deepEqual(f.io, []);
+});
+
+test("the SQL claim guard still rejects evidence changed after both capability checks", async (t) => {
+  const f = await fixture(t),
+    intent = await f.intent();
+  let capabilityChecks = 0;
+  f.db.afterFirst = (sql) => {
+    if (sql.startsWith("SELECT a.*")) capabilityChecks++;
+  };
+  f.db.beforeClaim = () => {
+    assert.equal(capabilityChecks, 2);
+    f.sql
+      .prepare("UPDATE shelf_storage_authority SET observed_at=?")
+      .run(Date.now() + 60000);
+  };
+  const r = await f.send(intent.upload.bytesUrl, { binary: BYTES });
+  assert.equal(r.status, 503);
+  assertRetainedUpload(f, "reserved", 0);
+  assert.deepEqual(f.io, []);
+});
+
+test("conditional PUT conflict preserves the existing object without verification or retry", async (t) => {
+  const f = await fixture(t),
+    intent = await f.intent(),
+    descriptor = JSON.parse(
+      f.sql.prepare("SELECT descriptor_json FROM browser_uploads").get()
+        .descriptor_json,
+    ),
+    original = { bytes: Uint8Array.from([1, 2, 3]), options: {} };
+  f.objects.set(descriptor.objectKey, original);
+  const r = await f.send(intent.upload.bytesUrl, { binary: BYTES });
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).upload.state, "uncertain");
+  assert.equal(f.objects.get(descriptor.objectKey), original);
+  assert.deepEqual([...original.bytes], [1, 2, 3]);
+  assertRetainedUpload(f, "uncertain", 1);
+  assert.deepEqual(f.io, ["put"]);
+  assert.equal(
+    (await f.send(intent.upload.bytesUrl, { binary: BYTES })).status,
+    409,
+  );
+  assert.equal(f.puts(), 1);
+  assert.deepEqual(f.io, ["put"]);
+});
+
+test("null, missing or malformed PUT success never starts object verification", async (t) => {
+  const cases = [
+    ["null", () => null],
+    ["undefined", () => undefined],
+    ["empty", () => ({})],
+    ["string", () => "success"],
+    ["array", (stored) => Object.assign([], stored)],
+    ["key", (stored) => ({ ...stored, key: "other" })],
+    ["etag", (stored) => ({ ...stored, etag: 'W/"weak"' })],
+    ["httpEtag", (stored) => ({ ...stored, httpEtag: '"other"' })],
+    ["size", (stored) => ({ ...stored, size: stored.size + 1 })],
+    ["hash", (stored) => ({ ...stored, customMetadata: {} })],
+    ["mime", (stored) => ({ ...stored, httpMetadata: {} })],
+  ];
+  for (const [name, result] of cases) {
+    await t.test(name, async (t) => {
+      const f = await fixture(t),
+        intent = await f.intent(),
+        put = f.env.BOOKS.put;
+      f.env.BOOKS.put = async (...args) => result(await put(...args));
+      const r = await f.send(intent.upload.bytesUrl, { binary: BYTES });
+      assert.equal(r.status, 409);
+      assertRetainedUpload(f, "uncertain", 1);
+      assert.deepEqual(f.io, ["put"]);
+      assert.equal(
+        (await f.send(intent.upload.bytesUrl, { binary: BYTES })).status,
+        409,
+      );
+      assert.equal(f.puts(), 1);
+      assert.deepEqual(f.io, ["put"]);
+    });
+  }
+});
+
+test("a thrown conditional failure retains the single attempted claim", async (t) => {
+  const f = await fixture(t),
+    intent = await f.intent();
+  let attempts = 0;
+  f.env.BOOKS.put = async (_key, _bytes, options) => {
+    attempts++;
+    assert.deepEqual([...options.onlyIf], [["if-none-match", "*"]]);
+    throw Object.assign(Error("PreconditionFailed"), { status: 412 });
+  };
+  assert.equal(
+    (await f.send(intent.upload.bytesUrl, { binary: BYTES })).status,
+    409,
+  );
+  assertRetainedUpload(f, "uncertain", 1);
+  assert.equal(
+    (await f.send(intent.upload.bytesUrl, { binary: BYTES })).status,
+    409,
+  );
+  assert.equal(attempts, 1);
+  assert.deepEqual(f.io, []);
+});
+
+test("a PUT that completes after timeout cannot verify, confirm or obtain another claim", async (t) => {
+  const f = await fixture(t),
+    intent = await f.intent(),
+    put = f.env.BOOKS.put;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => t.mock.timers.reset());
+  let finish,
+    attempts = 0,
+    putArgs;
+  f.env.BOOKS.put = (...args) => {
+    attempts++;
+    putArgs = args;
+    return new Promise((resolve) => {
+      finish = resolve;
+      queueMicrotask(() => t.mock.timers.tick(30001));
+    });
+  };
+  const r = await f.send(intent.upload.bytesUrl, { binary: BYTES });
+  assert.equal(r.status, 409);
+  assertRetainedUpload(f, "uncertain", 1);
+  finish(await put(...putArgs));
+  await Promise.resolve();
+  await Promise.resolve();
+  assertRetainedUpload(f, "uncertain", 1);
+  assert.deepEqual(f.io, ["put"]);
+  assert.equal(
+    (await f.send(intent.upload.bytesUrl, { binary: BYTES })).status,
+    409,
+  );
+  assert.equal(attempts, 1);
+  assert.equal(f.puts(), 1);
+  assert.deepEqual(f.io, ["put"]);
+});
+
+test("HEAD must retain the successful conditional PUT object identity", async (t) => {
+  const f = await fixture(t),
+    intent = await f.intent(),
+    head = f.env.BOOKS.head;
+  f.env.BOOKS.head = async (...args) => ({
+    ...(await head(...args)),
+    etag: "replacement",
+    httpEtag: '"replacement"',
+  });
+  assert.equal(
+    (await f.send(intent.upload.bytesUrl, { binary: BYTES })).status,
+    409,
+  );
+  assertRetainedUpload(f, "uncertain", 1);
+  assert.deepEqual(f.io, ["put", "head"]);
 });

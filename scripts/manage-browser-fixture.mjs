@@ -16,6 +16,7 @@ const result = await build({
   platform: "browser",
   target: "es2022",
   write: false,
+  define: { "import.meta.env.BASE_URL": '"/the-shelf/"' },
   plugins: [
     {
       name: "synthetic-shelf-api",
@@ -115,6 +116,7 @@ const frame = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>�
   <div class="manage-access-status"><p id="manage-capability" role="status">正在核对…</p><a id="manage-login-cta" href="/account/" hidden>先登录</a></div>
   <form id="upload-form"><label>文件<input id="book-file" type="file"></label><p id="file-preview"></p><p id="identify-status" role="status"></p><p id="metadata-preview"></p><details id="metadata-editor"><summary>修改信息</summary><label>书名<input id="book-title"></label><label>作者<input id="book-author"></label><label>分类<input id="book-category"></label></details><button id="upload-submit" type="submit" disabled>登记并上传</button><span id="upload-status" role="status"></span></form>
   <p id="books-status" role="status">登录后加载私人书库。</p><span id="books-count"></span><button id="manage-reload" type="button">重新核对书库</button><div id="books-list"></div>
+  <nav id="manage-pagination" hidden><button id="manage-previous" type="button" disabled>上一页</button><span id="manage-page-label"></span><button id="manage-next" type="button" disabled>下一页</button></nav>
   <span id="trash-count"></span><p id="trash-status" role="status"></p><div id="trash-list"></div>
 </main><script type="module">
   import { initManage } from "/manage.js";
@@ -204,7 +206,9 @@ const frame = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>�
       await new Promise(r=>setTimeout(r,150));
       assert(m.identifyBodies.length===2 && m.maxIdentifyActive===1 && document.getElementById("book-title").value==="fast","serialized latest-file result was wrong");
     } else if(mode==="ready" || mode==="upload-lock") {
-      await wait(()=>document.querySelectorAll("#books-list a").length===1,"confirmed read link");
+      await wait(()=>document.querySelectorAll("#books-list .manage-read-links a").length===1,"confirmed read link");
+      assert(document.querySelector("#books-list h3 a")?.getAttribute("href")==="/the-shelf/book/?id=book_fixture","new book detail link missing or lost base");
+      assert(document.querySelector("#books-list .manage-read-links a")?.getAttribute("href")==="/the-shelf/read/?book=book_fixture&file=file_confirmed","reader link lost base or file identity");
       setFile();
       await wait(()=>status().includes("AI已根据文件名识别"),"successful filename identification");
       assert(document.getElementById("book-title").value==="AI识别书目" && document.getElementById("book-author").value==="AI作者" && document.getElementById("book-category").value==="AI分类","AI metadata did not populate");
@@ -240,12 +244,13 @@ const frame = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>�
       assert(document.querySelector("#books-list .manage-upload-state")?.textContent.includes("不确定"),"reloaded uncertain state not visible");
     } else if(mode==="trash") {
       const current=document.querySelector("#books-list .manage-card");
-      assert(document.querySelectorAll("#books-list a").length===1,"pending file exposed as reader link");
+      assert(document.querySelectorAll("#books-list .manage-read-links a").length===1,"pending file exposed as reader link");
       clickText(current,"移入回收站");
       const review=current.querySelector(".manage-confirm");
       assert(review && !review.hidden && review.textContent.includes("不会释放存储空间"),"in-page trash review missing");
       clickText(review,"确认移入回收站");
       await wait(()=>m.trashed && document.querySelectorAll("#trash-list .manage-card").length===1,"trash CAS action");
+      assert(!document.querySelector("#trash-list h3 a"),"trash title retained a detail link");
       const call=m.calls.find(c=>c.route==="/api/manage/books/book_fixture/trash");
       assert(call?.body.expectedVersion===7,"trash did not send expected managementVersion");
     } else if(mode==="restore-error") {

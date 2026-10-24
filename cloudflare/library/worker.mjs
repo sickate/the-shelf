@@ -31,6 +31,16 @@ import {
   managedFileAccess,
   assertCurrent,
 } from "./management.mjs";
+import { preparedRoute } from "./prepared.mjs";
+import { storageReadConfiguration } from "./storage-sources.mjs";
+import { confirmedFileAccess } from "./storage-read-controller.mjs";
+import { storageBooks } from "./storage-book-controller.mjs";
+import { storageMetadata } from "./storage-book-mutations.mjs";
+import {
+  isolatedUploadConfiguration,
+  isolatedRegistrySource,
+  assertIsolatedSchema,
+} from "./isolated-upload.mjs";
 
 const cookieName = "__Host-shelf_session";
 const headers = {
@@ -48,6 +58,19 @@ function cookie(value, age = 86400) {
   return `${cookieName}=${value}; Secure; HttpOnly; Path=/; SameSite=Strict; Max-Age=${age}`;
 }
 function configuration(env) {
+  isolatedUploadConfiguration(env);
+  const v2 = Object.hasOwn(env, "STORAGE_MODE");
+  if (v2) storageReadConfiguration(env);
+  else if (
+    [
+      "STORAGE_WRITE_MODE",
+      "TRIAL_BOOKS",
+      "TRIAL_R2_ACCOUNT_ID",
+      "TRIAL_R2_BUCKET",
+      "TRIAL_TARGET_SHA256",
+    ].some((name) => Object.hasOwn(env, name))
+  )
+    throw new LibraryError("files_unconfigured", 503);
   if (!["check", "production"].includes(env.APP_SCOPE) || !env.DB)
     throw new LibraryError("service_unavailable", 503);
   const name =
@@ -61,7 +84,7 @@ function configuration(env) {
     throw new LibraryError("service_unavailable", 503);
   if (env.OWNER_KEY_PEPPER === env.SESSION_SECRET)
     throw new LibraryError("service_unavailable", 503);
-  trialMode(env);
+  if (!v2) trialMode(env);
   return { scope: env.APP_SCOPE, origin: env.SITE_ORIGIN };
 }
 function dbError(error) {
@@ -224,9 +247,10 @@ async function bookInfo(
   }
 }
 function registrySource(env) {
-  return trialMode(env)
+  const source = trialMode(env)
     ? `(SELECT json_extract(descriptor_json,'$.scope') AS scope,json_extract(descriptor_json,'$.fileId') AS file_id,json_extract(descriptor_json,'$.bookId') AS book_id,json_extract(descriptor_json,'$.format') AS format,size_bytes,state FROM shelf_storage_single_trial WHERE id=1 AND state='confirmed' AND content_verified=1 AND put_attempted=1 AND isolated_target_config_sha256='${env.SINGLE_TRIAL_TARGET_SHA256}' AND json_extract(target_json,'$.accountId')='${env.R2_ACCOUNT_ID}' AND json_extract(target_json,'$.bucket')='${env.R2_BUCKET}')`
     : "file_registry";
+  return isolatedRegistrySource(env, source);
 }
 async function trialFileAccess(request, env, context, session, id, content) {
   const t = await query(() => loadTrial(env));
@@ -473,6 +497,10 @@ async function fileAccess(env, context, session, id) {
   });
 }
 async function metadata(request, env, context, session, bookId) {
+  if (env.STORAGE_MODE === "authority-v2")
+    return storageMetadata(request, env, context, session, bookId, {
+      response,
+    });
   const input = await readJson(request);
   if (
     Object.keys(input).some(
@@ -601,6 +629,7 @@ async function route(request, env, context) {
   const { pathname: path } = new URL(request.url);
   if (path.startsWith("/api/single-trial/")) {
     if (
+      isolatedUploadConfiguration(env) ||
       !trialMode(env) ||
       !["/api/single-trial/upload", "/api/single-trial/object"].includes(path)
     )
@@ -651,6 +680,9 @@ async function route(request, env, context) {
     ))
   )
     throw new LibraryError("csrf_invalid", 403);
+  const isolated = isolatedUploadConfiguration(env);
+  if (isolated && /^\/api\/(manage|books|files)(?:\/|$)/.test(path))
+    await assertIsolatedSchema(env, { query, prepare }, isolated);
   if (request.method === "GET" && path === "/api/health")
     return response(200, { ok: true });
   if (request.method === "GET" && path === "/api/catalog-state") {
@@ -673,7 +705,9 @@ async function route(request, env, context) {
       r2Configured: Boolean(
         env.BOOKS &&
         env.R2_ACCOUNT_ID &&
-        (trialMode(env) || (env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY)),
+        (env.STORAGE_MODE === "authority-v2" ||
+          trialMode(env) ||
+          (env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY)),
       ),
       thresholdBytes: THRESHOLD,
       authScheme: "owner-access-key",
@@ -764,12 +798,32 @@ async function route(request, env, context) {
       registrySource,
     });
   }
+  if (/^\/api\/books\/book_[a-f0-9]{16}\/prepared(?:\/search)?$/.test(path))
+    return preparedRoute(request, env, context, session, {
+      admitAccess: (fileId) =>
+        query(() =>
+          admission(
+            env,
+            { ...context, now: Date.now() },
+            "access",
+            session,
+            fileId,
+          ).run(),
+        ),
+    });
   let match = path.match(
     /^\/api\/books\/([\w-]{1,128})(?:\/(metadata|published|history|jobs))?$/,
   );
   if (match) {
     const [, id, action] = match;
     if (request.method === "GET" && !action) {
+      if (env.STORAGE_MODE === "authority-v2") {
+        const info = await storageBooks(env, context, session, { bookId: id });
+        return response(200, {
+          book: info.book,
+          metadataVersion: info.metadataVersion,
+        });
+      }
       const info = await bookInfo(env, context.scope, id, Boolean(session));
       if (info.isPrivate)
         await assertCurrent(
@@ -798,6 +852,15 @@ async function route(request, env, context) {
   if (match) {
     requireSession(session);
     const [, id, action] = match;
+    if (env.STORAGE_MODE === "authority-v2")
+      return confirmedFileAccess(
+        request,
+        env,
+        context,
+        session,
+        id,
+        action === "content",
+      );
     const managed = await query(() =>
       prepare(
         env,
@@ -846,6 +909,13 @@ async function route(request, env, context) {
 export async function handleRequest(request, env) {
   try {
     const path = new URL(request.url).pathname;
+    if (
+      (env.STORAGE_MODE === "authority-v2" ||
+        Object.hasOwn(env, "ISOLATED_UPLOAD_MODE") ||
+        Object.hasOwn(env, "ISOLATED_UPLOAD_CONSENT_SHA256")) &&
+      (path === "/api/single-trial" || path.startsWith("/api/single-trial/"))
+    )
+      return response(404, { error: { code: "not_found" } });
     if (path !== "/api" && !path.startsWith("/api/")) {
       if (env.APP_SCOPE === "production" && env.ASSETS)
         return env.ASSETS.fetch(request);

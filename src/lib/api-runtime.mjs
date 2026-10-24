@@ -19,33 +19,58 @@ export function resolveApi({
 
 export async function fetchAuthorizedFile(
   fileId,
-  { api, resolveUrl, fetcher = fetch, now = Date.now } = {},
+  {
+    api,
+    resolveUrl,
+    fetcher = fetch,
+    now = Date.now,
+    guard = () => {},
+    signal,
+  } = {},
 ) {
+  guard();
   const route = `/api/files/${encodeURIComponent(fileId)}/access`;
   let access = await api(route);
+  guard();
   let refreshed = false;
   const nearExpiry = () =>
     Number.isFinite(Date.parse(access.expiresAt)) &&
     Date.parse(access.expiresAt) <= now() + 30_000;
   if (nearExpiry()) {
     access = await api(route);
+    guard();
     refreshed = true;
   }
   let response = await fetcher(resolveUrl(access.url), {
     credentials: access.mode === "r2" ? "omit" : "include",
     referrerPolicy: "no-referrer",
+    signal,
   });
   // Only an expiring bearer URL may be refreshed. Revocation and policy failures are final.
   if (response.status === 403 && !refreshed && nearExpiry()) {
     await response.body?.cancel();
+    guard();
     access = await api(route);
+    guard();
     refreshed = true;
     response = await fetcher(resolveUrl(access.url), {
       credentials: access.mode === "r2" ? "omit" : "include",
       referrerPolicy: "no-referrer",
+      signal,
     });
   }
-  if (!response.ok) throw new Error(`文件读取失败 (${response.status})`);
+  try {
+    guard();
+  } catch (error) {
+    try {
+      Promise.resolve(response.body?.cancel()).catch(() => {});
+    } catch {}
+    throw error;
+  }
+  if (!response.ok)
+    throw Object.assign(new Error(`文件读取失败 (${response.status})`), {
+      status: response.status,
+    });
   const mime = response.headers.get("content-type") || "";
   if (mime.includes("json") || mime.includes("text/html"))
     throw new Error("文件入口返回了错误的内容类型，无法打开。");

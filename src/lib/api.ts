@@ -1,3 +1,4 @@
+import { clearPrivateSession } from "./private-view.mjs";
 import {
   resolveApi,
   fetchAuthorizedFile,
@@ -86,6 +87,7 @@ messages.invalid_credentials = runtimeText.invalidCredentials;
 export const apiBase = runtime.base;
 export const defaultAuthScheme = runtime.scheme;
 export let csrfToken: string | null = null;
+let authenticatedSession = false;
 export async function api(route: string, body?: any) {
   if (!runtime.enabled)
     throw new Error(
@@ -115,6 +117,11 @@ export async function api(route: string, body?: any) {
       typeof data.error === "string"
         ? data.error
         : data.error?.code || data.code;
+    if (response.status === 401 && authenticatedSession) {
+      authenticatedSession = false;
+      csrfToken = null;
+      clearPrivateSession();
+    }
     const failure = new Error(
       messages[code] ||
         data.error?.message ||
@@ -124,6 +131,18 @@ export async function api(route: string, body?: any) {
     );
     Object.assign(failure, { code, status: response.status });
     throw failure;
+  }
+  if (route === "/api/session") {
+    if (authenticatedSession && data.authenticated === false) {
+      csrfToken = null;
+      clearPrivateSession();
+    }
+    authenticatedSession = data.authenticated === true;
+  }
+  if (route === "/api/logout" && data.authenticated === false) {
+    authenticatedSession = false;
+    csrfToken = null;
+    clearPrivateSession({ broadcast: true });
   }
   if ("csrfToken" in data) csrfToken = data.csrfToken;
   return data;
@@ -136,8 +155,27 @@ export const errorText = (error: unknown) =>
 
 export const accessUrl = (url: string) => new URL(url, apiBase + "/").href;
 
-export const fetchFile = (fileId: string) =>
-  fetchAuthorizedFile(fileId, { api, resolveUrl: accessUrl });
+export const fetchFile = async (
+  fileId: string,
+  guard = () => {},
+  signal?: AbortSignal,
+) => {
+  try {
+    return await fetchAuthorizedFile(fileId, {
+      api,
+      resolveUrl: accessUrl,
+      guard,
+      signal,
+    });
+  } catch (error) {
+    if ((error as any)?.status === 401 && authenticatedSession) {
+      authenticatedSession = false;
+      csrfToken = null;
+      clearPrivateSession();
+    }
+    throw error;
+  }
+};
 
 // Binary mutation is limited to an API-returned same-origin upload route. Never retry.
 export async function apiBinary(

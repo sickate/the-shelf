@@ -8,7 +8,15 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { loadMigrationContext } from "./storage-migrate.mjs";
 import { d1Client } from "./cf-library-clients.mjs";
+import { boundedControlResponse } from "./cf-filename-ai-secret.mjs";
 import { SINGLE_TRIAL_PRIVATE_IO as IO } from "./single-trial.mjs";
+import {
+  READONLY_DATABASE_SCHEMA_SQL,
+  LEGACY_SCHEMA_STATUS_BUDGETS,
+  LEGACY_SCHEMA_STATUS_LIMITS,
+  legacyOperatorSchema,
+  observeLegacySchemaStatus,
+} from "./legacy-schema-status.mjs";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const sha = (v) =>
   createHash("sha256")
@@ -104,6 +112,8 @@ export async function runBookManagementSchema({
       action,
       requests: 0,
       budget: BOOK_MANAGEMENT_SCHEMA_BUDGET[action],
+      readonlyStatusBudgets: LEGACY_SCHEMA_STATUS_BUDGETS,
+      readonlyStatusLimits: LEGACY_SCHEMA_STATUS_LIMITS,
       migrationSha256: BOOK_MANAGEMENT_MIGRATION_SHA256,
       uploadAllowed: false,
     };
@@ -130,15 +140,26 @@ export async function runBookManagementSchema({
     identity: context.identity,
     migrationSha256: BOOK_MANAGEMENT_MIGRATION_SHA256,
     budget: BOOK_MANAGEMENT_SCHEMA_BUDGET[action],
+    readonlyStatusBudgets: LEGACY_SCHEMA_STATUS_BUDGETS,
+    readonlyStatusLimits: LEGACY_SCHEMA_STATUS_LIMITS,
   });
   let count = 0,
     writes = 0,
     controller;
+  let budget = BOOK_MANAGEMENT_SCHEMA_BUDGET[action],
+    boundedRead = false;
   const client = d1Client(
     context.credentials,
     context.resources.profiles.production,
     {
       fetchImpl: async (url, options) => {
+        if (action === "status" || boundedRead)
+          return boundedControlResponse(
+            fetchImpl,
+            url,
+            { ...options, signal: controller?.signal ?? options.signal },
+            requestTimeoutMs,
+          );
         let timer;
         const operation = Promise.resolve().then(() =>
           fetchImpl(url, {
@@ -169,11 +190,9 @@ export async function runBookManagementSchema({
       },
     },
   );
-  const request = async (sql, mutating = false) => {
-    if (
-      ++count > BOOK_MANAGEMENT_SCHEMA_BUDGET[action].http ||
-      (mutating && ++writes > BOOK_MANAGEMENT_SCHEMA_BUDGET[action].ddl)
-    )
+  const request = async (sql, mutating = false, bounded = false) => {
+    boundedRead = bounded;
+    if (++count > budget.http || (mutating && ++writes > budget.ddl))
       fail("management_schema_request_budget");
     const n = String(count).padStart(3, "0");
     await IO.writeImmutable(root, path.join(run, n + "-intent.json"), {
@@ -240,7 +259,46 @@ export async function runBookManagementSchema({
   };
   try {
     await request();
-    let state = schemaState(await request(BOOK_MANAGEMENT_SCHEMA_SQL.schema));
+    const whole = await request(READONLY_DATABASE_SCHEMA_SQL, false, true);
+    let classified;
+    try {
+      classified = legacyOperatorSchema(7, whole);
+    } catch {
+      fail("management_schema_invalid");
+    }
+    if (classified.full && action === "apply")
+      fail("management_schema_apply_layout_disabled");
+    if (classified.full && action === "status") {
+      budget = LEGACY_SCHEMA_STATUS_BUDGETS[classified.full.profile];
+      await IO.writeImmutable(root, path.join(run, "readonly-layout.json"), {
+        databaseProfile: classified.full.profile,
+        budget,
+        limits: LEGACY_SCHEMA_STATUS_LIMITS,
+      });
+      let observation;
+      try {
+        observation = await observeLegacySchemaStatus({
+          classification: classified.full,
+          rows: whole,
+          identity: context.identity,
+          request,
+        });
+      } catch (error) {
+        if (error.code) throw error;
+        fail("management_schema_protected_facts_invalid");
+      }
+      const result = {
+        mode: "executed",
+        action,
+        ...observation,
+        requests: count,
+        ddl: writes,
+        uploadAllowed: false,
+      };
+      await IO.writeImmutable(root, path.join(run, "result.json"), result);
+      return result;
+    }
+    let state = schemaState(classified.own);
     const before = await facts();
     if (action === "status") {
       const result = {
