@@ -46,7 +46,18 @@ AI、正文准备、公开文件、多用户、旧 CF01/CF03/trial 迁移链路�
 | PUT /api/upload | 所有者 | 原始字节 body；头 `X-Shelf-Path`（URL 编码的相对路径，如 `01-计算机与技术/x.pdf`），`X-Shelf-Sha256`。服务端校验大小、格式、hash，检查去重和预算后写 R2，返回 `{book, duplicate:boolean}` |
 | POST /api/catalog `{path, sizeBytes}` | 所有者 | 只登记目录（`local_only`），用于 >20 MB 的书 |
 | DELETE /api/books/:id | 所有者 | 软删除 |
-| GET /api/budget | 所有者 | `{usedBytes, limitBytes}` |
+| GET /api/budget | 所有者 | `{usedBytes, limitBytes, legacyReserveBytes, coverBytes}`；used = 有 r2_key 的书 + 封面 + 100 MB 旧责任余量 |
+
+### 2026-10-24 功能增量（`docs/features-plan-2026-10-24.md`，迁移 `app/migrations/0002_features.sql`）
+
+| 方法 路径 | 权限 | 说明 |
+| --- | --- | --- |
+| GET /api/books | 公开 | 所有者会话下每本额外返回 `hasCover`、`hasInfo`（有可读 AI 详情）、`authors`（AI 详情作者名数组）；访客响应形状不变 |
+| POST /api/upload/check `{files:[{path,sizeBytes,sha256}]}` | 所有者 | 1–200 条，返回 `{files:[{path,ok,reason?,warning?,existingBookId?,existingTitle?}], remainingBytes}`。reason：`bad_path`、`unsupported_format`、`bad_size`、`empty_file`、`too_large`、`bad_sha256`、`duplicate`、`duplicate_in_batch`、`budget_exceeded`（按批内顺序累计）；`duplicate_deleted` 为 ok:true 提示（上传即恢复，不占新预算）；`warning: similar_title`（同名不同内容）。只是预判，不写入 |
+| PUT /api/books/:id/cover | 所有者 | body 为 `image/webp` 或 `image/jpeg`，≤200,000 bytes，校验魔数；可选头 `X-Shelf-Width/Height`（1–4000）。书须为 uploaded 且未删除。首写 key `covers/<id>.webp|.jpg`，之后覆盖写沿用同一 key（Content-Type 存在 R2 元数据）。预算原子检查：覆盖只计增量，R2 确认前按 max(旧,新) 保留；失败 502 `storage_unknown` 不自动重试；超预算 507 |
+| GET /api/books/:id/cover | 所有者 | 正确 Content-Type，`Cache-Control: private, max-age=86400`，ETag（大小+时间），`If-None-Match` → 304 |
+| GET /api/books/:id/info | 所有者 | `{status:'none'|'generating'|'ready'|'failed', info?, model?, inputKind?, error?, updatedAt?}`；过期租约按 failed（或保留的旧 ready）显示 |
+| POST /api/books/:id/info[?force=1] `{excerpt?}` | 所有者 | body ≤64 KB，摘录截断 12,000 字。已 ready 且非 force 直接返回。单飞租约 15 分钟，冲突 409 `generating`。先 DeepSeek Search（`DEEPSEEK_KEY`，2 次、每次 20 s，失败降级，401/402 记 `search_auth`/`search_balance`），再 oai `/v1/tasks`（`gpt-luna` medium json_object，600 s）。503 → 释放租约、返回 503 `ai_busy` 并透传 `Retry-After`（默认 10）；其他失败 502 `{error:'ai_failed', reason}`（`ai_bad_output`、`ai_http_<n>`、`ai_timeout`、`ai_network`、`ai_bad_response`）。服务端严格校验输出，sources 只保留检索资料中的 URL；失败不写半截结果，force 重生成失败时保留旧结果。均不自动重试 |
 
 脚本鉴权：先 POST /api/login 取得 cookie。
 
