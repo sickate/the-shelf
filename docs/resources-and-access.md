@@ -12,6 +12,8 @@
 
 恢复工具及静态修复提交8f268a745db282008b2ac3ebf18c3433396d3c31已推送；主Agent完整review、89项联合验证、两构建与1638文件秘密扫描通过。两CI40084809765/40084810156在完整测试中失败：filename-AI及prepared静态回退两项遗留断言仍要求main为空，与新固定passthrough契约冲突；交回原Sol/high只修正测试并全面搜索同类断言。失败CI为2230项Node、2226通过/2失败/2因pdftotext缺失跳过，Python未启动，不宣称通过；本机此前PDF真实提取测试已通过。恢复工具及任何新生产动作仍未执行。
 
+测试断言修正e470f66984e59b015ca79be6adcf0ffa87b101d3已push；两CI40085241329/40085241354成功，主Agent本机完整2230项Node及8项Python通过、零跳过（`/private/tmp/shelf-static-recovery-full-main-20261024.log`）。随后两次恢复运行`static-binding-recovery-e470f66-20261024`及`static-binding-recovery-e470f66-fresh-20261024`均在第5只读请求停止：每次versionPosts=0/deploymentPosts=0，无全局attempt claim。一次独立同目标GET的私有诊断证明HTTP200/success=true、result.items恰一项，而errors/messages为null；错误来自工具把合法null错误字段拒绝，不是已证实网络故障。交回原Sol/high窄改此恢复工具的envelope兼容及拒绝矩阵；保留两次停止记录，不重放任何写入。013、seed、新书PUT及本轮AI仍均0。
+
 ## 2026-10-24 常规隔离上传发布候选
 
 用户已明确批准AGENTS顶部常规隔离上传规则；固定同意记录已在`.local/isolated-upload/consent.json`以0600不可覆盖保存。主Agent独立review及联合226/226通过，最终完整2195项Node+8项Python通过（`/private/tmp/shelf-upload-full-final-20261024.log`）；两构建各1282页、public/static和两轮实际秘密扫描1634文件0命中/0不安全项通过。013最终hash与关闭generation围栏见development-plan顶部。首本与全部旧责任保留，不依赖010/011/012上线。

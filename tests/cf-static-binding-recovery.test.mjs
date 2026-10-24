@@ -211,6 +211,51 @@ test("happy path is13 bounded HTTP, one direct strict version POST and one force
   assert.equal(current.versionPosts, 1);
   assert.equal(current.deploymentPosts, 1);
 });
+test("latest versions accepts the real success true errors null messages null envelope", async (t) => {
+  const { current } = await fixture(t);
+  current.hook = (call) =>
+    call.url.endsWith("/versions?page=1&per_page=1")
+      ? Response.json({
+          success: true,
+          errors: null,
+          messages: null,
+          result: current.latest,
+        })
+      : undefined;
+  const result = await current.run();
+  assert.equal(result.outcome, "static_bindings_verified");
+  assert.equal(result.requests, 13);
+  assert.equal(current.versionPosts, 1);
+  assert.equal(current.deploymentPosts, 1);
+});
+for (const [name, envelope] of [
+  ["nonempty errors array", { success: true, errors: [{ code: 1000 }] }],
+  ["errors object", { success: true, errors: {} }],
+  ["errors string", { success: true, errors: "contradictory error" }],
+  ["empty errors string", { success: true, errors: "" }],
+  ["errors false", { success: true, errors: false }],
+  ["errors zero", { success: true, errors: 0 }],
+  ["success false with null errors", { success: false, errors: null }],
+  ["missing success with null errors", { errors: null }],
+])
+  test(`latest versions rejects ${name} before any POST or attempt claim`, async (t) => {
+    const { current, root } = await fixture(t);
+    current.hook = (call) =>
+      call.url.endsWith("/versions?page=1&per_page=1")
+        ? Response.json({ ...envelope, messages: null, result: current.latest })
+        : undefined;
+    await assert.rejects(current.run(), prefix("read_failed"));
+    assert.equal(current.calls.length, 5);
+    assert.equal(current.calls.every((call) => call.method === "GET"), true);
+    assert.equal(current.versionPosts, 0);
+    assert.equal(current.deploymentPosts, 0);
+    await assert.rejects(
+      fs.stat(
+        path.join(root, ".local/cf-static-binding-recovery/attempt-claim.json"),
+      ),
+      (e) => e.code === "ENOENT",
+    );
+  });
 for (const [name, damage] of [
   ["source wrong version", (f) => (f.current.source.id = NEW_VERSION)],
   [

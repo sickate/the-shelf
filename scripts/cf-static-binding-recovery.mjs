@@ -311,6 +311,7 @@ export async function runStaticBindingRecovery({
         !response.ok ||
         data.success !== true ||
         (data.errors !== undefined &&
+          data.errors !== null &&
           (!Array.isArray(data.errors) || data.errors.length)) ||
         !Object.hasOwn(data, "result")
       )
