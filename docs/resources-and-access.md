@@ -2,6 +2,14 @@
 
 更新日期：2026 年 10 月 24 日。本文是仓库运维记录，不在网站文档发布清单中，不包含真实凭证。历史按轮次保留，当前状态以最新交付记录及对应私有收据为准。
 
+## 2026-10-24 上传发布中断与恢复记录
+
+上传实现85ca5a70c5f114c497d92a8701893b7e2b2aeec0已推送main；Cloudflare CI40080199912与Pages CI40080199916均success。随后auth close以4 HTTP成功关闭生产鉴权，generation2/enabled0，收据`.local/isolated-upload/auth-close.json`。旧profile静态回退实际创建版本08d46159-f7a7-4eec-b47c-30a9502aad2c，postflight失败；独立settings GET确认bindings=[]，日志`.local/cf-static/deploy-ggyy7a/deploy.log`。根因是实际安装Wrangler的assets-only上传metadata提前返回，忽略bindings/keepSecrets，旧模拟测试未覆盖此路径。
+
+固定历史版本aaa7a94f-6478-4d76-aa65-03a3d2461d25的独立GET确认精确旧trial+filename-AI绑定及四个secret_text名称仍保留；只执行一次带force的deployment POST切回该不可变版本，HTTP200/success，后续GET确认100%流量。此POST不得重发；私有claim/response为`.local/isolated-upload/restore-retained-version-{claim,response}.json`，独立观察为`post-restore-independent-observation.json`。实际匿名/api/session返回200/未登录，不能据此证明所有密钥值。settings仍指向最新上传静态版的空绑定；活动流量切回不等于恢复后续上传的默认继承来源。
+
+常规静态发布修复改为固定ASSETS passthrough user Worker，主Agent独立review及76项相关回归通过。恢复方案由专属Sol/high实施：从固定历史UUID显式继承四个已有secret绑定，keep_assets保留既有静态资产，直连有界版本上传及部署各一次，不读取或PUT密钥值；预先精确核验旧版本、空settings、最新上传/活动版本及关闭auth，之后独立核验新不可变版本/settings。方案依据Cloudflare官方SDK的inherit.version_id及multipart metadata文档；尚未执行。013、policy seed、本轮书籍PUT及AI调用均未执行，auth保持关闭，全部历史账本与收据保留。
+
 ## 2026-10-24 常规隔离上传发布候选
 
 用户已明确批准AGENTS顶部常规隔离上传规则；固定同意记录已在`.local/isolated-upload/consent.json`以0600不可覆盖保存。主Agent独立review及联合226/226通过，最终完整2195项Node+8项Python通过（`/private/tmp/shelf-upload-full-final-20261024.log`）；两构建各1282页、public/static和两轮实际秘密扫描1634文件0命中/0不安全项通过。013最终hash与关闭generation围栏见development-plan顶部。首本与全部旧责任保留，不依赖010/011/012上线。

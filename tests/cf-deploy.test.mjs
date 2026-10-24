@@ -10,6 +10,7 @@ import {
   runChild,
   selectCredentials,
   validateConfig,
+  STATIC_WORKER_SOURCE,
 } from "../scripts/cf-deploy.mjs";
 
 const ACCOUNT = "a".repeat(32);
@@ -240,7 +241,11 @@ test("deployment uses isolated config, empty dotenv, minimal environment and pri
         const config = JSON.parse(await fs.readFile(configPath, "utf8"));
         assert.equal(config.name, "the-shelf");
         assert.equal(config.assets.directory, path.join(root, "dist"));
-        assert.equal(config.main, undefined);
+        assert.equal(
+          await fs.readFile(config.main, "utf8"),
+          STATIC_WORKER_SOURCE,
+        );
+        assert.equal(config.assets.binding, "ASSETS");
         assert.equal(
           await fs.readFile(
             call.args[call.args.indexOf("--env-file") + 1],
@@ -636,7 +641,8 @@ test("trial static rollback requires explicit private target and strips all runt
             "utf8",
           ),
         );
-        assert.equal(cfg.main, undefined);
+        assert.equal(await fs.readFile(cfg.main, "utf8"), STATIC_WORKER_SOURCE);
+        assert.equal(cfg.assets.binding, "ASSETS");
         assert.equal(cfg.r2_buckets, undefined);
         assert.equal(cfg.d1_databases, undefined);
         assert.equal(cfg.vars, undefined);

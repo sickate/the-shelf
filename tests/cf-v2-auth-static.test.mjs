@@ -14,7 +14,11 @@ import {
   AUTH_LIMITS,
   runProductionAuth,
 } from "../scripts/cf-production-auth.mjs";
-import { deploy, parseStaticDeployArguments } from "../scripts/cf-deploy.mjs";
+import {
+  deploy,
+  parseStaticDeployArguments,
+  STATIC_WORKER_SOURCE,
+} from "../scripts/cf-deploy.mjs";
 import { readRemoteSettings } from "../scripts/cf-api-deploy.mjs";
 import { createOwnerVerifier } from "../cloudflare/library/security.mjs";
 import { DATABASE_SCHEMA_PROFILES } from "../shared/storage-schema-profiles.mjs";
@@ -592,7 +596,11 @@ async function staticRun(f, changes = {}) {
           ),
         );
         assert.equal(config.assets.binding, "ASSETS");
-        for (const key of ["main", "vars", "d1_databases", "r2_buckets"])
+        assert.equal(
+          await fs.readFile(config.main, "utf8"),
+          STATIC_WORKER_SOURCE,
+        );
+        for (const key of ["vars", "d1_databases", "r2_buckets"])
           assert.equal(Object.hasOwn(config, key), false);
       }
       return { code: 0 };

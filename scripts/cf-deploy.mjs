@@ -11,6 +11,10 @@ import {
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 export const PUBLIC_URL = "https://the-shelf.iamzhutuo.workers.dev/";
+// Wrangler's assets-only serializer omits bindings and keepSecrets. A fixed user
+// Worker keeps secret inheritance active while exposing only the assets binding.
+export const STATIC_WORKER_SOURCE =
+  "export default { fetch(request, env) { return env.ASSETS.fetch(request); } };\n";
 const ACCOUNT_KEYS = [
   "SHELF_R2_ACCOUNT_ID",
   "SHELF_CF_ACCOUNT_ID",
@@ -516,15 +520,18 @@ export async function deploy({
     const emptyEnv = path.join(runDirectory, "empty.env");
     await privateFile(emptyEnv);
     const configPath = path.join(runDirectory, "wrangler.json");
+    const staticMain = path.join(runDirectory, "static-worker.mjs");
+    await privateFile(staticMain, STATIC_WORKER_SOURCE);
     await privateFile(
       configPath,
       JSON.stringify(
         {
           ...config,
+          main: staticMain,
           assets: {
             ...config.assets,
             directory: assets,
-            ...(v2 || isolatedUploads ? { binding: "ASSETS" } : {}),
+            binding: "ASSETS",
           },
         },
         null,

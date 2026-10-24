@@ -2,7 +2,7 @@
 
 盘点日期：2026-10-24。依据：`AGENTS.md`、`docs/development-plan.md` 顶部持续计划、`docs/implementation-plan.md`、`docs/remote-storage-plan.md`、`docs/cf03-plan.md`、`docs/resources-and-access.md`，以及当前仓库代码和测试。此清单用于接续开发；较早阶段表和旧状态只作历史线索。
 
-最新上传候选：常规隔离上传及增量013、固定operator、部署/auth/静态回退已由主Agent独立review。联合226项通过；最终完整2195项Node和8项Python、disabled/same-origin两构建（各1282页）、public/static、实际私密值扫描1634文件（0命中/0不安全项）全部通过。用户常规上传授权已生效，无须逐本聊天批准；生产只读auth核验2HTTP确认generation1/enabled1/无未决auth mutation。尚未提交、推送、安装013或部署新上传版本；下一步commit→push→两CI→受控发布→唯一613字节合成PDF真实上传/读取验收。真实浏览器工具不可用，完整视觉交互继续明确未验收，按development-plan顶部发布方法处理。下方较早冻结检查点保留为历史。
+最新状态：上传版本85ca5a70已提交并推送，两条CI（40080199912、40080199916）成功。本机完整2195项Node和8项Python、两构建及隐私检查通过。生产auth已关闭（generation2/enabled0）；静态回退暴露Wrangler assets-only遗漏绑定的真实缺陷，流量已恢复到保留绑定的旧不可变版本，但settings仍是最近上传静态版本的空绑定，尚不能继续常规发布。专属Sol/high正修复静态发布并准备从固定旧版本显式继承现有绑定的一次性恢复工具；静态修复已由主Agent独立review并通过76项相关回归。未安装013、未seed、未执行本轮书籍上传或AI调用。恢复配置后继续固定迁移、部署、开启及613字节合成PDF真实上传/读取验收。常规上传授权已生效，无须逐本聊天批准；浏览器完整视觉交互仍未验收。下方较早检查点仅保留历史，不覆盖本段。
 
 最新冻结检查点：本机完整1963项Node及8项Python全部通过，disabled/same-origin两构建各1282页，public/static及1621文件秘密扫描通过。N2b列表分页、详情、metadata、回收站删除恢复、文件/正文读取与deploy/auth/static/HTTP验收工具均已主审；该批未提交、未推送或部署。此前表中“冻结全套待验”已由本检查点完成；F3完整23项浏览器验收仍未通过，本轮CUA再次观察Chrome进程但无browser且连接cgWindowNotFound，生产保持旧版本。普通上传、010/011安装及真实正文同步仍受原门槛约束。N2c只读operator兼容已启动提案审查：source_finalize（Sol/high）负责prepared schema-status，deploy_wiring（Sol/high）并行调查007/008/009 status；尚未批准实现或取得新兼容验收，随后继续任务依赖链，不能把本轮本机通过视为全部目标完成。
 

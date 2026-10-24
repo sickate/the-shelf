@@ -27,6 +27,20 @@
 
 ## 固定运维顺序与请求上限
 
+### 静态绑定保留修复（2026-10-24，Sol/high）
+
+真实旧profile静态发布暴露了 Wrangler assets-only 的上传元数据早返回分支：它省略全部 bindings 和 keepSecrets，导致已部署静态版本未保留secret。auth已关闭、013尚未执行；主Agent负责核验历史不可变版本后恢复原版本绑定，不重写secret。修复范围仅是静态发布写入固定私有passthrough模块并设置main与ASSETS，强制使用正常Worker元数据分支；保留精确前后配置核验，不启用keep_vars、不继承DB/R2/业务vars，不更改API能力。API现有main继续走keepSecrets分支。验收执行当前安装Wrangler真实getBindings/serializer，证明旧assets-only缺陷、新静态元数据包含ASSETS与仅secret保留类别、API元数据保持明确DB/R2/vars；再运行旧静态/v2/隔离部署及鉴权回归。发布与回退均由主Agent在本地独立验收后操作；失败保留auth关闭、原不可变版本和全部私有记录。
+
+### 独立一次性绑定恢复工具（2026-10-24，Sol/high）
+
+父任务明确分配 `scripts/cf-static-binding-recovery.mjs` 与独立测试；静态修复批次保持冻结。只恢复本项目static user-worker的四secret绑定能力，不读取远端secret值、不使用或发送业务secret值，不改D1/R2，不执行013，不开启auth/policy，不调用AI或原文件PUT。开发Agent仅离线实现，任何真实动作留给主Agent独立review后执行。
+
+固定来源版本 `aaa7a94f-6478-4d76-aa65-03a3d2461d25`，固定当前latest assets版本 `08d46159-f7a7-4eec-b47c-30a9502aad2c`。预览0 IO。执行前在本项目账号内核验production D1身份、旧来源不可变版本精确trial+filename-AI绑定、settings精确空、当前部署100%固定来源、latest列表首项固定assets版本，以及固定auth/session schema与production enabled0/generation2、无未撤销会话。auth只SELECT安全字段，不读verifier；不加载独立owner/session/upload secret文件，不读取远端secret值，不使用或发送业务secret值。现有环境加载器会解析整个项目.env（可能含AI key），控制面请求仅使用现有deployment token。所有项目身份来自现有固定账号、deploy配置和单次target记录。
+
+不调用Wrangler deploy：已核对实际源码存在version upload的 `retryOnAPIFailure`，不符合恢复工具单次保证。使用有界直传，先持久不可复用全局claim与单次intent，再最多一次版本POST `/versions?bindings_inherit=strict`；固定module、ASSETS、四个 `{name,type:inherit,version_id:固定来源}`，`keep_assets:true` 保留previous-upload静态assets，不使用全局keep_bindings或secret_text值。此字段已有官方multipart文档支持，显式version_id已有官方SDK类型支持；实际安装Wrangler serializer须离线证明输出一致。版本响应确认ID（如附bindings则同时精确核验），独立immutable GET必须精确验证ASSETS+四secret后，最多一次固定`?force=true` deployment POST到已独立核验的新版本100%（主Agent明确同意，避免旧secret代际差异；不是重试/fallback）；再独立deployment GET、deployed immutable GET、settings GET和auth只读核验。总上限13 HTTP（6前置只读、1版本POST、1上传版本GET、1部署POST、4最终只读），2 Worker mutation，D1/R2写0。每个请求有超时/体积/重定向边界，无自动重试。版本上传或部署未知立即停止，不重放、不清claim；失败不自动部署旧版本或改secret，保留原不可变来源和所有收据供主Agent审阅。
+
+专项验收：真实安装serializer输出明确固定version_id且无秘密值、正常13请求路径、任一前置漂移阻断全部写、版本响应/独立GET错误不得部署、上传/部署未知不重试、并发与换run不能复用全局claim、postflight绑定/版本/auth漂移保留未知记录、路径权限与响应超时边界。主Agent审阅通过后才发布工具；真实恢复结果不能由离线测试代替。
+
 具体生产操作由主 Agent 独立审核执行；此分工只开发和离线验证。所有命令 run ID 使用新的唯一值；generation、row hash、version 从独立真实观测填写，不能猜测或重放未知写请求。固定 consent 文件 `.local/isolated-upload/consent.json` 只接受脚本中的完整已批准文本、固定账号/production数据库/authority/隔离桶，0600，不能用任意调用者 hash 代替批准。
 
 1. `node scripts/cf-production-auth.mjs status --execute --run-id <id>`：3 HTTP；随后 `close --execute --run-id <id> --expected-generation <g> --expected-row-sha256 <hash>`：4 HTTP、1 auth CAS，撤销全部会话。

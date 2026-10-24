@@ -513,6 +513,10 @@ CF-02 已验收：新站点全部 1,303 个静态资源与 1,264 个书籍详情
 
 ## 2026-10-24 用户优先级调整：独立交付书籍上传
 
+生产发布修复（进行中）：85ca5a7已提交/推送，CI40080199912与40080199916均success；auth close4HTTP成功，generation2/enabled0。旧trial静态回退实际已部署08d46159-f7a7-4eec-b47c-30a9502aad2c，但postflight失败，独立settings1GET确认bindings为空；013/seed/真实上传均未执行。安装的Wrangler源码确认assets-only提前返回metadata，不发送bindings/keepSecrets；增加ASSETS而没有main也会被拒绝。此为实际发布缺陷，不能将模拟settings通过作为真实保留secret证明。继续由原Sol/high线程修复：先只读核验既有旧版本及绑定，主Agent在不重发secret PUT的前提下恢复已有不可变版本；静态回退采用固定ASSETS passthrough模块+显式binding，验证实际发出的metadata及secret继承路径。主Agent独立review、相关回归/构建、提交推送及CI通过后再恢复上传发布流程；记录所有失败版本/日志/收据，不重放未知写，不把活动版本缺失绑定称为底层凭证已删除。
+
+静态修复和独立恢复工具已冻结并由主Agent完整review：76项静态/部署相关回归及包含恢复工具的89项联合回归分别通过；disabled与same-origin均1282页、public/static和实际秘密扫描通过。一次性恢复方案见upload-delivery-plan：固定旧不可变来源、显式四绑定继承、keep_assets、13 HTTP硬上限，版本上传与force部署各一次，auth保持关闭，未知停止。没有重发已成功的旧版本切流POST；恢复工具自身尚未执行。该窄修复提交/CI通过后，主Agent继续013→seed→新API部署→auth/policy启用→固定合成书真实上传/读取验收。
+
 最终本机放行：独立完整2195项Node和8项Python通过（`/private/tmp/shelf-upload-full-final-20261024.log`），disabled/same-origin两构建各1282页、public/static检查通过，两产物实际私密值扫描均1634文件、0命中/0不安全项。生产仅只读auth核验2HTTP，generation1/enabled1且无未决auth mutation；尚无新生产DDL、上传或发布。进入commit→push→两CI→固定生产迁移/部署→真实上传验收，不再扩大开发范围。
 
 上传最终候选已由主Agent独立review，联合226/226通过（日志`/private/tmp/shelf-upload-independent-final-20261024.log`）。第二阶段固定operator、部署/auth/静态回退及专项完成；最后修复关闭generation围栏，允许enabled0执行close并推进generation，迟到旧enable不能重新开写，未知claim继续保留。该必要修复覆盖下方首阶段旧pin：013=`3b6b3b9686ed98e26cfbf873bd0869c15cba5103a9cd555383aa388147596866`，runtime helper=`dadbfe6f82843529c64160d2539e224b43e24d8b466843a47b6b60d45ce01e3a`；新完整schema两pin为`f37ec22776cfc94299af08f31af6944282a7bc8afd152df5739007add7b48626`/`f91bff01a7b5ce50b497ad58d061787f7895df8125cddc5924c00e7424169c7b`。实际安装41HTTP/20DDL，seed4HTTP，API部署5显式HTTP（Wrangler内部另计），auth enable实测11/上限12，policy enable6、close4。尚未执行生产安装、上传或发布，完整回归/构建/隐私与CI仍待本轮最终检查。
