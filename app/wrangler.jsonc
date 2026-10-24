@@ -1,0 +1,21 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "the-shelf",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+    "not_found_handling": "404-page"
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "the-shelf-app", "database_id": "ae7d29ac-aa2c-4ff7-9af1-6c43a70e7ee3" }
+  ],
+  "r2_buckets": [
+    { "binding": "BOOKS", "bucket_name": "the-shelf-first-book-20261023" }
+  ]
+  // Secrets (wrangler secret put): OWNER_PASSWORD, SESSION_SECRET
+}

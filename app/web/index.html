@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>The Shelf</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <h1><a href="/">The Shelf</a></h1>
+    <div id="auth" class="auth"></div>
+  </header>
+  <main class="wrap">
+    <section id="owner-panel" class="panel" hidden>
+      <div class="panel-head">
+        <h2>上传</h2>
+        <span id="budget" class="muted"></span>
+      </div>
+      <form id="upload-form" class="upload">
+        <input id="upload-files" type="file" multiple required>
+        <input id="upload-category" list="category-list" placeholder="分类（可新建）" required>
+        <datalist id="category-list"></datalist>
+        <button type="submit" class="primary">上传</button>
+      </form>
+      <p class="muted small">每本不超过 20,000,000 bytes；在浏览器计算 SHA-256 后逐本上传。</p>
+      <ul id="upload-log" class="upload-log"></ul>
+    </section>
+
+    <section class="filters">
+      <input id="q" type="search" placeholder="搜索书名" autocomplete="off">
+      <select id="cat"><option value="">全部分类</option></select>
+      <div class="seg" id="status" role="radiogroup" aria-label="状态">
+        <button type="button" data-v="" aria-pressed="true">全部</button>
+        <button type="button" data-v="uploaded" aria-pressed="false">已上传</button>
+        <button type="button" data-v="local_only" aria-pressed="false">仅本地</button>
+      </div>
+    </section>
+    <p id="counts" class="muted small"></p>
+    <p id="list-error" class="error" hidden></p>
+    <ul id="list" class="books"></ul>
+    <div class="more"><button id="more" type="button" hidden>显示更多</button></div>
+  </main>
+  <script type="module" src="/shelf.js"></script>
+</body>
+</html>

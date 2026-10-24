@@ -1,5 +1,9 @@
 # The Shelf 当前任务状态清单
 
+## 2026-10-24 MVP 接手
+
+转向精简 MVP（见 [mvp-plan.md](mvp-plan.md)）：新 Worker `app/` 已上线，替代旧静态站；旧 finish-install/trial 链路不再推进，代码保留为历史。
+
 ## 2026-10-24 暂停检查点
 
 长期开发目标已暂停。HEAD `e7a9e050d7adddbaf631c0cf47d9740fcb9fdd12`已push；CI `40092634503`与`40092634591`均success。本机2352项Node+8项Python全部通过、零跳过；public/static与1643文件实际秘密扫描均通过、零命中。

@@ -7,6 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "app:upload": "node --env-file-if-exists=.env scripts/mvp-upload.mjs",
     "dev": "astro dev --host 127.0.0.1",
     "build": "node scripts/export-docs.mjs && astro build",
     "build:cloudflare": "node scripts/build-cloudflare.mjs",
@@ -26,7 +27,10 @@
     "build:cloudflare:api": "SHELF_CF_API_MODE=same-origin node scripts/build-cloudflare.mjs",
     "test:metadata:browser": "node scripts/metadata-browser-fixture.mjs",
     "prepare:text": "node scripts/prepare-text.mjs",
-    "text:select": "node scripts/select-text.mjs"
+    "text:select": "node scripts/select-text.mjs",
+    "app:test": "node --test tests/mvp-*.test.mjs",
+    "app:dev": "node app/build.mjs && wrangler dev -c app/wrangler.jsonc",
+    "app:deploy": "node app/build.mjs && wrangler deploy -c app/wrangler.jsonc"
   },
   "dependencies": {
     "astro": "^7.3.8",
