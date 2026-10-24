@@ -78,7 +78,7 @@ test("predicates", () => {
   assert.equal(f({ size: ["5-20"] }), "CD");
   assert.equal(f({ added: "7" }), "ADE");
   assert.equal(f({ added: "30" }), "ABDEG");
-  assert.equal(f({ readable: true }), "ABG");
+  assert.equal(f({ readable: true }), "ABCG"); // C is an uploaded MOBI (readable since F3)
   assert.equal(f({ cover: "1" }), "AC");
   assert.equal(f({ cover: "0" }), "BDEFG");
   assert.equal(f({ info: "1" }), "AB");
@@ -99,7 +99,7 @@ test("faceted counts ignore only their own facet", () => {
   assert.deepEqual(counts({ fmt: ["pdf"] }, "fmt"), { pdf: 1, epub: 1, mobi: 2, txt: 2, other: 1 });
   assert.deepEqual(counts({ fmt: ["pdf"] }, "size"), { lt1: 1 });
   assert.deepEqual(counts({ size: ["5-20"] }, "fmt"), { mobi: 2 });
-  assert.deepEqual(counts({ readable: true }, "fmt"), { pdf: 1, epub: 1, txt: 1 });
+  assert.deepEqual(counts({ readable: true }, "fmt"), { pdf: 1, epub: 1, mobi: 1, txt: 1 });
   assert.deepEqual(counts({ added: "7" }, "added"), { 7: 3, 30: 5 });
   assert.deepEqual(counts({ fmt: ["epub", "pdf"] }, "author"), { 张三: 2, 李四: 1 });
 });
