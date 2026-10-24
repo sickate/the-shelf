@@ -41,7 +41,8 @@ export const UPLOAD_ERRORS: Record<string, string> = {
 };
 
 export function reasonText(code: string, size?: number): string {
-  if (code === "too_large" && size !== undefined) return `超过 20 MB 单本上限（实际 ${humanSize(size)}）`;
+  if (code === "too_large" && size !== undefined)
+    return `超过单本上限 20,000,000 bytes（实际 ${size.toLocaleString("en-US")} bytes，约 ${humanSize(size)}）`;
   return UPLOAD_ERRORS[code] || `错误：${code}`;
 }
 
