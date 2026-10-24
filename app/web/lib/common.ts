@@ -6,6 +6,10 @@ export interface Book {
   sizeBytes: number;
   status: "uploaded" | "local_only";
   createdAt?: string;
+  /** Owner-only list fields. */
+  hasCover?: boolean;
+  hasInfo?: boolean;
+  authors?: string[];
 }
 
 export class ApiError extends Error {
