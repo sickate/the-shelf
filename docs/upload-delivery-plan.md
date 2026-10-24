@@ -84,3 +84,15 @@ f753f2b两条CI（40089109934/40089109974）成功，主Agent完整2283项Node+8
 接续实现已冻结，主Agent完整review4文件并独立85/85专项通过；使用导出的只读decoder核对真实旧run全部记录和1312文件冻结artifact匹配（0HTTP/0写入，history SHA256 966a3189e39ea2d647aac3f1e4b8d7ebc9fdb798574daf5e5f00e96fc2334275）。仅asset允许200/201/202及省略/null result，最终有效completion JWT仍必需；新版version官方200示例明确，保持strict200。显式--continue-after-asset-202先校验完整固定前态、新唯一claim，再6次独立前置读取并核对旧source/auth hash；仍共享原唯一version claim。历史8HTTP/1asset/208153bytes计入累计30HTTP/16asset/20MB，新增session仅一次，任何失败不再重放。主Agent完整回归正在运行。此批仅控制面工具、专项及非公开运维文档，生产模块/公开文档与已通过两构建的ba63版本完全相同，沿用已验artifact；新的1642文件实际秘密扫描0命中/0不安全项。提交后仍核验两CI才真实接续。
 
 主Agent接续最终完整回归2324项Node+8项Python通过，零失败/跳过/取消（/private/tmp/shelf-asset202-full-root-20261024.log）；public/static和1642文件实际秘密扫描再次通过。现进入commit→push→两CI→一次显式接续，真实接续尚未执行。
+
+## 013尾注释兼容与固定缺失段收尾（2026-10-24）
+
+install-416e986在21HTTP/10DDL后停止，前6个migration statement及3个临时锁已确认；第7 CREATE TRIGGER结果unknown。两次独立只读查询确认当前精确prefix6、3锁保留、auth关闭和旧责任保留。原SQL第7句末尾携带下一段说明的行注释；同目标两次EXPLAIN只编译不执行证明：原串400/code7500/SQL code did not contain a statement，移除尾注释200。原install claim及unknown保留，不重跑install、不重发已确认DDL。
+
+目标与范围：asset_protocol_finish继续gpt-6.1-sol/high，只修operator的固定DDL发送去除行注释（不改013原文hash、sqlite_master预期或业务模块），为固定失败run设计一次明确finish-install，在原3锁及精确prefix6或7、完整历史请求/claim、auth关闭、旧七组事实hash一致前态下，只执行缺失段，全部schema/事实复核后才移锁。第7句可能迟到时仅同名同定义安全创建，最终严格完整schema，不能覆盖未知定义。共用原install责任并另加不可复用finish claim，固定目标、请求/DDL硬上限、逐请求私有intent及数字状态/错误码，任何未知停止不重放。无policy enable、账本改判、对象/AI/secret写。
+
+依赖为原run收据和独立schema/EXPLAIN证据；主Agentreview全部diff、真实prefix只读匹配、真实SQLite/现有operator专项通过，再按commit→push→CI执行。完成后接续seed、API部署和真实上传验收；失败保持auth关闭、静态disabled、临时锁、全部旧责任和收据。此收尾是针对已证实parser兼容问题的明确增量，不是重新执行原install。
+
+finish-install已主Agent逐项review；导出只读decoder独立匹配实际44历史记录及trial-009/prefix6（history SHA256 b20dd62876eda52d9829a3e021c44de7c7d174b869be7525e1d8ed0ef69e18df），0HTTP/0记录写。子Agent两轮38/38专项通过，主Agent已启动独立完整回归；固定013原文/schema未变，业务模块及已验same-origin artifact未变。尚未执行finish-install。
+
+主Agent完整独立回归2352项Node+8项Python通过，零失败/跳过/取消（/private/tmp/shelf-finish-install-full-root-20261024.log），public/static与1643文件实际秘密扫描通过。当前finish-install代码未执行生产收尾；提交后核验两CI再执行固定32HTTP/11DDL缺失段。

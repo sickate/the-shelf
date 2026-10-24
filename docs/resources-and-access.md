@@ -1,3 +1,11 @@
+## 2026-10-24 013固定缺失段收尾准备
+
+原安装isolated-install-416e986-20261024在21HTTP/10DDL停止（第7 migration CREATE TRIGGER未知），原claim及unknown保留。两次独立只读schema/control核验及主Agent本机SQLite逐项比对确认精确trial-009+3临时lock+前6句，原业务仍disabled/auth2/0；尚无policy seed/书籍PUT。两次同目标EXPLAIN证明原第7句尾部行注释导致D1 HTTP400/code7500 SQL code did not contain a statement，移除注释HTTP200；EXPLAIN未执行DDL。证据位于.local/isolated-upload/install-independent-416e986及install-explain-416e986。Sol/high正在窄修发送前注释处理和一次固定finish-install（32HTTP/11DDL上限），只补缺失段、确认旧责任不变后才移锁，不重跑原安装。详见upload-delivery-plan。
+
+## 2026-10-24 恢复已独立确认，进入013安装
+
+416e986两CI40090763480/40090763524成功；完整本地2324项Node+8项Python、public/static及实际秘密扫描通过。显式asset202接续完成新session、3个bucket（202/202/201，共436343公开bytes）、新版version创建及独立代码/5bindings核验；单次部署POST返回200且envelope通过，后续工具deployment响应形状断言停止，未重发。主Agent另以5个只读请求确认active efd364e0-c75d-495f-b717-fc55d74b5c99、deployment e82ec832-1e57-44f5-9a3b-04fe98f941ea、精确5bindings、auth2/0及runtime逐字节disabled匹配。收据在.local/isolated-upload/post-continuation-independent-416e986/；原unknown及全部claim保留。累计恢复HTTP26、公开asset644496bytes、versionPOST1/deploymentPOST1，无secret/AI/书籍PUT。现已开始isolated-install-416e986-20261024；尚未宣称常规上传上线。
+
 ## 2026-10-24 最新发布检查点：静态资源202
 
 f753f2b的Cloudflare CI40089109934与Pages CI40089109974成功，本地完整2283项Node+8项Python通过。真实v2恢复run static-binding-recovery-v2-f753f2b-20261024 第8请求收到HTTP202、error codes空后因transport只允许200/201停止。共session1、asset1（208153公开bytes）、version0、deployment0；原记录及claim保留，未重放。013/seed/新书PUT/本轮AI/secret PUT尚未执行，常规上传尚未上线。接续修复见upload-delivery-plan；下方旧检查点保留为历史。

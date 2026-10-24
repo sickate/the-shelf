@@ -2,7 +2,7 @@
 
 盘点日期：2026-10-24。依据：`AGENTS.md`、`docs/development-plan.md` 顶部持续计划、`docs/implementation-plan.md`、`docs/remote-storage-plan.md`、`docs/cf03-plan.md`、`docs/resources-and-access.md`，以及当前仓库代码和测试。此清单用于接续开发；较早阶段表和旧状态只作历史线索。
 
-最新状态：当前HEAD f753f2b已推送，Cloudflare CI40089109934、Pages CI40089109974成功；主Agent完整2283项Node+8项Python通过。常规上传业务实现已通过本地验证，但尚未上线。v2恢复在第8请求的公开asset上传收到202，因工具误拒绝而停止（session1/asset1/version0/deployment0）；原unknown及全部claim保留，Sol/high正窄修协议与显式一次接续。auth仍generation2/enabled0，013/seed/新书PUT/本轮AI/secret PUT未执行。授权已生效，不再逐本聊天确认。本机真实Chrome引擎已通过manage18/18、book/reader23/23和EPUB/MOBI/AZW/KF8电子书夹具；这些本地结果不替代新生产版本验收。下方旧检查点仅作历史。
+最新状态：416e986已推送，两CI40090763480/40090763524成功；本地2324项Node+8项Python通过。静态恢复真实部署POST返回200后本地响应断言停止，但另5项只读postflight确认efd364e0版本100% active、精确5bindings、auth2/0和disabled runtime，未重发部署。013安装在第21HTTP/10DDL停止，独立schema确认精确trial-009+3保护锁+前6句；两次EXPLAIN证明第7句末尾注释导致D1 parser拒绝。Sol/high固定finish-install窄修已完成38/38专项及真实历史只读匹配，主Agent完整回归运行中；原claim/unknown保留，不重跑原安装。policy seed/新书PUT/本轮AI/secret PUT未执行，常规上传尚未上线。本机真实Chrome管理18/18、详情/阅读23/23与电子书真实计时夹具通过，生产新版本仍待验收。
 
 最新冻结检查点：本机完整1963项Node及8项Python全部通过，disabled/same-origin两构建各1282页，public/static及1621文件秘密扫描通过。N2b列表分页、详情、metadata、回收站删除恢复、文件/正文读取与deploy/auth/static/HTTP验收工具均已主审；该批未提交、未推送或部署。此前表中“冻结全套待验”已由本检查点完成；F3完整23项浏览器验收仍未通过，本轮CUA再次观察Chrome进程但无browser且连接cgWindowNotFound，生产保持旧版本。普通上传、010/011安装及真实正文同步仍受原门槛约束。N2c只读operator兼容已启动提案审查：source_finalize（Sol/high）负责prepared schema-status，deploy_wiring（Sol/high）并行调查007/008/009 status；尚未批准实现或取得新兼容验收，随后继续任务依赖链，不能把本轮本机通过视为全部目标完成。
 

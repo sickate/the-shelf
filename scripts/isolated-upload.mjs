@@ -23,9 +23,11 @@ import {
 import { loadMigrationContext } from "./storage-migrate.mjs";
 import { d1Client } from "./cf-library-clients.mjs";
 import { boundedControlResponse } from "./cf-filename-ai-secret.mjs";
+import { observedRecoveryResponse } from "./cf-recovery-transport.mjs";
 import { SINGLE_TRIAL_PRIVATE_IO as IO } from "./single-trial.mjs";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 export const ISOLATED_CONSENT_PATH = ".local/isolated-upload/consent.json";
+export const ISOLATED_FINISH_INSTALL_RUN = "isolated-install-416e986-20261024";
 export const ISOLATED_CONSENT_TEXT =
   "每本不超过20,000,000 bytes；同一个production D1 authority中全部已登记责任（含旧unknown、已确认首本和新上传预留）合计不超过8,000,000,000 bytes；接受共享账号实际总用量及未完整登记的旧写责任/终态仍未知，以及可能产生的本项目费用，不保证共享账号实际占用不超过8 GB；不修改套餐或计费。以后用户在网页逐本提交即授权该文件上传，无需逐本在聊天中批准。";
 const sha = (v) =>
@@ -52,6 +54,10 @@ export const ISOLATED_INSTALL_STATEMENTS = Object.freeze(
     .map((v) => v.trim())
     .filter((v) => /^(CREATE|ALTER|DROP) /.test(v)),
 );
+// D1's single-statement parser rejects a trailing comment-only remainder.
+// Keep the frozen source/statement hashes for history and schema unchanged.
+export const isolatedDdlStatement = (sql) =>
+  sql.replace(/^[\t ]*--[^\r\n]*(?:\r?\n|$)/gm, "").trim();
 export const ISOLATED_INSTALL_LOCKS = Object.freeze([
   "CREATE TRIGGER shelf_isolated_install_reserve_closed BEFORE INSERT ON shelf_storage_reservations BEGIN SELECT RAISE(ABORT,'isolated_install_closed'); END",
   "CREATE TRIGGER shelf_isolated_install_claim_closed BEFORE UPDATE ON shelf_storage_reservations WHEN NEW.state='uploading' AND OLD.state<>'uploading' BEGIN SELECT RAISE(ABORT,'isolated_install_closed'); END",
@@ -69,7 +75,8 @@ function schemaHash(rows) {
     fail("isolated_schema_invalid");
   return sha(normalize(rows));
 }
-const lockedHashes = { before: [], after: [] };
+const lockedHashes = { before: [], after: [] },
+  lockedPrefixes = [];
 for (const profile of ["trial-009", "trial-009-cf-metadata-v1"]) {
   const db = new DatabaseSync(":memory:");
   try {
@@ -80,7 +87,15 @@ for (const profile of ["trial-009", "trial-009-cf-metadata-v1"]) {
     lockedHashes.before.push(
       schemaHash(db.prepare(ISOLATED_UPLOAD_SCHEMA_SQL).all()),
     );
-    for (const sql of ISOLATED_INSTALL_STATEMENTS) db.exec(sql);
+    for (const [index, sql] of ISOLATED_INSTALL_STATEMENTS.entries()) {
+      db.exec(sql);
+      if ([6, 7, 14].includes(index + 1))
+        lockedPrefixes.push({
+          profile,
+          prefix: index + 1,
+          sha256: schemaHash(db.prepare(ISOLATED_UPLOAD_SCHEMA_SQL).all()),
+        });
+    }
     lockedHashes.after.push(
       schemaHash(db.prepare(ISOLATED_UPLOAD_SCHEMA_SQL).all()),
     );
@@ -90,11 +105,97 @@ for (const profile of ["trial-009", "trial-009-cf-metadata-v1"]) {
 }
 export const ISOLATED_OPERATOR_BUDGETS = Object.freeze({
   install: { http: 41, ddl: 20, d1Writes: 0 },
+  "finish-install": { http: 32, ddl: 11, d1Writes: 0 },
   status: { http: 2, ddl: 0, d1Writes: 0 },
   seed: { http: 4, ddl: 0, d1Writes: 1 },
   enable: { http: 6, ddl: 0, d1Writes: 1 },
   close: { http: 4, ddl: 0, d1Writes: 1 },
 });
+export function classifyIsolatedInstallPrefix(rows) {
+  const hash = schemaHash(rows),
+    matches = lockedPrefixes.filter(
+      (p) => [6, 7].includes(p.prefix) && p.sha256 === hash,
+    );
+  if (matches.length !== 1) fail("isolated_finish_initial_schema");
+  return { ...matches[0] };
+}
+
+// Read-only decoder for exactly the original stopped install, never a new run.
+export async function validateIsolatedInstallFinishHistory(root, identity) {
+  const dir = path.join(root, ".local/isolated-upload"),
+    oldRun = path.join(dir, ISOLATED_FINISH_INSTALL_RUN);
+  await IO.privateDirectory(root, dir);
+  await IO.privateDirectory(root, oldRun);
+  try {
+    await fs.lstat(path.join(dir, "finish-install-claim.json"));
+    fail("isolated_finish_already_claimed");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const equal = (actual, expected) => {
+    if (sha(actual) !== sha(expected)) fail("isolated_finish_history_invalid");
+  };
+  // Revalidate the approved record rather than trusting a caller-provided hash.
+  const approved = validateIsolatedConsent(
+      await IO.readPrivate(root, path.join(root, ISOLATED_CONSENT_PATH)),
+      identity,
+    ),
+    claim = await IO.readPrivate(root, path.join(dir, "install-claim.json"));
+  if (!/^[a-f0-9]{64}$/.test(claim.protectedFactsSha256 || ""))
+    fail("isolated_finish_history_invalid");
+  equal(claim, {
+    runId: ISOLATED_FINISH_INSTALL_RUN,
+    migrationSha256: ISOLATED_UPLOAD_MIGRATION_SHA256,
+    protectedFactsSha256: claim.protectedFactsSha256,
+  });
+  const expected = {
+      "run.json": {
+        schemaVersion: 1,
+        action: "install",
+        budget: ISOLATED_OPERATOR_BUDGETS.install,
+        migrationSha256: ISOLATED_UPLOAD_MIGRATION_SHA256,
+        consentSha256: approved.sha256,
+      },
+      "result.json": {
+        state: "stopped",
+        code: "isolated_write_unknown",
+        requests: 21,
+        ddl: 10,
+        d1Writes: 0,
+        uploadAllowed: false,
+      },
+    },
+    statements = [
+      null,
+      ISOLATED_UPLOAD_SCHEMA_SQL,
+      ISOLATED_BASE_CONTROL_SQL,
+      ...READONLY_LEGACY_SNAPSHOT_GROUPS.map(readonlySnapshotSql),
+      ...ISOLATED_INSTALL_LOCKS,
+      ISOLATED_UPLOAD_SCHEMA_SQL,
+      ...ISOLATED_INSTALL_STATEMENTS.slice(0, 7),
+    ];
+  for (const [index, sql] of statements.entries()) {
+    const sequence = index + 1,
+      stem = String(sequence).padStart(3, "0");
+    expected[stem + "-intent.json"] = {
+      sequence,
+      kind:
+        (sequence >= 11 && sequence <= 13) || sequence >= 15 ? "ddl" : "read",
+      sqlSha256: sql ? sha(sql) : null,
+      paramsSha256: sha([]),
+    };
+    expected[stem + "-outcome.json"] = {
+      state: sequence === 21 ? "unknown" : "response-validated",
+    };
+  }
+  equal((await fs.readdir(oldRun)).sort(), Object.keys(expected).sort());
+  for (const [name, value] of Object.entries(expected))
+    equal(await IO.readPrivate(root, path.join(oldRun, name)), value);
+  return {
+    protectedFactsSha256: claim.protectedFactsSha256,
+    historySha256: sha({ claim, records: expected }),
+  };
+}
 export function isolatedConsentRecord(identity) {
   if (
     identity?.authorityId !== "shelf-remote-storage-v1" ||
@@ -337,6 +438,10 @@ export async function runIsolatedUpload({
     await IO.readPrivate(root, path.join(root, ISOLATED_CONSENT_PATH)),
     identity,
   );
+  const finishHistory =
+    action === "finish-install"
+      ? await validateIsolatedInstallFinishHistory(root, identity)
+      : null;
   const run = path.join(dir, runId);
   await fs.mkdir(run, { mode: 0o700 });
   await IO.writeImmutable(root, path.join(run, "run.json"), {
@@ -348,12 +453,26 @@ export async function runIsolatedUpload({
   });
   let count = 0,
     ddl = 0,
-    writes = 0;
+    writes = 0,
+    observationStem;
+  const observedFetch = (url, options) =>
+    observedRecoveryResponse(fetchImpl, url, options, {
+      timeoutMs,
+      observe: (observation) =>
+        IO.writeImmutable(
+          root,
+          observationStem +
+            (Object.hasOwn(observation, "httpStatus")
+              ? "-http-status.json"
+              : "-error-codes.json"),
+          observation,
+        ),
+    });
   const client = d1Client(context.credentials, resource, {
-    fetchImpl: (url, options) =>
-      boundedControlResponse(fetchImpl, url, options, timeoutMs),
+    fetchImpl: observedFetch,
   });
   const request = async (sql, params = [], kind = "read") => {
+    if (kind === "ddl") sql = isolatedDdlStatement(sql);
     if (
       ++count > budget.http ||
       (kind === "ddl" && ++ddl > budget.ddl) ||
@@ -361,6 +480,7 @@ export async function runIsolatedUpload({
     )
       fail("isolated_request_budget");
     const stem = path.join(run, String(count).padStart(3, "0"));
+    observationStem = stem;
     await IO.writeImmutable(root, stem + "-intent.json", {
       sequence: count,
       kind,
@@ -385,6 +505,7 @@ export async function runIsolatedUpload({
   const settings = async () => {
     if (++count > budget.http) fail("isolated_request_budget");
     const stem = path.join(run, String(count).padStart(3, "0"));
+    observationStem = stem;
     await IO.writeImmutable(root, stem + "-intent.json", {
       sequence: count,
       kind: "read",
@@ -402,7 +523,7 @@ export async function runIsolatedUpload({
       const observed = await readRemoteSettings(
         context.credentials,
         "the-shelf",
-        fetchImpl,
+        observedFetch,
         { timeoutMs },
       );
       validateRemoteBindings(observed, "production", resource.databaseId, {
@@ -433,7 +554,92 @@ export async function runIsolatedUpload({
   try {
     await request();
     let result;
-    if (action === "install") {
+    if (action === "finish-install") {
+      const initial = classifyIsolatedInstallPrefix(
+        await request(ISOLATED_UPLOAD_SCHEMA_SQL),
+      );
+      const controlSql =
+        ISOLATED_BASE_CONTROL_SQL +
+        ",(SELECT count(*) FROM browser_uploads WHERE target_id IS NOT NULL) AS mapped_upload_count" +
+        ",(SELECT count(*) FROM shelf_storage_isolated_upload_policy) AS policy_count";
+      const checkedControl = (rows) => {
+        controlFacts(rows, identity, { authClosed: true });
+        if (rows[0].mapped_upload_count !== 0 || rows[0].policy_count !== 0)
+          fail("isolated_finish_data_changed");
+      };
+      checkedControl(await request(controlSql));
+      const before = await snapshot();
+      if (before !== finishHistory.protectedFactsSha256)
+        fail("isolated_protected_facts_changed");
+      await IO.writeImmutable(
+        root,
+        path.join(dir, "finish-install-claim.json"),
+        {
+          runId,
+          originalRunId: ISOLATED_FINISH_INSTALL_RUN,
+          migrationSha256: ISOLATED_UPLOAD_MIGRATION_SHA256,
+          historySha256: finishHistory.historySha256,
+          protectedFactsSha256: before,
+          prefix: initial.prefix,
+          schemaSha256: initial.sha256,
+        },
+      );
+      for (
+        let index = initial.prefix;
+        index < ISOLATED_INSTALL_STATEMENTS.length;
+        index++
+      ) {
+        const sql = ISOLATED_INSTALL_STATEMENTS[index];
+        await request(
+          index === 6
+            ? sql.replace(/^CREATE TRIGGER /, "CREATE TRIGGER IF NOT EXISTS ")
+            : sql,
+          [],
+          "ddl",
+        );
+        if (index === 6) {
+          const afterCreate = classifyIsolatedInstallPrefix(
+            await request(ISOLATED_UPLOAD_SCHEMA_SQL),
+          );
+          if (
+            afterCreate.prefix !== 7 ||
+            afterCreate.profile !== initial.profile
+          )
+            fail("isolated_schema_invalid");
+        }
+      }
+      const complete = lockedPrefixes.find(
+        (p) => p.profile === initial.profile && p.prefix === 14,
+      );
+      if (
+        schemaHash(await request(ISOLATED_UPLOAD_SCHEMA_SQL)) !==
+        complete.sha256
+      )
+        fail("isolated_schema_invalid");
+      const after = await snapshot();
+      if (after !== before) fail("isolated_protected_facts_changed");
+      checkedControl(await request(controlSql));
+      for (const sql of ISOLATED_INSTALL_LOCKS)
+        await request(
+          "DROP TRIGGER " + sql.match(/^CREATE TRIGGER (\w+)/)[1],
+          [],
+          "ddl",
+        );
+      if (
+        !ISOLATED_UPLOAD_SCHEMA_HASHES.includes(
+          schemaHash(await request(ISOLATED_UPLOAD_SCHEMA_SQL)),
+        )
+      )
+        fail("isolated_schema_invalid");
+      result = {
+        action,
+        originalRunId: ISOLATED_FINISH_INSTALL_RUN,
+        initialPrefix: initial.prefix,
+        protectedFactsSha256: after,
+        policySeeded: false,
+        uploadAllowed: false,
+      };
+    } else if (action === "install") {
       const initial = await request(ISOLATED_UPLOAD_SCHEMA_SQL),
         classified = classifyReadonlyDatabaseSchema(initial);
       if (
