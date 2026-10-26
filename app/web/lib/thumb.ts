@@ -1,5 +1,5 @@
-// Browser-side cover thumbnails (F1). The PDF first page or the EPUB / MOBI embedded cover is
-// drawn into a canvas, encoded as WebP (JPEG where WebP encoding is unsupported, e.g. Safari)
+// Browser-side cover thumbnails (F1). The PDF first page, the EPUB / MOBI embedded cover or a
+// CBZ's first image is drawn into a canvas, encoded as WebP (JPEG where WebP encoding is unsupported, e.g. Safari)
 // and stored by the Worker via PUT /api/books/:id/cover. Parsers are imported dynamically so
 // this module is cheap to import from the shelf and detail pages.
 import { api, ApiError, Book, fmt, store } from "./common";
@@ -22,7 +22,7 @@ export type ThumbSkip = "no_cover" | "parse_failed" | "unsupported";
 
 export type EnsureResult = { ok: true; cover: CoverResult["cover"] } | { ok: false; reason: ThumbSkip };
 
-export const THUMB_FORMATS = new Set(["pdf", "epub", "mobi", "azw3", "azw"]);
+export const THUMB_FORMATS = new Set(["pdf", "epub", "mobi", "azw3", "azw", "cbz"]);
 
 const WIDTH = 360;
 const SMALL_WIDTH = 280;
@@ -342,12 +342,25 @@ async function mobiThumb(b: Book): Promise<Thumb> {
   return designedThumb(b, joinNames(book.metadata?.author));
 }
 
+/** CBZ comics: the first image in reading order is the cover. */
+async function cbzThumb(b: Book): Promise<Thumb> {
+  const [{ openCbz }, blob] = await Promise.all([import("./cbz"), download(b)]);
+  let archive;
+  try {
+    archive = openCbz(await blob.arrayBuffer());
+  } catch (e: any) {
+    throw new Skip("parse_failed", `cbz open: ${e?.message || e}`);
+  }
+  return imageThumb(await archive.page(0));
+}
+
 /** Builds a thumbnail or explains why not. Throws only ApiError(401) (file access lost). */
 export async function buildThumb(b: Book): Promise<{ thumb: Thumb } | { reason: ThumbSkip }> {
   const f = fmt(b);
   if (!canThumb(b)) return { reason: "unsupported" };
   try {
-    const thumb = f === "pdf" ? await pdfThumb(b) : f === "epub" ? await epubThumb(b) : await mobiThumb(b);
+    const thumb =
+      f === "pdf" ? await pdfThumb(b) : f === "epub" ? await epubThumb(b) : f === "cbz" ? await cbzThumb(b) : await mobiThumb(b);
     return { thumb };
   } catch (e: any) {
     if (e instanceof ApiError && e.status === 401) throw e;
