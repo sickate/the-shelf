@@ -9,6 +9,7 @@
   "scripts": {
     "app:upload": "node --env-file-if-exists=.env scripts/mvp-upload.mjs",
     "app:enrich": "node --env-file-if-exists=.env scripts/mvp-enrich.mjs",
+    "app:classify": "node --env-file-if-exists=.env scripts/mvp-classify.mjs",
     "dev": "astro dev --host 127.0.0.1",
     "build": "node scripts/export-docs.mjs && astro build",
     "build:cloudflare": "node scripts/build-cloudflare.mjs",
