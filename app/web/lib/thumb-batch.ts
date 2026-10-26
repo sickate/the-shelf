@@ -29,8 +29,14 @@ export function mountThumbPanel(root: HTMLElement, opts: ThumbPanelOptions) {
   root.replaceChildren(el("div", { class: "thumb-row" }, start, pause, progress), fails);
 
   const failed = new Map<string, string>(); // id -> reason (not retried within this page view)
-  // Books known to have no embedded cover are skipped in later runs too (detail page can retry).
-  const NO_COVER_KEY = "shelf:thumb-no-cover";
+  // Books that produced no thumbnail at all ("no_cover") are skipped in later runs too (detail
+  // page can retry). Versioned: v1 entries predate the first-page / designed-cover fallback.
+  const NO_COVER_KEY = "shelf:thumb-no-cover:v2";
+  try {
+    localStorage.removeItem("shelf:thumb-no-cover");
+  } catch {
+    /* ignore */
+  }
   const noCover = new Set<string>((store.get(NO_COVER_KEY) || "").split(",").filter(Boolean));
   let running = false;
   let paused = false;
