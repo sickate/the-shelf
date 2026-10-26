@@ -146,6 +146,7 @@ export function createClient({ base, password, stop }) {
  * Full CLI run.
  * cfg: { usage, stateFile, parseArgs(argv), listCheck(books) → error|null,
  *        select(books, state, opts), describeList(books, selected, opts) → string,
+ *        dryRun?(selected, {state, opts, request}) (replaces the default --dry-run listing),
  *        call(book, {request, opts}) → res, onOk(res, book) → fields|null,
  *        okExtra(outcome) → string, summary(counts, outcomes, busyTotal) → string }
  */
@@ -191,8 +192,13 @@ export async function runCli(cfg) {
     console.error(bad);
     process.exit(1);
   }
-  const todo = cfg.select(list.json.books, state, opts);
+  // select may be async (mvp-reidentify reads per-book details); sync selectors behave as before.
+  const todo = await cfg.select(list.json.books, state, opts, { request });
   console.log(`base=${BASE} ${cfg.describeList(list.json.books, todo, opts)}${opts.force ? ' (force)' : ''}`);
+  if (opts.dryRun && cfg.dryRun) {
+    await cfg.dryRun(todo, { state, opts, request });
+    process.exit(0);
+  }
   if (opts.dryRun) {
     for (const b of todo) console.log(`[dry-run] ${b.id} ${b.title}${state[b.id]?.result ? ` (state: ${state[b.id].result})` : ''}`);
     process.exit(0);
