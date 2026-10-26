@@ -48,6 +48,7 @@ import {
   deepestName,
   DOC_LABELS,
   DOC_TYPES,
+  isBookType,
   matchesView,
   parseType,
   serializeType,
@@ -213,7 +214,8 @@ async function loadClc() {
 function renderStats() {
   const total = all.reduce((s, b) => s + (Number(b.sizeBytes) || 0), 0);
   $("stat-books").textContent = all.length.toLocaleString();
-  $("stat-cats").textContent = String(categories.length);
+  // Distinct CLC codes in use among 图书 (资料 keep a subject code but are not in the tree).
+  $("stat-cats").textContent = String(new Set(all.filter((b) => b.clc && isBookType(b.docType)).map((b) => b.clc)).size);
   $("stat-size").textContent = humanSize(total);
   $("stat-cloud").textContent = all.filter((b) => b.status === "uploaded").length.toLocaleString();
 }
