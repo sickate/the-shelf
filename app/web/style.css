@@ -526,3 +526,14 @@ body.reader { min-height: 100vh; display: flex; flex-direction: column; }
 @media (max-width: 480px) {
   .topbar .owner-badge { display: none; }
 }
+/* ---------- Comic (CBZ) reader ---------- */
+.comic-wrap { flex: 1; padding: 8px; background: var(--reader-bg); cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.comic-pages { display: flex; justify-content: center; align-items: flex-start; margin: 0 auto; }
+.comic-wrap.rtl .comic-pages { flex-direction: row-reverse; }
+.comic-page { display: block; min-width: 0; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
+.comic-wrap.fit-height .comic-page { height: var(--comic-h, 80vh); width: auto; max-width: 100%; object-fit: contain; }
+.comic-wrap.fit-height.double .comic-page { max-width: 50%; }
+.comic-wrap.fit-width .comic-page { width: 100%; height: auto; }
+.comic-wrap.fit-width.double .comic-page { width: 50%; }
+.comic-missing { color: var(--muted); font-size: 14px; margin: 18vh auto; text-align: center; }
+.toolbar .comic-progress { font-variant-numeric: tabular-nums; }

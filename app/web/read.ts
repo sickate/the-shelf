@@ -552,6 +552,7 @@ async function readText() {
     else if (f === "epub") await readEpub();
     else if (f === "mobi" || f === "azw3" || f === "azw") await readMobi(f);
     else if (f === "txt" || f === "md") await readText();
+    else if (f === "cbz") await (await import("./lib/comic-reader")).readComic({ view, toolbar, posKey, load: () => fetchFile(" CBZ"), setStage, hideLoading, showError });
     else showError(`不支持在线阅读 ${f.toUpperCase() || "该"} 格式，请下载。`);
   } catch (e: any) {
     const status = e instanceof ApiError ? e.status : e?.status;
