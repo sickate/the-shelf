@@ -365,7 +365,7 @@ function renderTree(pool: Entry[]) {
   }
   const types = DOC_TYPES.filter((t) => (tCounts.get(t) || 0) > 0 || t === typeSel);
   if (types.length) {
-    items.push(el("h3", { class: "tree-heading" }, "非书资料"));
+    items.push(el("h3", { class: "tree-heading" }, "资料"));
     for (const t of types) items.push(line(0, t === typeSel, spacer(), link(`type:${t}`, DOC_LABELS[t], tCounts.get(t) || 0, DOC_LABELS[t], t === typeSel)));
   }
   clcNav.replaceChildren(...items);
@@ -379,7 +379,7 @@ function renderTree(pool: Entry[]) {
   clcSelect.replaceChildren(el("option", { value: "" }, `全部藏书 (${total.toLocaleString()})`), bookGroup);
   if (types.length) {
     clcSelect.append(
-      el("optgroup", { label: "非书资料" }, ...types.map((t) => el("option", { value: `type:${t}` }, `${DOC_LABELS[t]} (${(tCounts.get(t) || 0).toLocaleString()})`))),
+      el("optgroup", { label: "资料" }, ...types.map((t) => el("option", { value: `type:${t}` }, `${DOC_LABELS[t]} (${(tCounts.get(t) || 0).toLocaleString()})`))),
     );
   }
   clcSelect.value = typeSel ? `type:${typeSel}` : flat.find((r) => r.active)?.code ?? selected;
