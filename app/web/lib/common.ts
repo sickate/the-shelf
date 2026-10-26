@@ -10,6 +10,23 @@ export interface Book {
   hasCover?: boolean;
   hasInfo?: boolean;
   authors?: string[];
+  /** Public CLC (中图法) code, null when unclassified. */
+  clc?: string | null;
+  /** book | course | paper | articles | manual | other; null = unclassified. */
+  docType?: string | null;
+}
+
+/** Public classification fields of GET /api/books/:id. */
+export interface ClassFields {
+  clc: string | null;
+  clcPath: { code: string; name: string }[];
+  clcSecondary: string[];
+  clcSource: "cip" | "ai" | "manual" | null;
+  clcConfidence: string | number | null;
+  clcReason: string | null;
+  clcEvidenceUrl: string | null;
+  clcStatus: "none" | "generating" | "ready" | "failed";
+  clcError?: string;
 }
 
 export class ApiError extends Error {
@@ -104,6 +121,12 @@ const ERROR_TEXT: Record<string, string> = {
   unsupported_type: "不支持的图片类型",
   bad_image: "图片格式校验失败",
   bad_dimensions: "图片尺寸无效",
+  bad_clc: "分类号不在分类表内",
+  manual_locked: "已手动指定，重新归类将覆盖",
+  generating: "正在归类中，请稍后再试",
+  ai_busy: "AI 繁忙，请稍后重试",
+  ai_failed: "AI 归类失败，请稍后重试",
+  ai_bad_output: "AI 返回的分类号无法识别",
 };
 
 export function errorText(e: unknown): string {

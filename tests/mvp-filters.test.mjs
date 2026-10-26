@@ -56,7 +56,7 @@ test("format groups and size buckets", () => {
 test("parse and serialize round trip", () => {
   const p = new URLSearchParams("q=x&fmt=epub,pdf,bogus&size=1-5,gt20&added=7&readable=1&cover=1&info=0&author=%E5%BC%A0%E4%B8%89");
   const s = F.parseFilters(p);
-  assert.deepEqual(s, { fmt: ["pdf", "epub"], size: ["1-5", "gt20"], added: "7", readable: true, cover: "1", info: "0", author: "张三" });
+  assert.deepEqual(s, { fmt: ["pdf", "epub"], size: ["1-5", "gt20"], added: "7", readable: true, cover: "1", info: "0", author: "张三", category: "" });
   const out = F.serializeFilters(s, new URLSearchParams("q=x"));
   assert.equal(out.get("q"), "x");
   assert.equal(out.get("fmt"), "pdf,epub");
@@ -65,6 +65,25 @@ test("parse and serialize round trip", () => {
   assert.deepEqual(F.parseFilters(new URLSearchParams("added=9&cover=2")), F.emptyFilters());
   assert.equal(F.parseSort("size"), "size");
   assert.equal(F.parseSort("nope"), "title");
+});
+
+test("folder category filter (来源目录) round trips and filters", () => {
+  const p = new URLSearchParams("category=01-%E8%AE%A1%E7%AE%97%E6%9C%BA&clc=TP3");
+  const s = F.parseFilters(p);
+  assert.equal(s.category, "01-计算机");
+  assert.equal(F.serializeFilters(s, new URLSearchParams("clc=TP3")).get("category"), "01-计算机");
+  assert.equal(F.serializeFilters(F.emptyFilters(), new URLSearchParams("category=x")).has("category"), false);
+  assert.equal(F.hasActive(s), true);
+  const bs = [
+    { ...book("A", "pdf", 1, 1), category: "x" },
+    { ...book("B", "pdf", 1, 1), category: "y" },
+    { ...book("C", "epub", 1, 1), category: "x" },
+  ];
+  assert.equal(titles(F.filterEntries(bs, state({ category: "x" }), opts)), "AC");
+  // folder counts ignore only the folder filter itself
+  assert.deepEqual(Object.fromEntries(F.facetCounts(bs, state({ category: "x", fmt: ["pdf"] }), opts, "category")), { x: 1, y: 1 });
+  assert.deepEqual(Object.fromEntries(F.facetCounts(bs, state({ category: "x" }), opts, "fmt")), { pdf: 1, epub: 1 });
+  assert.equal(F.summarize(state({ category: "01-计算机", fmt: ["pdf"] }), true, 2, ["分类：X"]), "分类：X · 目录：计算机 · PDF · 2 本");
 });
 
 test("predicates", () => {

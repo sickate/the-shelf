@@ -36,6 +36,26 @@ import {
   summarize,
 } from "./lib/filters";
 import { addCoverImg, coverUrl } from "./lib/common";
+import {
+  ClcIndex,
+  ClcNode,
+  Counts,
+  UNCLASSIFIED,
+  buildIndex,
+  buildRows,
+  chainLabel,
+  countBooks,
+  deepestName,
+  DOC_LABELS,
+  DOC_TYPES,
+  matchesView,
+  parseType,
+  serializeType,
+  typeCounts,
+  parseSelection,
+  serializeSelection,
+  serverCounts,
+} from "./lib/clc-tree";
 import { mountThumbPanel } from "./lib/thumb-batch";
 import { canThumb, ensureThumb } from "./lib/thumb";
 
@@ -54,8 +74,8 @@ const authBox = $<HTMLDivElement>("auth");
 const ownerPanel = $<HTMLDetailsElement>("owner-panel");
 const budgetEl = $<HTMLSpanElement>("budget");
 const qInput = $<HTMLInputElement>("q");
-const catSelect = $<HTMLSelectElement>("category");
-const catNav = $<HTMLElement>("categories");
+const clcSelect = $<HTMLSelectElement>("clc-select");
+const clcNav = $<HTMLElement>("clc-tree");
 const statusSelect = $<HTMLSelectElement>("status");
 const sortSelect = $<HTMLSelectElement>("sort");
 const sortLabel = $<HTMLSpanElement>("sort-label");
@@ -76,6 +96,10 @@ let all: Entry[] = [];
 const sorted = new Map<SortKey, Entry[]>();
 const collator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
 let categories: string[] = [];
+let clcIdx: ClcIndex = buildIndex([]);
+let clcServer: Counts | null = null;
+/** Explicit expand/collapse choices of the CLC tree, keyed by row code. */
+const toggled = new Map<string, boolean>();
 let filtered: Entry[] = [];
 let shown = 0;
 // Resolved before the first render so owner-only filters/fields are right from the start.
@@ -88,14 +112,20 @@ statusSelect.value = initial.get("status") || "";
 sortSelect.value = parseSort(initial.get("sort"));
 let filters: FilterState = parseFilters(initial);
 moreFilters.open = hasActive(filters);
-let category = initial.get("category") || "";
+/** "" = all, UNCLASSIFIED, or a CLC node code. The legacy `category=` link is the folder filter (filters.category). */
+let selected = parseSelection(initial);
+/** Non-book material type (`type=` URL param); mutually exclusive with the CLC selection. */
+let typeSel = parseType(initial);
+if (typeSel) selected = "";
+let serverTypes: Record<string, number> = {};
 const restore: { shown?: number; scrollY?: number } = history.state || {};
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 
 function saveState() {
   const p = new URLSearchParams();
   if (qInput.value.trim()) p.set("q", qInput.value.trim());
-  if (category) p.set("category", category);
+  serializeSelection(selected, p);
+  serializeType(typeSel, p);
   if (statusSelect.value) p.set("status", statusSelect.value);
   if (sortSelect.value !== "title") p.set("sort", sortSelect.value);
   serializeFilters(filters, p);
@@ -140,14 +170,14 @@ async function loadBooks() {
   listError.hidden = true;
   try {
     await ownerReady;
-    const data = await api<{ books: Book[]; categories?: string[] }>("/api/books");
+    const [data] = await Promise.all([api<{ books: Book[]; categories?: string[] }>("/api/books"), loadClc()]);
     const entries: Entry[] = (data.books || []).map((b) => {
       const { main, series } = splitTitle(b.title);
       return {
         ...b,
         _main: main,
         _series: series,
-        _t: `${b.title} ${b.category} ${categoryName(b.category)} ${(b.authors || []).join(" ")}`.toLowerCase(),
+        _t: `${b.title} ${b.category} ${categoryName(b.category)} ${b.clc || ""} ${deepestName(clcIdx, b.clc)} ${(b.authors || []).join(" ")}`.toLowerCase(),
         _created: Date.parse(b.createdAt || "") || 0,
       };
     });
@@ -167,6 +197,19 @@ async function loadBooks() {
   render(true);
 }
 
+/** The public CLC table in use; failure keeps the previous one (the tree then falls back to what it has). */
+async function loadClc() {
+  try {
+    const d = await api<{ nodes: ClcNode[]; unclassified: number; total: number; docTypes?: Record<string, number> }>("/api/clc");
+    clcIdx = buildIndex(d.nodes || []);
+    serverTypes = d.docTypes || {};
+    clcServer = serverCounts(d.nodes || [], d.unclassified || 0, d.total || 0);
+    if (selected && selected !== UNCLASSIFIED && clcIdx.byCode.size && !clcIdx.byCode.has(selected)) selected = "";
+  } catch {
+    /* tree is optional */
+  }
+}
+
 function renderStats() {
   const total = all.reduce((s, b) => s + (Number(b.sizeBytes) || 0), 0);
   $("stat-books").textContent = all.length.toLocaleString();
@@ -182,7 +225,7 @@ function sortedList(): Entry[] {
   return list;
 }
 
-/** Books matching search + status (category applied separately so counts stay useful). */
+/** Books matching search + status (other filters applied separately so counts stay useful). */
 function searchMatches(): Entry[] {
   const q = qInput.value.trim().toLowerCase();
   const status = statusSelect.value;
@@ -193,7 +236,7 @@ function searchMatches(): Entry[] {
 
 const filterOpts = () => ({ owner, now: Date.now() });
 
-/** Books matching search + status + the extra filters (category applied separately). */
+/** Books matching search + status + the extra filters incl. folder (the CLC selection is applied separately). */
 function baseMatches(): Entry[] {
   return filterEntries(searchMatches(), filters, filterOpts());
 }
@@ -214,8 +257,8 @@ function group(label: string, ...items: Node[]): HTMLElement {
 const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
 function renderMoreFilters() {
-  // Facet counts: books matching search/status/category and every OTHER active filter.
-  const pool = category ? searchMatches().filter((b) => b.category === category) : searchMatches();
+  // Facet counts: books matching search/status/CLC selection and every OTHER active filter.
+  const pool = selected || typeSel ? searchMatches().filter((b) => matchesView(clcIdx, b, selected, typeSel)) : searchMatches();
   const opts = filterOpts();
   const counts = (f: Facet) => facetCounts(pool, filters, opts, f);
   const fmtC = counts("fmt");
@@ -229,7 +272,19 @@ function renderMoreFilters() {
     const set = (v: Tri) => change({ [key]: filters[key] === v ? "" : v });
     return [chip(yes, null, filters[key] === "1", () => set("1")), chip(no, null, filters[key] === "0", () => set("0"))];
   };
+  const catC = counts("category");
+  const folderSelect = el(
+    "select",
+    { "aria-label": "来源目录" },
+    el("option", { value: "" }, "全部目录"),
+    ...[...new Set([...categories, filters.category].filter(Boolean))].map((c) =>
+      el("option", { value: c }, `${categoryName(c)} (${(catC.get(c) || 0).toLocaleString()})`),
+    ),
+  );
+  folderSelect.value = filters.category;
+  folderSelect.addEventListener("change", () => change({ category: folderSelect.value }));
   const groups: HTMLElement[] = [
+    group("来源目录", folderSelect),
     group("格式", ...FORMAT_GROUPS.map((f) => chip(FORMAT_LABELS[f], fmtC.get(f) || 0, filters.fmt.includes(f), () => change({ fmt: toggle(filters.fmt, f) })))),
     group("大小", ...SIZE_BUCKETS.map((k) => chip(SIZE_LABELS[k], sizeC.get(k) || 0, filters.size.includes(k), () => change({ size: toggle(filters.size, k) })))),
     group(
@@ -262,33 +317,72 @@ function renderMoreFilters() {
 function renderSummary() {
   const active = hasActive(filters, owner);
   const e = effective(filters, owner);
-  const k = [e.fmt.length, e.size.length, e.added, e.readable, e.cover, e.info, e.author].filter(Boolean).length;
+  const k = [e.category, e.fmt.length, e.size.length, e.added, e.readable, e.cover, e.info, e.author].filter(Boolean).length;
   moreBadge.textContent = active ? `（已选 ${k}）` : "";
-  summaryEl.hidden = !active;
-  summaryText.textContent = active ? summarize(filters, owner, filtered.length) : "";
+  const sel = typeSel
+    ? [`类型：${DOC_LABELS[typeSel]}`]
+    : selected
+      ? [`分类：${selected === UNCLASSIFIED ? "未分类" : deepestName(clcIdx, selected)}`]
+      : [];
+  summaryEl.hidden = !active && !sel.length;
+  summaryText.textContent = active || sel.length ? summarize(filters, owner, filtered.length, sel) : "";
 }
 
-function renderCategories(base: Entry[]) {
-  const counts = new Map<string, number>();
-  for (const b of base) counts.set(b.category, (counts.get(b.category) || 0) + 1);
-  const link = (value: string, label: string, n: number) => {
-    const a = el("a", { href: value ? `?category=${encodeURIComponent(value)}` : "/", "data-category": value }, label);
-    a.append(el("span", {}, n.toLocaleString()));
-    if (value === category) {
-      a.classList.add("active");
-      a.setAttribute("aria-current", "true");
-    }
+function renderTree(pool: Entry[]) {
+  const loaded = all.length > 0;
+  const counts = loaded ? countBooks(clcIdx, pool) : clcServer || countBooks(clcIdx, []);
+  const total = loaded ? pool.length : clcServer?.total || 0;
+  const tCounts = loaded ? typeCounts(pool) : new Map(Object.entries(serverTypes));
+  const none = !selected && !typeSel;
+  const rows = buildRows(clcIdx, counts, selected, toggled);
+  const link = (code: string, label: string, n: number, title: string, active: boolean) => {
+    const href = code.startsWith("type:") ? `?type=${encodeURIComponent(code.slice(5))}` : code ? `?clc=${encodeURIComponent(code)}` : "/";
+    const a = el("a", { href, "data-clc": code, title }, el("span", { class: "tree-name" }, label));
+    a.append(el("span", { class: "tree-n" }, n.toLocaleString()));
+    if (active) a.setAttribute("aria-current", "true");
     return a;
   };
-  catNav.replaceChildren(
-    link("", "全部藏书", base.length),
-    ...categories.map((c) => link(c, categoryName(c), counts.get(c) || 0)),
+  const line = (depth: number, active: boolean, lead: HTMLElement, a: HTMLElement) => {
+    const row = el("div", { class: active ? "tree-row active" : "tree-row" }, lead, a);
+    row.style.paddingLeft = `${depth * 14}px`;
+    return row;
+  };
+  const spacer = () => el("span", { class: "tree-toggle spacer", "aria-hidden": "true" });
+  const items: HTMLElement[] = [
+    line(0, none, spacer(), link("", "全部藏书", total, "全部藏书", none)),
+    el("h3", { class: "tree-heading" }, "图书"),
+  ];
+  for (const r of rows) {
+    const name = r.chain[r.chain.length - 1].name;
+    const lead = r.hasChildren
+      ? el("button", { type: "button", class: "tree-toggle", "data-toggle": r.code, "aria-expanded": String(r.expanded), "aria-label": `${r.expanded ? "折叠" : "展开"}${name}` }, r.expanded ? "▾" : "▸")
+      : spacer();
+    items.push(line(r.depth, r.active, lead, link(r.code, name, r.count, `${chainLabel(r.chain)}（${r.code}）`, r.active)));
+  }
+  if (counts.unclassified || selected === UNCLASSIFIED) {
+    const on = selected === UNCLASSIFIED;
+    items.push(line(0, on, spacer(), link(UNCLASSIFIED, "未分类", counts.unclassified, "尚未归类的书", on)));
+  }
+  const types = DOC_TYPES.filter((t) => (tCounts.get(t) || 0) > 0 || t === typeSel);
+  if (types.length) {
+    items.push(el("h3", { class: "tree-heading" }, "资料"));
+    for (const t of types) items.push(line(0, t === typeSel, spacer(), link(`type:${t}`, DOC_LABELS[t], tCounts.get(t) || 0, DOC_LABELS[t], t === typeSel)));
+  }
+  clcNav.replaceChildren(...items);
+  const flat = buildRows(clcIdx, counts, selected, toggled, true);
+  const bookGroup = el(
+    "optgroup",
+    { label: "图书" },
+    ...flat.map((r) => el("option", { value: r.code }, `${"\u3000".repeat(r.depth)}${r.chain[r.chain.length - 1].name} (${r.count.toLocaleString()})`)),
+    el("option", { value: UNCLASSIFIED }, `未分类 (${counts.unclassified.toLocaleString()})`),
   );
-  catSelect.replaceChildren(
-    el("option", { value: "" }, `全部藏书 (${base.length})`),
-    ...categories.map((c) => el("option", { value: c }, `${categoryName(c)} (${counts.get(c) || 0})`)),
-  );
-  catSelect.value = category;
+  clcSelect.replaceChildren(el("option", { value: "" }, `全部藏书 (${total.toLocaleString()})`), bookGroup);
+  if (types.length) {
+    clcSelect.append(
+      el("optgroup", { label: "资料" }, ...types.map((t) => el("option", { value: `type:${t}` }, `${DOC_LABELS[t]} (${(tCounts.get(t) || 0).toLocaleString()})`))),
+    );
+  }
+  clcSelect.value = typeSel ? `type:${typeSel}` : flat.find((r) => r.active)?.code ?? selected;
 }
 
 function card(b: Entry, i: number): HTMLElement {
@@ -308,10 +402,12 @@ function card(b: Entry, i: number): HTMLElement {
     "article",
     { class: "book-card", "data-id": String(b.id) },
     link,
-    el("div", { class: "book-meta" }, b._series ? `${b._series} · ${categoryName(b.category)}` : categoryName(b.category)),
+    el("div", { class: "book-meta" }, b._series ? `${b._series} · ${deepestName(clcIdx, b.clc)}` : deepestName(clcIdx, b.clc)),
     el(
       "div",
       { class: "tags" },
+      ...(b.docType && b.docType !== "book" ? [el("span", { class: "tag tag-type" }, DOC_LABELS[b.docType] || b.docType)] : []),
+      ...(b.clc ? [el("span", { class: "tag", title: "中图法分类号" }, b.clc)] : []),
       el("span", { class: "tag" }, f),
       el("span", { class: "tag" }, humanSize(b.sizeBytes)),
       el("span", { class: uploaded ? "tag tag-ok" : "tag tag-local" }, uploaded ? "云端可读" : "仅本地"),
@@ -322,8 +418,8 @@ function card(b: Entry, i: number): HTMLElement {
 function render(reset: boolean) {
   if (reset) {
     const base = baseMatches();
-    renderCategories(base);
-    filtered = category ? base.filter((b) => b.category === category) : base;
+    renderTree(base);
+    filtered = selected || typeSel ? base.filter((b) => matchesView(clcIdx, b, selected, typeSel)) : base;
     shown = 0;
     grid.replaceChildren();
     renderMoreFilters();
@@ -354,22 +450,33 @@ qInput.addEventListener("input", () => {
 });
 statusSelect.addEventListener("change", update);
 sortSelect.addEventListener("change", update);
-catSelect.addEventListener("change", () => {
-  category = catSelect.value;
+const select = (code: string) => {
+  typeSel = code.startsWith("type:") ? code.slice(5) : "";
+  selected = typeSel ? "" : code;
   update();
-});
-catNav.addEventListener("click", (ev) => {
-  const a = (ev.target as HTMLElement).closest<HTMLAnchorElement>("a[data-category]");
+};
+clcSelect.addEventListener("change", () => select(clcSelect.value));
+clcNav.addEventListener("click", (ev) => {
+  const target = ev.target as HTMLElement;
+  const t = target.closest<HTMLButtonElement>("button[data-toggle]");
+  if (t) {
+    toggled.set(t.dataset.toggle!, t.getAttribute("aria-expanded") !== "true");
+    render(true);
+    return;
+  }
+  const a = target.closest<HTMLAnchorElement>("a[data-clc]");
   if (!a || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
   ev.preventDefault();
-  category = a.dataset.category || "";
-  update();
+  const code = a.dataset.clc || "";
+  if (a.parentElement?.querySelector("button[data-toggle]")) toggled.set(code, true);
+  select(code);
   $("filters").scrollIntoView({ block: "nearest" });
 });
 $("filters").addEventListener("submit", (ev) => ev.preventDefault());
 function clearAll() {
   qInput.value = statusSelect.value = "";
-  category = "";
+  selected = "";
+  typeSel = "";
   filters = emptyFilters();
   update();
 }

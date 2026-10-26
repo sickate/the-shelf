@@ -1,5 +1,5 @@
 // Pure list-filter logic for the shelf page (no DOM access, unit-tested in tests/mvp-filters.test.mjs).
-import { READABLE } from "./common";
+import { READABLE, categoryName } from "./common";
 
 export const FORMAT_GROUPS = ["pdf", "epub", "mobi", "txt", "other"] as const;
 export const FORMAT_LABELS: Record<string, string> = { pdf: "PDF", epub: "EPUB", mobi: "MOBI", txt: "TXT", other: "其他" };
@@ -10,7 +10,7 @@ export const ADDED_LABELS: Record<string, string> = { "7": "最近 7 天", "30":
 export const SORTS = ["title", "recent", "size", "format"] as const;
 export type SortKey = (typeof SORTS)[number];
 export type Tri = "" | "1" | "0";
-export type Facet = "fmt" | "size" | "added" | "author";
+export type Facet = "fmt" | "size" | "added" | "author" | "category";
 
 export interface FilterState {
   fmt: string[];
@@ -20,10 +20,13 @@ export interface FilterState {
   cover: Tri;
   info: Tri;
   author: string;
+  /** Source folder ("来源目录"). */
+  category: string;
 }
 
 export interface FilterEntry {
   title: string;
+  category?: string;
   format: string;
   sizeBytes: number;
   status: string;
@@ -42,7 +45,7 @@ export interface FilterOpts {
 const DAY = 86_400_000;
 const MB = 1_000_000;
 
-export const emptyFilters = (): FilterState => ({ fmt: [], size: [], added: "", readable: false, cover: "", info: "", author: "" });
+export const emptyFilters = (): FilterState => ({ fmt: [], size: [], added: "", readable: false, cover: "", info: "", author: "", category: "" });
 
 const cleanFormat = (format: string) => String(format || "").toLowerCase().replace(/^\./, "");
 
@@ -81,12 +84,13 @@ export function parseFilters(p: URLSearchParams): FilterState {
     cover: tri("cover"),
     info: tri("info"),
     author: (p.get("author") || "").trim(),
+    category: (p.get("category") || "").trim(),
   };
 }
 
 /** Writes only active filters into `p` (and removes inactive keys). */
 export function serializeFilters(s: FilterState, p: URLSearchParams): URLSearchParams {
-  for (const k of ["fmt", "size", "added", "readable", "cover", "info", "author"]) p.delete(k);
+  for (const k of ["fmt", "size", "added", "readable", "cover", "info", "author", "category"]) p.delete(k);
   if (s.fmt.length) p.set("fmt", s.fmt.join(","));
   if (s.size.length) p.set("size", s.size.join(","));
   if (s.added) p.set("added", s.added);
@@ -94,6 +98,7 @@ export function serializeFilters(s: FilterState, p: URLSearchParams): URLSearchP
   if (s.cover) p.set("cover", s.cover);
   if (s.info) p.set("info", s.info);
   if (s.author) p.set("author", s.author);
+  if (s.category) p.set("category", s.category);
   return p;
 }
 
@@ -108,13 +113,14 @@ export function effective(s: FilterState, owner: boolean): FilterState {
 
 export function hasActive(s: FilterState, owner = true): boolean {
   const e = effective(s, owner);
-  return !!(e.fmt.length || e.size.length || e.added || e.readable || e.cover || e.info || e.author);
+  return !!(e.fmt.length || e.size.length || e.added || e.readable || e.cover || e.info || e.author || e.category);
 }
 
 /** Build a predicate; `skip` leaves one facet out (for faceted counts). */
 export function buildPredicate(s: FilterState, opts: FilterOpts, skip?: Facet): (b: FilterEntry) => boolean {
   const e = effective(s, opts.owner);
   const checks: ((b: FilterEntry) => boolean)[] = [];
+  if (e.category && skip !== "category") checks.push((b) => b.category === e.category);
   if (e.fmt.length && skip !== "fmt") checks.push((b) => e.fmt.includes(formatGroup(b.format)));
   if (e.size.length && skip !== "size") checks.push((b) => e.size.includes(sizeBucket(b.sizeBytes)));
   if (e.added && skip !== "added") {
@@ -144,7 +150,8 @@ export function facetCounts(list: FilterEntry[], s: FilterState, opts: FilterOpt
     else if (facet === "added") {
       if (b._created >= opts.now - 30 * DAY) bump("30");
       if (b._created >= opts.now - 7 * DAY) bump("7");
-    } else for (const a of new Set(b.authors || [])) bump(a);
+    } else if (facet === "category") bump(b.category || "");
+    else for (const a of new Set(b.authors || [])) bump(a);
   }
   return counts;
 }
@@ -162,9 +169,10 @@ export function sortEntries<T extends FilterEntry>(list: T[], key: SortKey, coll
 }
 
 /** e.g. "PDF、EPUB · 5–20 MB · 18 本" */
-export function summarize(s: FilterState, owner: boolean, count: number): string {
+export function summarize(s: FilterState, owner: boolean, count: number, extra: string[] = []): string {
   const e = effective(s, owner);
-  const parts: string[] = [];
+  const parts: string[] = [...extra];
+  if (e.category) parts.push(`目录：${categoryName(e.category)}`);
   if (e.fmt.length) parts.push(e.fmt.map((f) => FORMAT_LABELS[f]).join("、"));
   if (e.size.length) parts.push(e.size.map((k) => SIZE_LABELS[k]).join("、"));
   if (e.added) parts.push(ADDED_LABELS[e.added]);
