@@ -108,5 +108,5 @@ CREATE INDEX IF NOT EXISTS book_class_clc ON book_class (clc);
 - 判定：与中图法归类在同一次 AI 调用中给出（输入已有书名、来源目录、AI 简介、检索候选、格式与大小）；服务端校验枚举，非法值视为 `other`。CIP 号命中通常意味着 `book`。
 - 非书资料仍保留主题分类号（详情页显示“主题：…”），但**不进入书架侧栏的中图法“图书”树**。
 - 接口：`GET /api/books` 每本增加 `docType`（null = 未归类）；`GET /api/books/:id` 增加 `docType`；`GET /api/clc` 的 `nodes[].count` 只统计 `docType` 为 `book` 或 null 的条目，另返回 `docTypes: {course: n, paper: n, …}`；`PUT /api/books/:id/class` 接受可选 `docType`（手动修改）。
-- 界面：侧栏分两段——“图书”（中图法树）与“非书资料”（按类型列出，带册数，URL 参数 `type=course`）；书卡与详情页显示资料类型标签；所有者在“修改分类”中可改资料类型。
+- 界面（2026-10-25 用户确认：先分“图书”和“资料”，图书用中图法，资料按类型）：侧栏分两段——“图书”（中图法树）与“资料”（按类型列出，带册数，URL 参数 `type=course`）；书卡与详情页显示资料类型标签；所有者在“修改分类”中可改资料类型。
 - 迁移 `0004_doc_type.sql`：`ALTER TABLE book_class ADD COLUMN doc_type TEXT`。已归类的 11 本在批量重跑（`--force`，跳过手动）时补齐。
