@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS book_class (
   status TEXT NOT NULL CHECK (status IN ('generating', 'ready', 'failed')),
   lease_until TEXT,
   error TEXT,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  -- Added 2026-10-25 (app/migrations/0004_doc_type.sql): book|course|paper|articles|manual|other;
+  -- NULL for results from before the migration (counted as book).
+  doc_type TEXT
 );
 CREATE INDEX IF NOT EXISTS book_class_clc ON book_class (clc);

@@ -48,13 +48,13 @@ test("classifyCall: force looks up first and never sends manual books", async ()
   assert.deepEqual(calls, ["POST /api/books/a/class"]);
 });
 
-test("classifySummary counts by source and confidence", () => {
+test("classifySummary counts by source, confidence and type", () => {
   const out = classifySummary(
     { ready: 3, failed: 0, skipped: 1 },
     [
-      { result: "ready", source: "cip", confidence: "high" },
-      { result: "ready", source: "ai", confidence: "high" },
-      { result: "ready", source: "ai", confidence: "low" },
+      { result: "ready", source: "cip", confidence: "high", docType: "book" },
+      { result: "ready", source: "ai", confidence: "high", docType: "course" },
+      { result: "ready", source: "ai", confidence: "low", docType: null },
       { result: "skipped", reason: "manual_locked" },
     ],
     2,
@@ -62,6 +62,7 @@ test("classifySummary counts by source and confidence", () => {
   assert.match(out, /ready=3 failed=0 skipped=1 busy_waits=2/);
   assert.match(out, /by_source: cip=1 ai=2/);
   assert.match(out, /by_confidence: high=2 low=1/);
+  assert.match(out, /by_type: book=1 course=1 \?=1/);
 });
 
 // ---- end-to-end against a fake server ----
@@ -79,7 +80,13 @@ function fakeServer(books, { manual = new Set() } = {}) {
     if (m && req.method === "POST") {
       if (manual.has(m[1])) return send(409, { error: "manual_locked" });
       if (m[2] === "info") return send(200, { status: "ready", model: "m", info: { confidence: "high", searchUsed: true } });
-      return send(200, { status: "ready", clc: "TP312", clcSource: m[1] === "b1" ? "cip" : "ai", clcConfidence: "high" });
+      return send(200, {
+        status: "ready",
+        clc: "TP312",
+        clcSource: m[1] === "b1" ? "cip" : "ai",
+        clcConfidence: "high",
+        ...(m[1] === "b2" ? { docType: "course" } : {}),
+      });
     }
     send(404, { error: "not_found" });
   });
@@ -113,9 +120,10 @@ test("mvp-classify end to end (--limit 2, local_only included, state 0600)", asy
     console.log(r.out);
     assert.equal(r.code, 0);
     assert.match(r.out, /selected=2/);
-    assert.match(r.out, /\[1\/2\] ready b1 [\d.]+s clc=TP312 source=cip confidence=high Book One/);
-    assert.match(r.out, /\[2\/2\] ready b2 [\d.]+s clc=TP312 source=ai confidence=high Local Two/);
+    assert.match(r.out, /\[1\/2\] ready b1 [\d.]+s clc=TP312 type=\? source=cip confidence=high Book One/);
+    assert.match(r.out, /\[2\/2\] ready b2 [\d.]+s clc=TP312 type=course source=ai confidence=high Local Two/);
     assert.match(r.out, /by_source: cip=1 ai=1/);
+    assert.match(r.out, /by_type: \?=1 course=1/);
     assert.equal(log.filter((l) => l.startsWith("POST /api/books/") && l.endsWith("/class")).length, 2);
     const f = path.join(cwd, ".local/mvp-classify-state.json");
     assert.equal((await stat(f)).mode & 0o777, 0o600);
