@@ -6,6 +6,7 @@ import {
   classList,
   clcPath,
   collectCandidates,
+  DOC_TYPES,
   extractCodes,
   resolveClc,
   setClcTable,
@@ -152,6 +153,7 @@ test("validateClass resolves codes and only trusts cip when found in search", ()
     confidence: "high",
     reason: "r",
     evidenceUrl: "https://opac.example/1",
+    docType: "other", // missing docType
   });
   assert.equal(v({ primary: "TP393", basis: "cip" }).source, "ai");
   assert.equal(v({ primary: "TP311.13", basis: "inferred" }).source, "ai");
@@ -160,11 +162,21 @@ test("validateClass resolves codes and only trusts cip when found in search", ()
   for (const bad of [null, [], {}, { primary: 1 }, { primary: "ZZ9" }, { primary: "L1" }]) assert.equal(v(bad), null);
 });
 
+test("validateClass: docType enum, invalid or missing becomes other", () => {
+  assert.deepEqual(DOC_TYPES, ["book", "course", "paper", "articles", "manual", "other"]);
+  const v = (docType) => validateClass({ primary: "TP311", docType }, [], TABLE).docType;
+  for (const t of DOC_TYPES) assert.equal(v(t), t);
+  for (const bad of [undefined, null, "", "Book", " book", "thesis", 1, ["book"], {}]) assert.equal(v(bad), "other", String(bad));
+  // A bad docType never rescues an unresolvable primary.
+  assert.equal(validateClass({ primary: "ZZ9", docType: "book" }, [], TABLE), null);
+});
+
 test("auto-classify: CIP candidate, input, list/detail fields", async (t) => {
   const c = await ready(t);
   const calls = aiMock(t, {
     search: () => jsonRes({ results: CIP_RESULTS }),
-    oai: () => task({ primary: "TP311.1", secondary: ["TP312", "ZZ"], basis: "cip", reason: "版权页 CIP 号", confidence: "high" }),
+    oai: () =>
+      task({ primary: "TP311.1", secondary: ["TP312", "ZZ"], basis: "cip", docType: "book", reason: "版权页 CIP 号", confidence: "high" }),
   });
   await c.db
     .prepare("INSERT INTO book_info (book_id, status, data_json, updated_at) VALUES (?, 'ready', ?, '2026-10-25')")
@@ -177,6 +189,8 @@ test("auto-classify: CIP candidate, input, list/detail fields", async (t) => {
   assert.equal(body.status, "ready");
   assert.equal(body.clc, "TP311.1");
   assert.equal(body.source, "cip");
+  assert.deepEqual([body.clcSource, body.clcConfidence, body.confidence, body.docType], ["cip", "high", "high", "book"]);
+  assert.equal((await c.row()).doc_type, "book");
   assert.equal(body.evidenceUrl, "https://shop.example/2");
   assert.deepEqual(body.secondary, ["TP312"]);
   assert.deepEqual(body.clcPath.map((n) => n.code), ["T", "TP", "TP3", "TP31", "TP311", "TP311.1"]);
@@ -191,6 +205,11 @@ test("auto-classify: CIP candidate, input, list/detail fields", async (t) => {
   const o = calls.oai[0].body;
   assert.deepEqual([o.model, o.effort, o.output_format], ["gpt-luna", "medium", "json_object"]);
   assert.match(o.instructions, /中国图书馆分类法/);
+  assert.match(o.instructions, /"docType":"book"/);
+  for (const t of DOC_TYPES) assert.match(o.instructions, new RegExp(`"${t}"`));
+  assert.match(o.instructions, /syllabus/);
+  assert.match(o.instructions, /公众号/);
+  assert.match(o.input, /格式：PDF\n大小：1 KB/);
   assert.match(o.input, /TP311\.1（程序设计） 来源：国图 https:\/\/shop\.example\/2/);
   assert.match(o.input, /TP301\.6（计算技术、计算机技术）/);
   assert.match(o.input, /^TP311\.13 数据库理论与系统$/m);
@@ -206,15 +225,18 @@ test("auto-classify: CIP candidate, input, list/detail fields", async (t) => {
 
   const visitorList = await (await c.fetch("/api/books")).json();
   assert.equal(visitorList.books[0].clc, "TP311.1");
+  assert.equal(visitorList.books[0].docType, "book");
   const ownerList = await (await c.fetch("/api/books", c.owner())).json();
   assert.equal(ownerList.books[0].clc, "TP311.1");
   assert.equal(ownerList.books[0].hasInfo, true);
+  assert.equal(ownerList.books[0].docType, "book");
 
   const visitor = (await (await c.fetch(`/api/books/${c.bookId}`)).json()).book;
   assert.equal(visitor.clc, "TP311.1");
   assert.equal(visitor.clcSource, "cip");
   assert.equal(visitor.clcConfidence, "high");
   assert.equal(visitor.clcReason, "版权页 CIP 号");
+  assert.equal(visitor.docType, "book");
   assert.deepEqual(visitor.clcPath.at(-1), { code: "TP311.1", name: "程序设计" });
   assert.equal("hasCover" in visitor, false);
   assert.doesNotMatch(JSON.stringify(visitor), /经典算法教材|Cormen|summary/);
@@ -251,6 +273,8 @@ test("auto-classify: downgrade, bad output, search degradation, manual lock", as
     assert.deepEqual([row.status, row.clc, row.source], ["failed", null, null]);
     assert.equal((await (await c.fetch(`/api/books/${other}`)).json()).book.clc, null);
     assert.equal((await (await c.fetch(`/api/books/${other}`)).json()).book.clcStatus, "failed");
+    assert.equal((await (await c.fetch(`/api/books/${other}`)).json()).book.docType, null);
+    assert.equal((await (await c.fetch("/api/books")).json()).books.find((b) => b.id === other).docType, null);
   });
 
   await t.test("search 402 degrades with a note; non-JSON gateway output fails", async () => {
@@ -272,6 +296,29 @@ test("auto-classify: downgrade, bad output, search degradation, manual lock", as
     const forced = await (await c.classify("?force=1")).json();
     assert.deepEqual([forced.clc, forced.source], ["TP311.1", "ai"]);
   });
+});
+
+test("auto-classify: docType stored, invalid becomes other, kept on failed force", async (t) => {
+  const c = await ready(t);
+  let reply = { primary: "TP312", basis: "inferred", docType: "course", confidence: "medium" };
+  aiMock(t, { search: () => jsonRes({ results: [] }), oai: () => task(reply) });
+  const body = await (await c.classify()).json();
+  assert.deepEqual([body.clc, body.docType], ["TP312", "course"]); // non-book still has a subject class
+  assert.equal((await c.row()).doc_type, "course");
+
+  reply = { primary: "TP312", basis: "inferred", docType: "lecture-notes" };
+  assert.equal((await (await c.classify("?force=1")).json()).docType, "other");
+
+  reply = { primary: "TP312", basis: "inferred" };
+  assert.equal((await (await c.classify("?force=1")).json()).docType, "other");
+
+  reply = { primary: "TP312", docType: "paper" };
+  await c.classify("?force=1");
+  reply = { primary: "ZZ9", docType: "book" };
+  assert.equal((await c.classify("?force=1")).status, 502);
+  const row = await c.row();
+  assert.deepEqual([row.status, row.clc, row.doc_type], ["ready", "TP312", "paper"]);
+  assert.equal((await (await c.fetch(`/api/books/${c.bookId}`)).json()).book.docType, "paper");
 });
 
 test("auto-classify: single flight, 503 passthrough, auth and config", async (t) => {
@@ -356,6 +403,30 @@ test("manual PUT validation", async (t) => {
   ]);
 });
 
+test("manual PUT docType: validated, set, kept when omitted", async (t) => {
+  const c = await ready(t, {});
+  for (const docType of ["", "Book", "thesis", null, 1, ["book"]]) {
+    const res = await c.put({ clc: "TP311", docType });
+    assert.equal(res.status, 400, JSON.stringify(docType));
+    assert.deepEqual(await res.json(), { error: "bad_doc_type" });
+  }
+  assert.equal(await c.row(), null);
+  // bad_clc is checked first
+  assert.deepEqual(await (await c.put({ clc: "ZZ", docType: "nope" })).json(), { error: "bad_clc" });
+
+  let body = await (await c.put({ clc: "TP311" })).json();
+  assert.equal(body.docType, null); // fresh manual result without a type (counted as book)
+  body = await (await c.put({ clc: "TP311", docType: "manual" })).json();
+  assert.deepEqual([body.clc, body.source, body.clcSource, body.docType], ["TP311", "manual", "manual", "manual"]);
+  body = await (await c.put({ clc: "TP393" })).json();
+  assert.deepEqual([body.clc, body.docType], ["TP393", "manual"]); // omitted: kept
+  assert.equal((await c.row()).doc_type, "manual");
+  body = await (await c.put({ clc: "TP393", docType: "book" })).json();
+  assert.equal(body.docType, "book");
+  const detail = (await (await c.fetch(`/api/books/${c.bookId}`)).json()).book;
+  assert.deepEqual([detail.clc, detail.docType], ["TP393", "book"]);
+});
+
 test("GET /api/clc: used nodes with ancestors and counts; owner full table", async (t) => {
   const c = await ready(t, {});
   const up = async (path) => (await (await c.upload(c.cookie, path, enc.encode(`%PDF ${path}`))).json()).book.id;
@@ -381,9 +452,30 @@ test("GET /api/clc: used nodes with ancestors and counts; owner full table", asy
   assert.deepEqual(tree.nodes[0], { code: "T", name: "工业技术", parent: null, count: 3 });
   assert.equal(tree.unclassified, 1);
   assert.equal(tree.total, 4);
+  // Classified before the doc_type migration (NULL) counts as a book.
+  assert.deepEqual(tree.docTypes, { book: 3, course: 0, paper: 0, articles: 0, manual: 0, other: 0 });
   const listed = (await (await c.fetch("/api/books")).json()).books;
   assert.equal(listed.length, tree.total);
   assert.deepEqual(listed.map((b) => b.clc).sort(), [null, "TP311.1", "TP311.13", "TP393"].sort());
+
+  // Non-book materials leave the CLC tree but stay in total and docTypes.
+  const course = await up("a/lecture3.pdf");
+  const paper = await up("a/thesis.pdf");
+  const book = await up("a/书.pdf");
+  await c.put({ clc: "TP393", docType: "course" }, course);
+  await c.put({ clc: "I712.45", docType: "paper" }, paper);
+  await c.put({ clc: "TP311.1", docType: "book" }, book);
+  await c.put({ clc: "TP393", docType: "course" }, b2); // was a (NULL) book
+  const t2 = await (await c.fetch("/api/clc")).json();
+  assert.deepEqual(
+    t2.nodes.map((n) => `${n.code}:${n.count}`),
+    ["T:3", "TP:3", "TP3:3", "TP31:3", "TP311:3", "TP311.1:3", "TP311.13:1"],
+  );
+  assert.deepEqual(t2.docTypes, { book: 3, course: 2, paper: 1, articles: 0, manual: 0, other: 0 });
+  assert.deepEqual([t2.unclassified, t2.total], [1, 7]);
+  assert.equal(Object.values(t2.docTypes).reduce((a, b) => a + b, 0) + t2.unclassified, t2.total);
+  const byId = Object.fromEntries((await (await c.fetch("/api/books")).json()).books.map((b) => [b.id, b.docType]));
+  assert.deepEqual([byId[course], byId[paper], byId[book], byId[b2], byId[b3], byId[local]], ["course", "paper", "book", "course", null, null]);
 
   assert.equal((await c.fetch("/api/clc?all=1")).status, 401);
   const all = await (await c.fetch("/api/clc?all=1", c.owner())).json();

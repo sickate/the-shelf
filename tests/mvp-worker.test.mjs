@@ -128,7 +128,7 @@ test("MVP worker API end to end", async (t) => {
     assert.equal(list.books.length, 2);
     assert.deepEqual(list.categories, ["01-计算机与技术", "05-历史"]);
     for (const b of list.books)
-      assert.deepEqual(Object.keys(b).sort(), ["category", "clc", "createdAt", "format", "id", "sizeBytes", "status", "title"]);
+      assert.deepEqual(Object.keys(b).sort(), ["category", "clc", "createdAt", "docType", "format", "id", "sizeBytes", "status", "title"]);
     assert.doesNotMatch(JSON.stringify(list), new RegExp(sha(pdf)));
     const one = await (await fetch(`/api/books/${bookId}`)).json();
     assert.equal(one.book.id, bookId);

@@ -508,7 +508,7 @@ test("book list: owner-only cover/info/author fields in one shape", async (t) =>
   await c.fetch(`/api/books/${c.bookId}/info`, c.owner({ method: "POST" }));
   const visitor = await (await c.fetch("/api/books")).json();
   for (const b of visitor.books)
-    assert.deepEqual(Object.keys(b).sort(), ["category", "clc", "createdAt", "format", "id", "sizeBytes", "status", "title"]);
+    assert.deepEqual(Object.keys(b).sort(), ["category", "clc", "createdAt", "docType", "format", "id", "sizeBytes", "status", "title"]);
   assert.doesNotMatch(JSON.stringify(visitor), /Cormen|hasCover/);
   const owner = await (await c.fetch("/api/books", c.owner())).json();
   const byId = Object.fromEntries(owner.books.map((b) => [b.id, b]));

@@ -35,6 +35,7 @@ export function classifySummary(c, outcomes, busy) {
     `ready=${c.ready} failed=${c.failed} skipped=${c.skipped} busy_waits=${busy}`,
     `by_source: ${tally('source')}`,
     `by_confidence: ${tally('confidence')}`,
+    `by_type: ${tally('docType')}`,
   ].join('\n');
 }
 
@@ -51,9 +52,14 @@ if (import.meta.main) {
     call: classifyCall,
     onOk: (res) =>
       res.json?.clc
-        ? { clc: res.json.clc, source: res.json.clcSource ?? res.json.source ?? null, confidence: res.json.clcConfidence ?? res.json.confidence ?? null }
+        ? {
+            clc: res.json.clc,
+            docType: res.json.docType ?? null,
+            source: res.json.clcSource ?? res.json.source ?? null,
+            confidence: res.json.clcConfidence ?? res.json.confidence ?? null,
+          }
         : null,
-    okExtra: (o) => `clc=${o.clc} source=${o.source || '?'} confidence=${o.confidence ?? '?'}`,
+    okExtra: (o) => `clc=${o.clc} type=${o.docType || '?'} source=${o.source || '?'} confidence=${o.confidence ?? '?'}`,
     summary: classifySummary,
   }).catch((e) => {
     console.error(`fatal: ${e.message}`);
