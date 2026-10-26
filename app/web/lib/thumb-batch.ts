@@ -8,7 +8,11 @@ const REASON_TEXT: Record<string, string> = {
   budget_exceeded: "预算不足",
   storage_unknown: "写入结果未知",
   upload_failed: "上传失败",
+  timeout: "超时",
 };
+
+/** A book whose parser never settles must not stall the whole batch. */
+const BOOK_TIMEOUT_MS = 120_000;
 
 export interface ThumbPanelOptions {
   /** Current catalog (owner view, with hasCover). */
@@ -99,7 +103,11 @@ export function mountThumbPanel(root: HTMLElement, opts: ThumbPanelOptions) {
       }
       progress.textContent = `正在生成 ${done + 1}/${queue.length}：${splitTitle(b.title).main}`;
       try {
-        const r = await ensureThumb(b);
+        let timer = 0;
+        const r = await Promise.race([
+          ensureThumb(b),
+          new Promise<{ ok: false; reason: "timeout" }>((res) => (timer = window.setTimeout(() => res({ ok: false, reason: "timeout" }), BOOK_TIMEOUT_MS))),
+        ]).finally(() => clearTimeout(timer));
         if (r.ok) opts.onCover(b);
         else fail(b, r.reason);
       } catch (e) {
