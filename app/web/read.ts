@@ -427,12 +427,27 @@ async function readEpub() {
   );
   toolbar.hidden = false;
 
+  // Exact percentage needs book.locations (generated in the background, slow for big books);
+  // until then estimate from the spine position and the page within the current section.
+  const percentOf = (start: any): number | null => {
+    const pct = start?.percentage;
+    if (typeof pct === "number" && pct > 0) return pct;
+    const n = (book.spine as any)?.spineItems?.length || (book.spine as any)?.length || 0;
+    const i = start?.index;
+    if (!n || typeof i !== "number") return null;
+    const { page = 1, total = 1 } = start?.displayed || {};
+    return Math.min(1, (i + (Math.max(1, page) - 1) / Math.max(1, total)) / n);
+  };
+  const showPct = (start: any) => {
+    const pct = percentOf(start);
+    if (pct === null) return;
+    loc.textContent = `${Math.round(pct * 100)}%`;
+    reportProgress(`约 ${Math.round(pct * 100)}%`);
+  };
   rendition.on("relocated", (location: any) => {
     const cfi = location?.start?.cfi;
     if (cfi) store.set(posKey, cfi);
-    const pct = location?.start?.percentage;
-    if (typeof pct === "number" && pct > 0) loc.textContent = `${Math.round(pct * 100)}%`;
-    if (typeof pct === "number" && pct > 0) reportProgress(`约 ${Math.round(pct * 100)}%`);
+    showPct(location?.start);
   });
   const onKey = (ev: KeyboardEvent) => {
     if ((ev.target as HTMLElement)?.tagName === "SELECT") return;
@@ -471,7 +486,14 @@ async function readEpub() {
     }
   });
   // Generate locations in background for percentage display.
-  book.ready.then(() => book.locations.generate(1600)).catch(() => {});
+  book.ready
+    .then(() => book.locations.generate(1600))
+    .then(() => {
+      // Swap the estimate for the exact value once locations exist.
+      const start = (rendition as any).currentLocation?.()?.start;
+      if (start?.cfi) showPct({ ...start, percentage: book.locations.percentageFromCfi(start.cfi) });
+    })
+    .catch(() => {});
 }
 
 // ---------------- MOBI / AZW / AZW3 ----------------
