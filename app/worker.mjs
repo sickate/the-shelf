@@ -1133,10 +1133,270 @@ async function listBooks(request, env) {
   return json({ books, categories: [...new Set(books.map((b) => b.category))].sort() });
 }
 
+// ---------------- Notes / highlights (docs/notes-plan-2026-10-26.md) ----------------
+const NOTE_COLORS = ["yellow", "green", "blue", "pink"];
+const MAX_QUOTE_CHARS = 4_000;
+const MAX_NOTE_CHARS = 10_000;
+const MAX_LABEL_CHARS = 200;
+const MAX_LOCATOR_BYTES = 2_000;
+const MAX_NOTES_LIMIT = 1_000;
+const MAX_NOTES_QUERY = 200;
+const chars = (s) => [...s].length;
+const isIndex = (v) => Number.isSafeInteger(v) && v >= 0;
+
+// Optional trimmed text: undefined/null/"" -> null; otherwise a string within `max` code points.
+function optionalText(value, max, code) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new HttpError(400, `bad_${code}`);
+  const s = value.trim();
+  if (!s) return null;
+  if (chars(s) > max) throw new HttpError(400, `${code}_too_long`);
+  return s;
+}
+
+/** Validates a note locator and returns its canonical JSON (only the known keys, fixed order). */
+export function normalizeLocator(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new HttpError(400, "bad_locator");
+  const keys = Object.keys(raw);
+  const only = (...allowed) => keys.every((k) => allowed.includes(k));
+  let loc;
+  if (raw.type === "cfi" && only("type", "cfi")) {
+    if (typeof raw.cfi !== "string" || !raw.cfi.trim()) throw new HttpError(400, "bad_locator");
+    loc = { type: "cfi", cfi: raw.cfi };
+  } else if (raw.type === "pdf" && only("type", "page", "start", "end")) {
+    if (!Number.isSafeInteger(raw.page) || raw.page < 1) throw new HttpError(400, "bad_locator");
+    loc = { type: "pdf", page: raw.page };
+    for (const k of ["start", "end"]) {
+      if (raw[k] === undefined) continue;
+      if (!isIndex(raw[k])) throw new HttpError(400, "bad_locator");
+      loc[k] = raw[k];
+    }
+    if (loc.start !== undefined && loc.end !== undefined && loc.end < loc.start) throw new HttpError(400, "bad_locator");
+  } else if (raw.type === "text" && only("type", "start", "end")) {
+    if (!isIndex(raw.start) || !isIndex(raw.end) || raw.end < raw.start) throw new HttpError(400, "bad_locator");
+    loc = { type: "text", start: raw.start, end: raw.end };
+  } else throw new HttpError(400, "bad_locator");
+  const text = JSON.stringify(loc);
+  if (enc.encode(text).byteLength > MAX_LOCATOR_BYTES) throw new HttpError(400, "locator_too_large");
+  return text;
+}
+
+const noteView = (r) => {
+  let locator = null;
+  try {
+    locator = JSON.parse(r.locator);
+  } catch {}
+  return {
+    id: r.id,
+    bookId: r.book_id,
+    bookTitle: r.book_title,
+    bookFormat: r.book_format,
+    quote: r.quote,
+    note: r.note ?? null,
+    color: r.color,
+    locator,
+    label: r.label ?? null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+};
+
+// Live notes only: the note and its book must not be soft-deleted (deleting a book hides its notes,
+// restoring the book brings them back).
+const NOTES_FROM = `FROM notes n JOIN books b ON b.id = n.book_id
+  WHERE n.deleted_at IS NULL AND b.deleted_at IS NULL AND b.status != 'reserved'`;
+const NOTE_COLUMNS = "n.*, b.title AS book_title, b.format AS book_format";
+
+/** Shared filters of the list and export: optional `book` and `q` (LIKE on quote and note). */
+function noteFilters(url) {
+  const where = [];
+  const args = [];
+  const book = url.searchParams.get("book");
+  if (book) {
+    if (!/^[A-Za-z0-9_]{1,40}$/.test(book)) throw new HttpError(400, "bad_book");
+    where.push("n.book_id = ?");
+    args.push(book);
+  }
+  const q = (url.searchParams.get("q") || "").trim();
+  if (q) {
+    if (chars(q) > MAX_NOTES_QUERY) throw new HttpError(400, "q_too_long");
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    where.push("(n.quote LIKE ? ESCAPE '\\' OR COALESCE(n.note, '') LIKE ? ESCAPE '\\')");
+    args.push(like, like);
+  }
+  return { sql: where.map((w) => ` AND ${w}`).join(""), args };
+}
+
+async function listNotes(request, env, url) {
+  await requireOwner(request, env);
+  const filter = noteFilters(url);
+  let limit = 200;
+  const rawLimit = url.searchParams.get("limit");
+  if (rawLimit !== null && rawLimit !== "") {
+    if (!/^\d{1,6}$/.test(rawLimit) || Number(rawLimit) < 1) throw new HttpError(400, "bad_limit");
+    limit = Math.min(Number(rawLimit), MAX_NOTES_LIMIT);
+  }
+  const before = url.searchParams.get("before");
+  let sql = filter.sql;
+  const args = [...filter.args];
+  if (before) {
+    if (before.length > 40) throw new HttpError(400, "bad_before");
+    sql += " AND n.created_at < ?";
+    args.push(before);
+  }
+  const { results } = await env.DB.prepare(
+    `SELECT ${NOTE_COLUMNS} ${NOTES_FROM}${sql} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`,
+  )
+    .bind(...args, limit)
+    .all();
+  const notes = results.map(noteView);
+  return json({ notes, nextBefore: notes.length === limit ? notes.at(-1).createdAt : null });
+}
+
+async function createNote(request, env, row) {
+  await requireOwner(request, env);
+  if (!row || row.status === "reserved") throw new HttpError(404, "not_found");
+  const body = await readJson(request);
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "bad_json");
+  if (typeof body.quote !== "string" || !body.quote.trim()) throw new HttpError(400, "bad_quote");
+  const quote = body.quote.trim();
+  if (chars(quote) > MAX_QUOTE_CHARS) throw new HttpError(400, "quote_too_long");
+  const note = optionalText(body.note, MAX_NOTE_CHARS, "note");
+  const label = optionalText(body.label, MAX_LABEL_CHARS, "label");
+  const color = body.color ?? "yellow";
+  if (!NOTE_COLORS.includes(color)) throw new HttpError(400, "bad_color");
+  const locator = normalizeLocator(body.locator);
+  const id = `n_${hex(crypto.getRandomValues(new Uint8Array(12)))}`;
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO notes (id, book_id, quote, note, color, locator, label, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(id, row.id, quote, note, color, locator, label, now, now)
+    .run();
+  return json({ note: noteView({ id, book_id: row.id, book_title: row.title, book_format: row.format, quote, note, color, locator, label, created_at: now, updated_at: now }) }, 201);
+}
+
+const readNote = (env, id) =>
+  env.DB.prepare(`SELECT ${NOTE_COLUMNS} ${NOTES_FROM} AND n.id = ?`).bind(id).first();
+
+async function updateNote(request, env, id) {
+  await requireOwner(request, env);
+  const body = await readJson(request);
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "bad_json");
+  const sets = [];
+  const args = [];
+  if (body.note !== undefined) {
+    sets.push("note = ?");
+    args.push(optionalText(body.note, MAX_NOTE_CHARS, "note"));
+  }
+  if (body.color !== undefined) {
+    if (!NOTE_COLORS.includes(body.color)) throw new HttpError(400, "bad_color");
+    sets.push("color = ?");
+    args.push(body.color);
+  }
+  if (!sets.length) throw new HttpError(400, "nothing_to_update");
+  if (!(await readNote(env, id))) throw new HttpError(404, "not_found");
+  await env.DB.prepare(`UPDATE notes SET ${sets.join(", ")}, updated_at = ? WHERE id = ? AND deleted_at IS NULL`)
+    .bind(...args, new Date().toISOString(), id)
+    .run();
+  const row = await readNote(env, id);
+  if (!row) throw new HttpError(404, "not_found");
+  return json({ note: noteView(row) });
+}
+
+async function deleteNote(request, env, id) {
+  await requireOwner(request, env);
+  if (!(await readNote(env, id))) throw new HttpError(404, "not_found");
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE notes SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+    .bind(now, now, id)
+    .run();
+  return json({ ok: true });
+}
+
+/** CSV cell: neutralise spreadsheet formulas, then RFC 4180 quoting. */
+export function csvCell(value) {
+  let s = value === null || value === undefined ? "" : String(value);
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+const NOTE_CSV_COLUMNS = [
+  ["book_title", (n) => n.bookTitle],
+  ["quote", (n) => n.quote],
+  ["note", (n) => n.note],
+  ["color", (n) => n.color],
+  ["label", (n) => n.label],
+  ["created_at", (n) => n.createdAt],
+  ["updated_at", (n) => n.updatedAt],
+  ["book_id", (n) => n.bookId],
+  ["note_id", (n) => n.id],
+  ["locator", (n) => JSON.stringify(n.locator)],
+];
+
+export function notesCsv(notes) {
+  const lines = [NOTE_CSV_COLUMNS.map(([h]) => csvCell(h)).join(",")];
+  for (const n of notes) lines.push(NOTE_CSV_COLUMNS.map(([, get]) => csvCell(get(n))).join(","));
+  return `﻿${lines.join("\r\n")}\r\n`;
+}
+
+const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+const shortTime = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
+
+/** Markdown grouped by book (books by title, notes by creation time within a book). */
+export function notesMarkdown(notes, exportedAt) {
+  const groups = new Map();
+  for (const n of [...notes].sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))) {
+    if (!groups.has(n.bookId)) groups.set(n.bookId, { title: n.bookTitle, notes: [] });
+    groups.get(n.bookId).notes.push(n);
+  }
+  const out = [`# The Shelf 笔记摘要`, "", `导出时间：${shortTime(exportedAt)} UTC · 共 ${notes.length} 条`, ""];
+  const books = [...groups.values()].sort((a, b) => a.title.localeCompare(b.title, "zh-CN"));
+  for (const g of books) {
+    out.push(`## ${oneLine(g.title).split("/").map((s) => s.trim()).join(" / ")}`, "");
+    for (const n of g.notes) {
+      out.push(...n.quote.split(/\r?\n/).map((l) => (l ? `> ${l}` : ">")), "");
+      if (n.note) out.push(n.note, "");
+      out.push(`— ${[n.label ? oneLine(n.label) : null, shortTime(n.createdAt)].filter(Boolean).join(" · ")}`, "");
+    }
+  }
+  return out.join("\n");
+}
+
+async function exportNotes(request, env, url) {
+  await requireOwner(request, env);
+  const format = url.searchParams.get("format");
+  if (!["md", "csv", "json"].includes(format)) throw new HttpError(400, "bad_format");
+  const filter = noteFilters(url);
+  const { results } = await env.DB.prepare(
+    `SELECT ${NOTE_COLUMNS} ${NOTES_FROM}${filter.sql} ORDER BY n.created_at DESC, n.id DESC`,
+  )
+    .bind(...filter.args)
+    .all();
+  const notes = results.map(noteView);
+  const now = new Date().toISOString();
+  const body =
+    format === "csv"
+      ? notesCsv(notes)
+      : format === "md"
+        ? notesMarkdown(notes, now)
+        : JSON.stringify({ exportedAt: now, count: notes.length, notes }, null, 2);
+  const type = { md: "text/markdown", csv: "text/csv", json: "application/json" }[format];
+  return new Response(body, {
+    headers: {
+      "Content-Type": `${type}; charset=utf-8`,
+      "Content-Disposition": `attachment; filename="the-shelf-notes-${now.slice(0, 10).replace(/-/g, "")}.${format}"`,
+      "Cache-Control": "no-store",
+      ...SECURITY,
+    },
+  });
+}
+
 async function handleApi(request, env, url) {
   const { method } = request;
   const path = url.pathname;
-  if (["POST", "PUT", "DELETE"].includes(method) && request.headers.get("Origin") !== url.origin)
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && request.headers.get("Origin") !== url.origin)
     throw new HttpError(403, "bad_origin");
 
   if (path === "/api/login" && method === "POST") {
@@ -1170,7 +1430,12 @@ async function handleApi(request, env, url) {
   }
   if (path === "/api/books" && method === "GET") return listBooks(request, env);
   if (path === "/api/clc" && method === "GET") return clcTree(request, env, url);
-  const m = /^\/api\/books\/([A-Za-z0-9_]{1,40})(?:\/(file|cover|info|class))?$/.exec(path);
+  if (path === "/api/notes" && method === "GET") return listNotes(request, env, url);
+  if (path === "/api/notes/export" && method === "GET") return exportNotes(request, env, url);
+  const n = /^\/api\/notes\/([A-Za-z0-9_]{1,40})$/.exec(path);
+  if (n && method === "PATCH") return updateNote(request, env, n[1]);
+  if (n && method === "DELETE") return deleteNote(request, env, n[1]);
+  const m = /^\/api\/books\/([A-Za-z0-9_]{1,40})(?:\/(file|cover|info|class|notes))?$/.exec(path);
   if (m) {
     const row = await env.DB.prepare("SELECT * FROM books WHERE id = ? AND deleted_at IS NULL")
       .bind(m[1])
@@ -1187,6 +1452,7 @@ async function handleApi(request, env, url) {
     if (m[2] === "info" && method === "POST") return generateInfo(request, env, row, url);
     if (m[2] === "class" && method === "POST") return classifyBook(request, env, row, url);
     if (m[2] === "class" && method === "PUT") return setClass(request, env, row);
+    if (m[2] === "notes" && method === "POST") return createNote(request, env, row);
     if (!m[2] && method === "GET") {
       if (!row || row.status === "reserved") throw new HttpError(404, "not_found");
       const owner = await isOwner(request, env).catch(() => false);

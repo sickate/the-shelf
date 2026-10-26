@@ -72,6 +72,20 @@ AI、正文准备、公开文件、多用户、旧 CF01/CF03/trial 迁移链路�
 | POST /api/books/:id/class[?force=1] | 所有者 | 自动归类。已有 `manual` 且非 force → 409 `manual_locked`；已 ready 且非 force 直接返回。单飞租约 15 分钟，冲突 409 `generating`。DeepSeek Search 1 次（`<书名> 中图分类号`，count 8，20 s，失败降级，401/402 记 `search_auth`/`search_balance`），从 title/snippet/summary 中按“中图分类号/分类号/CLC”标签抽取候选号；再 oai `/v1/tasks`（`gpt-luna` medium json_object，600 s），输入书名、来源目录、已有 AI 简介 summary/tags/keyPoints、候选号及来源、限定的候选类目列表，以及格式与大小（弱参考）；同一次调用给出 `docType`（§11：`book`/`course`/`paper`/`articles`/`manual`/`other`），非法或缺失记 `other`，非书资料仍有主题分类号。响应即 classView：`status`、`clc`、`clcPath`、`secondary`、`source`/`clcSource`、`confidence`/`clcConfidence`、`docType`、`reason`、`evidenceUrl`、`rawCode`、`updatedAt`、`error?`。服务端解析：主号不可解析 → 502 `ai_bad_output`；副号不可解析则丢弃（最多 2 个）；`basis:"cip"` 仅当主号（原号或解析后）出现在检索候选中才记 `source:'cip'` 并保存 `evidence_url`，否则降为 `ai`。503 `ai_busy` 透传 `Retry-After`，其他错误与 AI 详情相同；均不自动重试，force 失败保留旧结果 |
 | PUT /api/books/:id/class `{clc, secondary?, docType?}` | 所有者 | 手动指定：`clc` 与每个副号（≤2）必须正好是表内节点，否则 400 `bad_clc`；`docType` 可选，必须是上述枚举之一，否则 400 `bad_doc_type`，省略时保留原资料类型；写入 `source:'manual'`、ready，覆盖进行中的自动归类（其结果因租约丢失不再写入） |
 
+### 2026-10-26 笔记摘要（`docs/notes-plan-2026-10-26.md`，迁移 `app/migrations/0005_notes.sql`）
+
+全部仅所有者：访客一律 401 `login_required`（先于参数校验）；写操作（POST/PATCH/DELETE）沿用同源 `Origin` 校验，否则 403 `bad_origin`。只返回“活”笔记：笔记未删除，且所属书未软删除、非 reserved（书移到回收站后其笔记随之隐藏，恢复书即恢复）。笔记行形状：`{id, bookId, bookTitle, bookFormat, quote, note, color, locator, label, createdAt, updatedAt}`，`locator` 为对象。
+
+| 方法 路径 | 权限 | 说明 |
+| --- | --- | --- |
+| GET /api/notes?book=&q=&limit=&before= | 所有者 | `{notes:[...], nextBefore}`，按 `created_at` 倒序（同刻按 id 倒序）。`book` 可选（`[A-Za-z0-9_]{1,40}`，否则 400 `bad_book`）；`q` 去首尾空白后对原文与笔记做 LIKE（`%`、`_`、`\` 转义，≤200 字，否则 400 `q_too_long`）；`limit` 默认 200、上限 1000（超出按 1000），非正整数 400 `bad_limit`；`before` 为上一页 `nextBefore`（严格早于该 `created_at`）；返回条数等于 limit 时 `nextBefore` 为最后一条的 `createdAt`，否则 null |
+| POST /api/books/:id/notes `{quote, note?, color?, locator, label?}` | 所有者 | 书须存在、未删除、非 reserved，否则 404。`quote` 去首尾空白后 1–4,000 字（按码点；空或非字符串 `bad_quote`，超长 `quote_too_long`）；`note` ≤10,000 字（`bad_note`/`note_too_long`），`label` ≤200 字（`bad_label`/`label_too_long`），二者去空白后为空即 null；`color` ∈ `yellow`/`green`/`blue`/`pink`，默认 yellow（`bad_color`）；`locator` 必须是对象且恰为 `{type:'cfi',cfi}`（非空字符串）、`{type:'pdf',page≥1,start?,end?}`（非负整数，end≥start）或 `{type:'text',start,end}`（非负整数，end≥start）之一，不允许多余字段（`bad_locator`），按固定键序重新序列化后 ≤2,000 bytes（`locator_too_large`）。id 为 `n_` + 24 位随机 hex。201 `{note}` |
+| PATCH /api/notes/:id `{note?, color?}` | 所有者 | 只改笔记正文与颜色（原文与位置不可改）；`note` 传空串或 null 清空；两者都没有 → 400 `nothing_to_update`；不存在/已删除 → 404。返回 `{note}` 并更新 `updatedAt` |
+| DELETE /api/notes/:id | 所有者 | 软删除（写 `deleted_at`），再删 404 |
+| GET /api/notes/export?format=md\|csv\|json[&book=][&q=] | 所有者 | 与列表相同筛选，不分页；`format` 缺失或非法 400 `bad_format`。`Content-Disposition: attachment; filename="the-shelf-notes-YYYYMMDD.<ext>"`（UTC 日期），`Cache-Control: no-store`。CSV：UTF-8 BOM、CRLF、所有字段双引号包裹（RFC 4180），列 `book_title,quote,note,color,label,created_at,updated_at,book_id,note_id,locator`，以 `= + - @`、Tab、CR 开头的单元格前加 `'` 防公式注入。Markdown：`# The Shelf 笔记摘要`，按书（书名排序）分 `## 书名`，书内按创建时间正序：`> 原文`、笔记正文、`— 位置 · 时间`。JSON：`{exportedAt, count, notes}` |
+
+页面：`notes.html`（所有者全部笔记，按书/按时间、搜索、按书筛选、改笔记/颜色、删除、“在书中打开” `read.html?id=<book>&note=<id>`、按当前筛选导出；访客显示登录框）。所有者登录后各页头部（`renderAuthBox`）出现“笔记”入口；详情页显示本书笔记数并链接 `notes.html?book=<id>`。阅读页对 `note=` 的定位与选中摘录属 N2。
+
 脚本鉴权：先 POST /api/login 取得 cookie。
 
 ## 分工

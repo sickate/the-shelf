@@ -473,3 +473,56 @@ body.reader { min-height: 100vh; display: flex; flex-direction: column; }
 .tag-type { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
 .class-type { white-space: nowrap; display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 12px; }
 .class-type select { width: auto; padding: 5px 8px; font-size: 12px; }
+
+/* ---------- Notes (docs/notes-plan-2026-10-26.md) ---------- */
+:root { --hl-yellow: #e9c13f; --hl-green: #6aa96f; --hl-blue: #5b8fd0; --hl-pink: #d9739a; }
+@media (prefers-color-scheme: dark) {
+  :root { --hl-yellow: #d8b23a; --hl-green: #79bb7e; --hl-blue: #7aa6e0; --hl-pink: #e48aae; }
+}
+.book-notes { font-size: 13px; margin: 14px 0 0; }
+.book-notes a { color: var(--accent); border-bottom: 1px solid currentColor; }
+.notes-main { max-width: 1000px; }
+.notes-head { margin-bottom: 30px; }
+.notes-head h1 { font: 500 clamp(28px, 3vw, 42px)/1.3 Georgia, "Songti SC", serif; margin: 12px 0 10px; }
+.notes-head p { margin: 0; font-size: 13px; }
+.notes-filters label:not(.search) { flex: 0 0 220px; }
+.notes-view { display: flex; flex-shrink: 0; }
+.notes-view button { padding: 10px 14px; font-size: 13px; }
+.notes-view button + button { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.notes-view button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.notes-view button[aria-pressed="true"] { background: var(--active); color: var(--accent); }
+.notes-row { flex-wrap: wrap; gap: 10px; }
+.notes-export { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.notes-export a { font-size: 12px; border-bottom: 1px solid var(--line); }
+.note-group + .note-group { margin-top: 40px; }
+.note-group-title { font: 500 20px/1.4 Georgia, "Songti SC", serif; margin: 0 0 14px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; overflow-wrap: anywhere; }
+.note-group-title a { border-bottom: 1px solid var(--line); }
+.note-group-n { margin-left: auto; font: 11px Inter, system-ui, sans-serif; color: var(--muted); }
+.note-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.note-item { --hl: var(--hl-yellow); border: 1px solid var(--line); border-left: 4px solid var(--hl); border-radius: 4px; padding: 16px 18px; background: color-mix(in srgb, var(--white) 60%, transparent); }
+.note-green { --hl: var(--hl-green); }
+.note-blue { --hl: var(--hl-blue); }
+.note-pink { --hl: var(--hl-pink); }
+.note-quote { margin: 0; font: 16px/1.8 "Songti SC", "Noto Serif CJK SC", Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; background: color-mix(in srgb, var(--hl) 16%, transparent); padding: 2px 6px; border-radius: 2px; }
+.note-text { margin-top: 10px; font-size: 14px; line-height: 1.8; }
+.note-text p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-text textarea { width: 100%; resize: vertical; line-height: 1.7; }
+.note-edit-actions { display: flex; gap: 8px; margin-top: 8px; }
+.note-edit-actions button { padding: 7px 14px; font-size: 13px; }
+.note-meta { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-top: 10px; font-size: 11px; color: var(--muted); }
+.note-book { color: var(--ink); border-bottom: 1px solid var(--line); }
+.note-actions { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.note-actions .link-btn { font-size: 12px; }
+.note-colors { display: flex; gap: 6px; }
+.note-swatch { width: 22px; height: 22px; padding: 0; border-radius: 50%; background: var(--hl); border: 2px solid transparent; }
+.note-swatch[aria-pressed="true"] { border-color: var(--ink); }
+.note-del { color: var(--err); margin-left: auto; }
+@media (max-width: 700px) {
+  .notes-filters label:not(.search) { flex: 1 1 0; }
+  .note-item { padding: 14px; }
+  .note-quote { font-size: 15px; }
+  .note-del { margin-left: 0; }
+}
+@media (max-width: 480px) {
+  .topbar .owner-badge { display: none; }
+}

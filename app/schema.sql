@@ -53,3 +53,18 @@ CREATE TABLE IF NOT EXISTS book_class (
   doc_type TEXT
 );
 CREATE INDEX IF NOT EXISTS book_class_clc ON book_class (clc);
+-- Added 2026-10-26 (app/migrations/0005_notes.sql). Owner-only quotes/notes; soft delete via deleted_at.
+-- locator is JSON: {type:'cfi',cfi} | {type:'pdf',page,start?,end?} | {type:'text',start,end}.
+CREATE TABLE IF NOT EXISTS notes (
+  id TEXT PRIMARY KEY,
+  book_id TEXT NOT NULL REFERENCES books(id),
+  quote TEXT NOT NULL,
+  note TEXT,
+  color TEXT NOT NULL DEFAULT 'yellow' CHECK (color IN ('yellow','green','blue','pink')),
+  locator TEXT NOT NULL,
+  label TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS notes_book ON notes (book_id, deleted_at, created_at);

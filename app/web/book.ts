@@ -11,6 +11,7 @@ import {
   getOwner,
   humanSize,
   loginForm,
+  notesUrl,
   READABLE,
   readUrl,
   renderAuthBox,
@@ -58,6 +59,7 @@ function setOwner(next: boolean) {
   if (book) {
     renderCover();
     renderActions();
+    renderNotes();
     renderInfo();
     classSection?.render();
   }
@@ -179,6 +181,7 @@ function renderBook() {
       : "已上传 · 该格式不支持在线阅读，请下载原文件。"
     : "仅本地 · 文件超过 20 MB 或尚未上传，只登记目录信息，无法在线阅读或下载。";
   renderActions();
+  renderNotes();
   renderInfo();
   classSection ??= mountBookClass($("book-class"), book, {
     isOwner: () => owner,
@@ -207,6 +210,30 @@ function renderActions() {
   const del = el("button", { type: "button", class: "danger" }, "移到回收站");
   del.addEventListener("click", deleteBook);
   actions.append(del);
+}
+
+let notesSeq = 0;
+/** Owner-only: this book's note count with a link to the notes page. */
+async function renderNotes() {
+  const box = $<HTMLParagraphElement>("book-notes");
+  const seq = ++notesSeq;
+  box.hidden = true;
+  if (!owner) return;
+  try {
+    const data = await api<{ notes: unknown[]; nextBefore: string | null }>(
+      `/api/notes?book=${encodeURIComponent(String(book.id))}&limit=1000`,
+    );
+    if (seq !== notesSeq || !owner) return;
+    const n = data.notes.length;
+    const count = data.nextBefore ? `${n}+` : String(n);
+    box.replaceChildren(
+      el("span", { class: "muted" }, n ? `本书有 ${count} 条摘录与笔记 · ` : "本书还没有摘录或笔记 · "),
+      el("a", { href: notesUrl(book.id) }, n ? "查看笔记 →" : "笔记页 →"),
+    );
+    box.hidden = false;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) setOwner(false);
+  }
 }
 
 async function deleteBook() {

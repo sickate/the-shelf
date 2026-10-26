@@ -127,6 +127,16 @@ const ERROR_TEXT: Record<string, string> = {
   ai_busy: "AI 繁忙，请稍后重试",
   ai_failed: "AI 归类失败，请稍后重试",
   ai_bad_output: "AI 返回的分类号无法识别",
+  bad_quote: "摘录原文为空",
+  quote_too_long: "摘录原文超过 4,000 字",
+  note_too_long: "笔记超过 10,000 字",
+  label_too_long: "位置说明超过 200 字",
+  bad_color: "颜色无效",
+  bad_locator: "位置信息无效",
+  locator_too_large: "位置信息过大",
+  nothing_to_update: "没有要保存的修改",
+  bad_format: "导出格式无效",
+  q_too_long: "搜索词过长",
 };
 
 export function errorText(e: unknown): string {
@@ -243,6 +253,8 @@ export function coverEl(
 
 export const bookUrl = (id: string | number) => `/book.html?id=${encodeURIComponent(String(id))}`;
 export const readUrl = (id: string | number) => `/read.html?id=${encodeURIComponent(String(id))}`;
+export const notesUrl = (bookId?: string | number) =>
+  bookId === undefined ? "/notes.html" : `/notes.html?book=${encodeURIComponent(String(bookId))}`;
 export const downloadUrl = (id: string | number) => `/api/books/${encodeURIComponent(String(id))}/file?download=1`;
 
 /** Topbar owner controls: a compact login popover, or the owner badge + logout. */
@@ -258,7 +270,10 @@ export function renderAuthBox(box: HTMLElement, owner: boolean, onChange: (owner
       }
       onChange(false);
     });
-    box.append(el("span", { class: "owner-badge" }, "所有者"), btn);
+    // Notes are owner-only, so the entry only appears with an owner session.
+    const notes = el("a", { href: notesUrl() }, "笔记");
+    if (location.pathname === "/notes.html") notes.setAttribute("aria-current", "page");
+    box.append(notes, el("span", { class: "owner-badge" }, "所有者"), btn);
   } else {
     const details = el("details", { class: "login-pop" }, el("summary", {}, "所有者登录 ↗"));
     const form = loginForm(() => onChange(true));

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex">
+  <title>笔记摘要 — The Shelf</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">跳至正文</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="The Shelf 首页">
+      <span class="brand-mark">S.</span>
+      <span>THE SHELF<small>一座私人书房的公开目录</small></span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="/">书架</a>
+      <div id="auth" class="auth"></div>
+    </nav>
+  </header>
+  <main id="main" class="notes-main">
+    <div class="notes-head">
+      <span class="eyebrow">NOTES · 摘录与笔记</span>
+      <h1>笔记摘要</h1>
+      <p class="muted">阅读时选中的原文与写下的笔记都在这里，仅所有者可见。</p>
+    </div>
+    <div id="notes-login" class="notice" hidden></div>
+    <div id="notes-app" hidden>
+      <form id="notes-filters" class="filters notes-filters">
+        <label class="search">搜索
+          <input id="notes-q" type="search" placeholder="搜索原文或笔记…" autocomplete="off" maxlength="200">
+        </label>
+        <label>书籍
+          <select id="notes-book"><option value="">全部书籍</option></select>
+        </label>
+        <div class="notes-view" role="group" aria-label="排列方式">
+          <button type="button" data-view="book" aria-pressed="true">按书</button>
+          <button type="button" data-view="time" aria-pressed="false">按时间</button>
+        </div>
+      </form>
+      <div class="result-row notes-row">
+        <span id="notes-count" aria-live="polite">正在读取笔记…</span>
+        <span class="notes-export">导出（按当前筛选）：
+          <a id="export-md" class="link-btn" href="#">Markdown</a>
+          <a id="export-csv" class="link-btn" href="#">CSV</a>
+          <a id="export-json" class="link-btn" href="#">JSON</a>
+        </span>
+      </div>
+      <p id="notes-error" class="notice error" role="alert" hidden></p>
+      <div id="notes-list" class="notes-list" aria-busy="true"></div>
+      <div id="notes-empty" class="empty" hidden>
+        <strong id="notes-empty-title">还没有摘录或笔记。</strong>
+        <p id="notes-empty-text">在阅读页选中一段文字即可摘录或写笔记。</p>
+      </div>
+      <div class="pagination"><button id="notes-more" type="button" hidden>加载更多</button></div>
+    </div>
+  </main>
+  <footer>
+    <span>THE SHELF <span class="muted">/</span> 让每一本书都能被找到。</span>
+    <span>笔记仅所有者可见</span>
+  </footer>
+  <script type="module" src="/notes.js"></script>
+</body>
+</html>
