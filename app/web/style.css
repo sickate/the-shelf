@@ -626,6 +626,7 @@ body.reader[data-reader-theme="dark"] {
   .recent-card { flex-basis: 108px; }
   .recent-card .cover { padding: 10px; }
   .recent-card .cover h2 { font-size: 12px; }
+}
 
 /* ---------- Reader notes (N2): selection bar, editor, drawer, highlights ---------- */
 .note-yellow { --hl: var(--hl-yellow); }
