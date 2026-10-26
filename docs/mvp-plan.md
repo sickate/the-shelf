@@ -86,6 +86,19 @@ AI、正文准备、公开文件、多用户、旧 CF01/CF03/trial 迁移链路�
 
 页面：`notes.html`（所有者全部笔记，按书/按时间、搜索、按书筛选、改笔记/颜色、删除、“在书中打开” `read.html?id=<book>&note=<id>`、按当前筛选导出；访客显示登录框）。所有者登录后各页头部（`renderAuthBox`）出现“笔记”入口；详情页显示本书笔记数并链接 `notes.html?book=<id>`。阅读页对 `note=` 的定位与选中摘录属 N2。
 
+### 2026-10-26 最近阅读（`docs/recent-reading-plan-2026-10-26.md`，迁移 `app/migrations/0006_reading.sql`）
+
+全部仅所有者：访客一律 401 `login_required`（先于参数校验）；写操作沿用同源 `Origin` 校验，否则 403 `bad_origin`。表 `reading_history` 每本一行（`book_id` 主键、`last_opened_at`、`open_count`、`progress`）。`progress` 为仅供展示的人读进度：字符串，NFC 后去首尾空白，≤40 字（按码点，`progress_too_long`），不得含控制字符（C0/DEL/C1、U+2028/2029，`bad_progress`），非字符串 `bad_progress`；null 或空白即 null。可读书 = 存在、未软删除且 `status='uploaded'`，否则 404 `not_found`。
+
+| 方法 路径 | 权限 | 说明 |
+| --- | --- | --- |
+| POST /api/books/:id/opened `{progress?}` | 所有者 | body 可为空或 JSON 对象（否则 400 `bad_json`）。upsert：`last_opened_at`=now，`open_count`+1（首次为 1）；给出 progress 则替换，省略/null 保留原值。返回 `{bookId, lastOpenedAt, openCount, progress}` |
+| PUT /api/books/:id/progress `{progress}` | 所有者 | 只更新进度，不改时间与次数；必须含 `progress` 字段（null/空串清空，缺失 400 `bad_progress`）；从未打开过（无记录）404 `not_opened`，不建行。返回 `{bookId, progress}` |
+| GET /api/recent?limit= | 所有者 | `{recent:[...]}`，按 `last_opened_at` 倒序（同刻按 book_id）。每项为所有者书目字段（`id,title,category,format,sizeBytes,status,createdAt,clc,docType,hasCover,hasInfo,authors`）加 `lastOpenedAt`、`openCount`、`progress`；软删除或非 uploaded 的书不返回（恢复后重新出现）。`limit` 默认 20、上限 100（超出按 100），非正整数 400 `bad_limit` |
+| DELETE /api/recent/:bookId | 所有者 | 删除该书的记录（硬删除，再次打开从 1 计）；无记录 404 |
+
+页面：首页（所有者）统计区下方显示“最近阅读 / RECENT”可折叠区块（默认展开，折叠状态存 localStorage `shelf:recent-collapsed`），横向滚动卡片（封面、书名、相对时间、进度、“继续阅读 →” `read.html`、× 移除），默认 12 本（请求 13 判断是否有更多），“查看全部”请求 100；无记录显示引导文字；访客不显示也不请求。阅读页（`lib/recent.ts`）：书加载成功且无错误后 `POST opened` 一次（附当时已知进度）；之后翻页 `PUT progress` 节流（距上次发送 ≥30 秒，尾随发送），`pagehide` 与页面隐藏时以 `fetch keepalive` 补发未发送的最新进度；失败一律忽略。进度文字：PDF / CBZ “第 N / 总 页”（双页 “第 N–M / 总 页”），EPUB（位置生成后）/ MOBI / AZW / TXT “约 N%”。
+
 脚本鉴权：先 POST /api/login 取得 cookie。
 
 ## 分工

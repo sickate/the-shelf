@@ -588,3 +588,42 @@ body.reader[data-reader-theme="dark"] {
 .comic-wrap.fit-width.double .comic-page { width: 50%; }
 .comic-missing { color: var(--muted); font-size: 14px; margin: 18vh auto; text-align: center; }
 .toolbar .comic-progress { font-variant-numeric: tabular-nums; }
+/* ---------- Recent reading (homepage, owner only) ---------- */
+.recent-section { margin: -14px 0 44px; min-width: 0; }
+.recent { border: 1px solid var(--line); border-radius: 5px; background: color-mix(in srgb, var(--white) 50%, transparent); min-width: 0; }
+.recent > summary { cursor: pointer; display: flex; align-items: baseline; gap: 16px; padding: 18px 24px; list-style: none; }
+.recent > summary::-webkit-details-marker { display: none; }
+.recent > summary::before { content: "+"; font: 20px Georgia, serif; color: var(--accent); width: 12px; }
+.recent[open] > summary::before { content: "−"; }
+.recent > summary .section-title { margin: 0; }
+.recent-status { margin: 0 24px 20px; }
+.recent-status:empty { display: none; }
+.recent-row { display: flex; gap: 18px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding: 4px 24px 18px; scroll-padding-inline: 24px; }
+.recent-card { position: relative; flex: 0 0 132px; min-width: 0; scroll-snap-align: start; display: flex; flex-direction: column; gap: 4px; }
+.recent-cover { display: block; margin-bottom: 6px; }
+.recent-cover:hover .cover { transform: translateY(-3px); box-shadow: 5px 7px 0 var(--shadow); }
+.recent-card .cover { padding: 12px; border-left-width: 4px; }
+.recent-card .cover:after { inset: 7px; }
+.recent-card .cover .cover-category { display: none; }
+.recent-card .cover h2 { font-size: 14px; line-height: 1.4; margin: 0; -webkit-line-clamp: 5; line-clamp: 5; }
+.recent-card .cover-author { font-size: 9px; }
+.recent-title { font: 500 13px/1.45 Georgia, "Songti SC", serif; margin: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
+.recent-meta { margin: 0; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-go { font-size: 12px; color: var(--accent); margin-top: 2px; }
+.recent-go:hover { text-decoration: underline; }
+.recent-x { position: absolute; top: 4px; right: 4px; z-index: 4; width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--white); color: var(--muted); font-size: 15px; line-height: 1; opacity: 0.85; }
+.recent-x:hover, .recent-x:focus-visible { color: var(--err); opacity: 1; }
+.recent-all { margin: 0 24px 20px; }
+@media (hover: hover) {
+  .recent-x { opacity: 0; }
+  .recent-card:hover .recent-x, .recent-x:focus-visible { opacity: 1; }
+}
+@media (max-width: 700px) {
+  .recent-section { margin: -6px 0 28px; }
+  .recent > summary { padding: 16px 18px; }
+  .recent-status, .recent-all { margin-left: 18px; margin-right: 18px; }
+  .recent-row { gap: 14px; padding: 4px 18px 16px; scroll-padding-inline: 18px; }
+  .recent-card { flex-basis: 108px; }
+  .recent-card .cover { padding: 10px; }
+  .recent-card .cover h2 { font-size: 12px; }
+}

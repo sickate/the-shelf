@@ -1409,6 +1409,114 @@ async function exportNotes(request, env, url) {
   });
 }
 
+// ---------------- Recent reading (docs/recent-reading-plan-2026-10-26.md) ----------------
+const MAX_PROGRESS_CHARS = 40;
+const RECENT_DEFAULT = 20;
+const RECENT_MAX = 100;
+
+/** Optional display-only progress label: null/undefined/"" -> null; ≤ 40 code points, no control chars. */
+export function normalizeProgress(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new HttpError(400, "bad_progress");
+  const s = value.normalize("NFC").trim();
+  if (!s) return null;
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(s)) throw new HttpError(400, "bad_progress");
+  if (chars(s) > MAX_PROGRESS_CHARS) throw new HttpError(400, "progress_too_long");
+  return s;
+}
+
+/** Only books that can actually be read count: live (not soft-deleted) and uploaded. */
+function requireReadable(row) {
+  if (!row || row.status !== "uploaded") throw new HttpError(404, "not_found");
+}
+
+/** JSON object body; an empty body is `{}` when `allowEmpty`. */
+async function objectBody(request, allowEmpty) {
+  const text = await request.text();
+  if (allowEmpty && !text.trim()) return {};
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new HttpError(400, "bad_json");
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "bad_json");
+  return body;
+}
+
+async function bookOpened(request, env, row) {
+  await requireOwner(request, env);
+  requireReadable(row);
+  const progress = normalizeProgress((await objectBody(request, true)).progress);
+  const now = new Date().toISOString();
+  // A missing progress keeps the previous one (the reader may not know it yet when it reports the open).
+  await env.DB.prepare(
+    `INSERT INTO reading_history (book_id, last_opened_at, open_count, progress) VALUES (?, ?, 1, ?)
+     ON CONFLICT(book_id) DO UPDATE SET last_opened_at = excluded.last_opened_at,
+       open_count = reading_history.open_count + 1,
+       progress = COALESCE(excluded.progress, reading_history.progress)`,
+  )
+    .bind(row.id, now, progress)
+    .run();
+  const r = await env.DB.prepare("SELECT * FROM reading_history WHERE book_id = ?").bind(row.id).first();
+  return json({ bookId: row.id, lastOpenedAt: r.last_opened_at, openCount: r.open_count, progress: r.progress ?? null });
+}
+
+async function bookProgress(request, env, row) {
+  await requireOwner(request, env);
+  requireReadable(row);
+  const body = await objectBody(request, false);
+  if (!("progress" in body)) throw new HttpError(400, "bad_progress");
+  const progress = normalizeProgress(body.progress);
+  const { meta } = await env.DB.prepare("UPDATE reading_history SET progress = ? WHERE book_id = ?")
+    .bind(progress, row.id)
+    .run();
+  // Progress only updates a book that has been opened; the open is what puts it in the list.
+  if (!meta?.changes) throw new HttpError(404, "not_opened");
+  return json({ bookId: row.id, progress });
+}
+
+async function listRecent(request, env, url) {
+  await requireOwner(request, env);
+  let limit = RECENT_DEFAULT;
+  const rawLimit = url.searchParams.get("limit");
+  if (rawLimit !== null && rawLimit !== "") {
+    if (!/^\d{1,6}$/.test(rawLimit) || Number(rawLimit) < 1) throw new HttpError(400, "bad_limit");
+    limit = Math.min(Number(rawLimit), RECENT_MAX);
+  }
+  const { results } = await env.DB.prepare(
+    `SELECT b.*, h.last_opened_at, h.open_count, h.progress, c.book_id IS NOT NULL AS has_cover,
+       i.data_json IS NOT NULL AS has_info, k.clc AS clc, k.doc_type AS doc_type,
+       (SELECT json_group_array(json_extract(a.value, '$.name')) FROM json_each(i.data_json, '$.authors') a) AS author_names
+     FROM reading_history h JOIN books b ON b.id = h.book_id
+       LEFT JOIN covers c ON c.book_id = b.id LEFT JOIN book_info i ON i.book_id = b.id
+       LEFT JOIN book_class k ON k.book_id = b.id
+     WHERE b.deleted_at IS NULL AND b.status = 'uploaded'
+     ORDER BY h.last_opened_at DESC, h.book_id LIMIT ?`,
+  )
+    .bind(limit)
+    .all();
+  const recent = results.map((r) => ({
+    ...publicBook(r),
+    clc: r.clc ?? null,
+    docType: r.clc ? (r.doc_type ?? null) : null,
+    hasCover: Boolean(r.has_cover),
+    hasInfo: Boolean(r.has_info),
+    authors: JSON.parse(r.author_names || "[]").filter((n) => typeof n === "string" && n),
+    lastOpenedAt: r.last_opened_at,
+    openCount: r.open_count,
+    progress: r.progress ?? null,
+  }));
+  return json({ recent });
+}
+
+async function removeRecent(request, env, bookId) {
+  await requireOwner(request, env);
+  const { meta } = await env.DB.prepare("DELETE FROM reading_history WHERE book_id = ?").bind(bookId).run();
+  if (!meta?.changes) throw new HttpError(404, "not_found");
+  return json({ ok: true });
+}
+
 async function handleApi(request, env, url) {
   const { method } = request;
   const path = url.pathname;
@@ -1451,7 +1559,10 @@ async function handleApi(request, env, url) {
   const n = /^\/api\/notes\/([A-Za-z0-9_]{1,40})$/.exec(path);
   if (n && method === "PATCH") return updateNote(request, env, n[1]);
   if (n && method === "DELETE") return deleteNote(request, env, n[1]);
-  const m = /^\/api\/books\/([A-Za-z0-9_]{1,40})(?:\/(file|cover|info|class|notes))?$/.exec(path);
+  if (path === "/api/recent" && method === "GET") return listRecent(request, env, url);
+  const rr = /^\/api\/recent\/([A-Za-z0-9_]{1,40})$/.exec(path);
+  if (rr && method === "DELETE") return removeRecent(request, env, rr[1]);
+  const m = /^\/api\/books\/([A-Za-z0-9_]{1,40})(?:\/(file|cover|info|class|notes|opened|progress))?$/.exec(path);
   if (m) {
     const row = await env.DB.prepare("SELECT * FROM books WHERE id = ? AND deleted_at IS NULL")
       .bind(m[1])
@@ -1469,6 +1580,8 @@ async function handleApi(request, env, url) {
     if (m[2] === "class" && method === "POST") return classifyBook(request, env, row, url);
     if (m[2] === "class" && method === "PUT") return setClass(request, env, row);
     if (m[2] === "notes" && method === "POST") return createNote(request, env, row);
+    if (m[2] === "opened" && method === "POST") return bookOpened(request, env, row);
+    if (m[2] === "progress" && method === "PUT") return bookProgress(request, env, row);
     if (!m[2] && method === "GET") {
       if (!row || row.status === "reserved") throw new HttpError(404, "not_found");
       const owner = await isOwner(request, env).catch(() => false);

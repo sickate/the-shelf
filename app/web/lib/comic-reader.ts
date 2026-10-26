@@ -2,6 +2,7 @@
 // left-to-right, fit width / fit height, keyboard and click-half page turning, ±2 page
 // preloading and a remembered page per book. read.ts only hands over its page elements.
 import { el, store } from "./common";
+import { reportProgress } from "./recent";
 import { CbzError, openCbz } from "./cbz";
 
 export interface ComicContext {
@@ -153,6 +154,7 @@ export async function readComic(ctx: ComicContext): Promise<void> {
     const shown = dbl && start > 0 && start + 1 < total ? [start, start + 1] : [start];
     cur = start;
     store.set(ctx.posKey, String(cur + 1));
+    reportProgress(`第 ${cur + 1} / ${total} 页`);
     pageInput.value = String(cur + 1);
     const last = shown[shown.length - 1] + 1;
     progress.textContent = shown.length > 1 ? `–${last} / ${total}` : `/ ${total}`;

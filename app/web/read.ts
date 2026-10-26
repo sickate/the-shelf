@@ -1,5 +1,6 @@
 import { api, ApiError, Book, bookUrl, el, errorText, fmt, getOwner, humanSize, loginForm, splitTitle, store } from "./lib/common";
 import { applyPageTheme, narrowMedia, PrefField, prefsPanel, spreadSwitch } from "./lib/reader-panel";
+import { reportOpened, reportProgress } from "./lib/recent";
 import {
   clampFont,
   contentCss,
@@ -215,6 +216,7 @@ async function readPdf(sizeBytes: number) {
     const label = nums.join("–");
     pageInput.value = String(pageNum);
     store.set(posKey, String(pageNum));
+    reportProgress(`第 ${label} / ${total} 页`);
     if (firstRender) setStage(`正在渲染第 ${label} 页…`, `共 ${total} 页`);
     busy.textContent = `正在渲染第 ${label} 页…`;
     const pages = await Promise.all(nums.map((n) => pdf.getPage(n)));
@@ -430,6 +432,7 @@ async function readEpub() {
     if (cfi) store.set(posKey, cfi);
     const pct = location?.start?.percentage;
     if (typeof pct === "number" && pct > 0) loc.textContent = `${Math.round(pct * 100)}%`;
+    if (typeof pct === "number" && pct > 0) reportProgress(`约 ${Math.round(pct * 100)}%`);
   });
   const onKey = (ev: KeyboardEvent) => {
     if ((ev.target as HTMLElement)?.tagName === "SELECT") return;
@@ -540,6 +543,7 @@ async function readMobi(format: string) {
     const { cfi, fraction, tocItem } = ev.detail || {};
     if (cfi) store.set(posKey, cfi);
     if (typeof fraction === "number") loc.textContent = `${Math.round(fraction * 100)}%`;
+    if (typeof fraction === "number") reportProgress(`约 ${Math.round(fraction * 100)}%`);
     if (tocItem?.label) loc.title = String(tocItem.label).trim();
   });
   const onKey = (ev: KeyboardEvent) => {
@@ -636,6 +640,7 @@ async function readText() {
       t = window.setTimeout(() => {
         const max = document.documentElement.scrollHeight - innerHeight;
         if (max > 0) store.set(posKey, (scrollY / max).toFixed(5));
+        if (max > 0) reportProgress(`约 ${Math.round((scrollY / max) * 100)}%`);
       }, 250);
     },
     { passive: true },
@@ -692,6 +697,7 @@ async function readText() {
     else if (f === "txt" || f === "md") await readText();
     else if (f === "cbz") await (await import("./lib/comic-reader")).readComic({ view, toolbar, posKey, load: () => fetchFile(" CBZ"), setStage, hideLoading, showError });
     else showError(`不支持在线阅读 ${f.toUpperCase() || "该"} 格式，请下载。`);
+    if (msg.hidden) reportOpened(String(book.id)); // loaded without an error: record it in 最近阅读
   } catch (e: any) {
     const status = e instanceof ApiError ? e.status : e?.status;
     if (status === 401 || /401/.test(String(e?.message))) {
