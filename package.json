@@ -29,7 +29,8 @@
     "test:metadata:browser": "node scripts/metadata-browser-fixture.mjs",
     "prepare:text": "node scripts/prepare-text.mjs",
     "text:select": "node scripts/select-text.mjs",
-    "app:test": "node --test tests/mvp-*.test.mjs",
+    "app:typecheck": "tsc -p app/tsconfig.json",
+    "app:test":"node --test tests/mvp-*.test.mjs",
     "app:dev": "node app/build.mjs && wrangler dev -c app/wrangler.jsonc",
     "app:deploy": "node app/build.mjs && wrangler deploy -c app/wrangler.jsonc"
   },
@@ -48,6 +49,7 @@
     "miniflare": "5.20261012.0-beta",
     "prettier": "^3.9.10",
     "prettier-plugin-astro": "^1.1.1",
+    "typescript": "5.9.3",
     "wrangler": "4.151.0"
   }
 }

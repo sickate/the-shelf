@@ -40,7 +40,7 @@ export function canThumb(b: Book): boolean {
 }
 
 class Skip extends Error {
-  constructor(public reason: ThumbSkip, message = reason) {
+  constructor(public reason: ThumbSkip, message: string = reason) {
     super(message);
   }
 }

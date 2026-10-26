@@ -3,6 +3,7 @@ import { build } from "esbuild";
 import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -11,7 +12,15 @@ const dist = join(here, "dist");
 const require = createRequire(import.meta.url);
 const pdfjsRoot = dirname(require.resolve("pdfjs-dist/package.json"));
 
-await rm(dist, { recursive: true, force: true });
+// Type check first (esbuild does not); fail the build on errors
+const tsc = spawnSync(process.execPath, [join(here, "..", "node_modules", "typescript", "bin", "tsc"), "-p", join(here, "tsconfig.json")], { encoding: "utf8" });
+if (tsc.status !== 0) {
+  console.error(tsc.stdout + tsc.stderr);
+  console.error("typecheck failed");
+  process.exit(1);
+}
+
+await rm(dist,{ recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 
 // Static HTML/CSS
