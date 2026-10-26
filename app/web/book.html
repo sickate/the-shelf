@@ -24,8 +24,7 @@
     <p id="load-status" class="notice" role="status">正在读取书籍详情…</p>
     <div id="book-content" hidden>
       <div class="breadcrumb">
-        <a id="back" href="/">书架</a> /
-        <a id="crumb-category" href="/"></a> / 书籍详情
+        <a id="back" href="/">书架</a><span id="crumb-path"></span> / 书籍详情
       </div>
       <section class="detail-hero">
         <div id="cover-slot"></div>
@@ -38,6 +37,7 @@
           <dl id="book-facts" class="facts"></dl>
         </div>
       </section>
+      <section id="book-class" class="detail-class" aria-label="图书分类"></section>
       <section class="detail-file">
         <h2 class="section-title">收藏文件</h2>
         <div class="file-row">
