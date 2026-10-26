@@ -29,6 +29,8 @@ const SMALL_WIDTH = 280;
 const MAX_HEIGHT = 600;
 const TARGET_BYTES = 150_000;
 const MAX_BYTES = 200_000; // server limit
+/** Below this share of inked pixels a rendered PDF page counts as blank. */
+const BLANK_INK = 0.004;
 
 const fileUrl = (b: Book) => `/api/books/${encodeURIComponent(String(b.id))}/file`;
 
@@ -116,56 +118,168 @@ async function imageThumb(image: Blob): Promise<Thumb> {
   }
 }
 
+/** Typographic cover for books whose file offers no usable cover or first page. */
+async function designedThumb(b: Book, author?: string): Promise<Thumb> {
+  const { typographicCover } = await import("./thumb-render");
+  const canvas = typographicCover(b, (b.authors?.length ? b.authors.join("、") : author || "").trim());
+  return encode((w) => draw(canvas, canvas.width, canvas.height, w));
+}
+
+/** Rasterised content page as a thumbnail. */
+function pageThumb(canvas: HTMLCanvasElement): Promise<Thumb> {
+  return encode((w) => draw(canvas, canvas.width, canvas.height, w));
+}
+
 async function pdfThumb(b: Book): Promise<Thumb> {
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
-  // Same range setup as the reader: only the chunks page 1 needs are requested.
-  const task = pdfjs.getDocument({
-    url: fileUrl(b),
-    withCredentials: true,
-    rangeChunkSize: 65536 * 4,
-    disableStream: true,
-    disableAutoFetch: true,
-    cMapUrl: "/pdfjs/cmaps/",
-    cMapPacked: true,
-    standardFontDataUrl: "/pdfjs/standard_fonts/",
-    wasmUrl: "/pdfjs/wasm/",
-    iccUrl: "/pdfjs/iccs/",
-  });
+  const { openPdf, PdfUnreadableError, firstPdfJpeg } = await import("./pdf");
+  let opened;
   try {
-    let pdf;
-    try {
-      pdf = await task.promise;
-    } catch (e: any) {
-      if (e?.status === 401) throw new ApiError(401, "unauthorized");
-      throw new Skip("parse_failed", `pdf open: ${e?.name || e}`);
+    // Same range setup as the reader: only the chunks page 1 needs are requested. Damaged
+    // (truncated) files are downloaded once and repaired in memory.
+    opened = await openPdf(pdfjs, fileUrl(b));
+  } catch (e: any) {
+    if (e instanceof ApiError) throw e;
+    if (e instanceof PdfUnreadableError) {
+      // Nothing renderable: a scanned book's first image is its cover; otherwise design one.
+      const jpeg = e.reason === "damaged" ? firstPdfJpeg(e.bytes) : null;
+      if (jpeg) return await imageThumb(jpeg).catch(() => designedThumb(b));
+      console.warn(`thumb ${b.id}: ${e.message}`);
+      return designedThumb(b);
     }
-    const page = await pdf.getPage(1);
-    const base = page.getViewport({ scale: 1 });
-    if (!base.width || !base.height) throw new Skip("parse_failed", "empty page");
-    const rendered = new Map<number, HTMLCanvasElement>();
-    return await encode(async (width) => {
-      const hit = rendered.get(width);
-      if (hit) return hit;
-      const w = Math.min(width, Math.ceil(base.width * 2));
-      const vp = page.getViewport({ scale: w / base.width });
-      const full = document.createElement("canvas");
-      full.width = Math.round(vp.width);
-      full.height = Math.min(Math.round(vp.height), MAX_HEIGHT);
-      const ctx = full.getContext("2d")!;
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, full.width, full.height);
-      // Rendering into a canvas shorter than the viewport keeps just the top of tall pages.
-      // intent "print" renders without requestAnimationFrame, which stalls in background tabs.
-      await page.render({ canvas: full, canvasContext: ctx, viewport: vp, background: "#fff", intent: "print" } as any)
-        .promise;
-      rendered.set(width, full);
-      return full;
-    });
+    throw new Skip("parse_failed", `pdf open: ${e?.name || e} ${e?.message || ""}`.trim());
+  }
+  try {
+    const { pdf } = opened;
+    const renderPage = async (n: number) => {
+      const page = await pdf.getPage(n);
+      const base = page.getViewport({ scale: 1 });
+      if (!base.width || !base.height) throw new Skip("parse_failed", "empty page");
+      const rendered = new Map<number, HTMLCanvasElement>();
+      const at = async (width: number) => {
+        const hit = rendered.get(width);
+        if (hit) return hit;
+        const w = Math.min(width, Math.ceil(base.width * 2));
+        const vp = page.getViewport({ scale: w / base.width });
+        const full = document.createElement("canvas");
+        full.width = Math.max(1, Math.round(vp.width));
+        full.height = Math.max(1, Math.min(Math.round(vp.height), MAX_HEIGHT));
+        const ctx = full.getContext("2d")!;
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, full.width, full.height);
+        // Rendering into a canvas shorter than the viewport keeps just the top of tall pages.
+        // intent "print" renders without requestAnimationFrame, which stalls in background tabs.
+        await page.render({ canvas: full, canvasContext: ctx, viewport: vp, background: "#fff", intent: "print" } as any)
+          .promise;
+        rendered.set(width, full);
+        return full;
+      };
+      return { first: await at(WIDTH), thumb: () => encode(at) };
+    };
+    // Page 1 normally. A failing or (nearly) blank first page - e.g. a damaged file whose cover
+    // image is missing - falls through to the next of the first three pages.
+    const { inkRatio } = await import("./thumb-render");
+    let fallback: Awaited<ReturnType<typeof renderPage>> | null = null;
+    let error: unknown = null;
+    for (let n = 1; n <= Math.min(3, pdf.numPages); n++) {
+      try {
+        const r = await renderPage(n);
+        const ink = inkRatio(r.first);
+        if (ink >= BLANK_INK) return await r.thumb();
+        fallback ??= r;
+      } catch (e) {
+        error ??= e;
+        console.warn(`thumb ${b.id}: page ${n} failed (${String((e as any)?.message || e).slice(0, 80)})`);
+      }
+    }
+    if (fallback) return await fallback.thumb();
+    throw error;
   } finally {
-    await task.destroy().catch(() => {});
+    await opened.destroy();
   }
 }
+
+type PageSource = { doc: Document; res: import("./thumb-render").PageResources; done?: () => void };
+
+/** First of up to 6 content pages that renders with visible ink, as a 360x480 canvas. */
+async function firstPage(pages: AsyncIterable<PageSource>): Promise<HTMLCanvasElement | null> {
+  const { rasterizeDocument, hasVisibleContent } = await import("./thumb-render");
+  let tried = 0;
+  for await (const p of pages) {
+    try {
+      if (!hasVisibleContent(p.doc)) continue;
+      const canvas = await rasterizeDocument(p.doc, p.res);
+      if (canvas) return canvas;
+    } finally {
+      p.done?.();
+    }
+    if (++tried >= 6) break;
+  }
+  return null;
+}
+
+async function* epubPages(book: any): AsyncGenerator<PageSource> {
+  const archive = book.archive;
+  const sections = (book.spine?.spineItems || []).filter((s: any) => s.linear !== "no").slice(0, 10);
+  for (const section of sections) {
+    let doc: Document | undefined;
+    try {
+      await section.load(book.load.bind(book));
+      doc = section.document;
+    } catch {
+      /* unreadable section */
+    }
+    if (!doc || !archive) continue;
+    // Archive paths are absolute ("/OEBPS/x.xhtml"); resolve references against the section.
+    const path = (href: string) => new URL(href, `http://epub${section.url}`).pathname;
+    yield {
+      doc,
+      res: {
+        image: async (src) =>
+          src.startsWith("data:") ? (await fetch(src)).blob() : (await archive.getBlob(path(src))) || null,
+        css: async (href) => (await archive.getText(path(href))) || null,
+      },
+      done: () => section.unload?.(),
+    };
+  }
+}
+
+async function* mobiPages(book: any): AsyncGenerator<PageSource> {
+  const { typedImage } = await import("./mobi");
+  const blobOnly = (url: string) => (url.startsWith("blob:") ? fetch(url) : null);
+  for (const section of (book.sections || []).slice(0, 10)) {
+    let doc: Document | undefined;
+    try {
+      // foliate's load() returns a blob URL of the section with resources as blob URLs.
+      const text = await (await fetch(await section.load())).text();
+      doc = new DOMParser().parseFromString(text, "application/xhtml+xml");
+      if (doc.querySelector("parsererror")) doc = new DOMParser().parseFromString(text, "text/html");
+    } catch {
+      /* unreadable section */
+    }
+    if (!doc) continue;
+    yield {
+      doc,
+      res: {
+        image: async (src) => {
+          const r = await blobOnly(src);
+          return r?.ok ? typedImage(await r.blob()) : null;
+        },
+        css: async (href) => {
+          const r = await blobOnly(href);
+          return r?.ok ? r.text() : null;
+        },
+      },
+    };
+  }
+}
+
+const joinNames = (v: unknown): string =>
+  (Array.isArray(v) ? v : v ? [v] : [])
+    .map((x: any) => (typeof x === "string" ? x : x?.name || ""))
+    .filter(Boolean)
+    .join("、");
 
 async function epubThumb(b: Book): Promise<Thumb> {
   const [{ default: ePub }, blob] = await Promise.all([import("epubjs"), download(b)]);
@@ -187,9 +301,15 @@ async function epubThumb(b: Book): Promise<Thumb> {
         if (path) url = await (book as any).archive.createUrl(path).catch(() => null);
       }
     }
-    if (!url) throw new Skip("no_cover", "epub has no cover");
-    const res = await fetch(url);
-    return await imageThumb(await res.blob());
+    if (url) {
+      const res = await fetch(url);
+      return await imageThumb(await res.blob());
+    }
+    // No cover image: use the first content page, else a designed cover.
+    await Promise.race([(book as any).opened, new Promise((r) => setTimeout(r, 15_000))]);
+    const page = await firstPage(epubPages(book)).catch(() => null);
+    if (page) return await pageThumb(page);
+    return await designedThumb(b, joinNames((book as any).packaging?.metadata?.creator));
   } finally {
     if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
     // epub.js keeps unpacking (navigation, CSS replacements) after the cover is known;
@@ -207,10 +327,19 @@ async function epubThumb(b: Book): Promise<Thumb> {
 }
 
 async function mobiThumb(b: Book): Promise<Thumb> {
-  const [{ mobiCover }, blob] = await Promise.all([import("./mobi"), download(b)]);
-  const cover = await mobiCover(blob);
-  if (!cover) throw new Skip("no_cover", "mobi has no readable cover");
-  return imageThumb(cover);
+  const [{ openMobi, foliateCover }, blob] = await Promise.all([import("./mobi"), download(b)]);
+  let book;
+  try {
+    book = await openMobi(blob);
+  } catch (e: any) {
+    throw new Skip("parse_failed", `mobi open: ${e?.message || e}`);
+  }
+  const cover = await foliateCover(book);
+  if (cover) return imageThumb(cover);
+  // No cover image: use the first content page, else a designed cover.
+  const page = await firstPage(mobiPages(book)).catch(() => null);
+  if (page) return pageThumb(page);
+  return designedThumb(b, joinNames(book.metadata?.author));
 }
 
 /** Builds a thumbnail or explains why not. Throws only ApiError(401) (file access lost). */

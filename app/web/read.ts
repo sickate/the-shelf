@@ -100,26 +100,22 @@ async function readPdf(sizeBytes: number) {
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
   setStage("正在打开 PDF…");
   setProgress(0, sizeBytes, false);
-  // Range loading: with disableStream pdf.js aborts the initial full GET once it sees
-  // Accept-Ranges/Content-Length and then fetches only the 256 KB chunks it needs, so the
-  // first page appears without downloading the whole file. disableAutoFetch stops it from
-  // prefetching the rest in the background. (Files <= 512 KB are simply fetched whole.)
-  const loadingTask = pdfjs.getDocument({
-    url: fileUrl,
-    withCredentials: true,
-    rangeChunkSize: 65536 * 4,
-    disableStream: true,
-    disableAutoFetch: true,
-    cMapUrl: "/pdfjs/cmaps/",
-    cMapPacked: true,
-    standardFontDataUrl: "/pdfjs/standard_fonts/",
-    wasmUrl: "/pdfjs/wasm/",
-    iccUrl: "/pdfjs/iccs/",
-  });
-  // In range mode "loaded" is just the chunks fetched so far, so show bytes, not a percentage.
-  loadingTask.onProgress = ({ loaded, total }: { loaded: number; total?: number }) =>
-    setProgress(loaded, total || sizeBytes, false);
-  const pdf = await loadingTask.promise;
+  // Range loading (see lib/pdf.ts): only the chunks the shown pages need are fetched, so the
+  // first page appears without downloading the whole file. A damaged (truncated) PDF is
+  // downloaded once and repaired in memory so its surviving pages can still be read.
+  const { openPdf, PdfUnreadableError } = await import("./lib/pdf");
+  let opened;
+  try {
+    // In range mode "loaded" is just the chunks fetched so far, so show bytes, not a percentage.
+    opened = await openPdf(pdfjs, fileUrl, ({ loaded, total }) => setProgress(loaded, total || sizeBytes, false));
+  } catch (e) {
+    if (e instanceof PdfUnreadableError) {
+      showError(`${e.message}，无法在线阅读，请下载后用其他阅读器打开。`);
+      return;
+    }
+    throw e;
+  }
+  const { pdf } = opened;
 
   const total = pdf.numPages;
   let pageNum = Math.min(Math.max(1, Number(store.get(posKey)) || 1), total);
@@ -213,6 +209,9 @@ async function readPdf(sizeBytes: number) {
     tocSelect,
     busy,
   );
+  if (opened.repaired) {
+    toolbar.append(el("span", { class: "muted small", title: "文件缺少结尾的索引，已在浏览器内修复" }, "文件不完整，仅能显示保留下来的页面"));
+  }
   toolbar.hidden = false;
 
   document.addEventListener("keydown", (ev) => {

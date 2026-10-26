@@ -45,24 +45,35 @@ export async function openMobi(blob: Blob): Promise<FoliateBook> {
 /** Cover image of a MOBI / AZW3 file, or null when it has none or cannot be parsed. */
 export async function mobiCover(blob: Blob): Promise<Blob | null> {
   try {
-    const book = await openMobi(blob);
-    const cover: Blob | null | undefined = await book.getCover?.();
-    if (!cover || !cover.size) return null;
-    if (cover.type) return cover;
-    // foliate returns an untyped Blob; sniff the image type so it can be decoded/uploaded.
-    const b = new Uint8Array(await cover.slice(0, 12).arrayBuffer());
-    const type =
-      b[0] === 0xff && b[1] === 0xd8
-        ? "image/jpeg"
-        : b[0] === 0x89 && b[1] === 0x50
-          ? "image/png"
-          : b[0] === 0x47 && b[1] === 0x49
-            ? "image/gif"
-            : b[8] === 0x57 && b[9] === 0x45
-              ? "image/webp"
-              : "";
-    return type ? new Blob([cover], { type }) : cover;
+    return await foliateCover(await openMobi(blob));
   } catch {
     return null;
   }
+}
+
+/** Cover image of an opened foliate-js book (typed Blob), or null. */
+export async function foliateCover(book: FoliateBook): Promise<Blob | null> {
+  try {
+    const cover: Blob | null | undefined = await book.getCover?.();
+    return cover && cover.size ? await typedImage(cover) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** foliate returns untyped Blobs for images; sniff the type so they can be decoded/uploaded. */
+export async function typedImage(blob: Blob): Promise<Blob> {
+  if (blob.type) return blob;
+  const b = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  const type =
+    b[0] === 0xff && b[1] === 0xd8
+      ? "image/jpeg"
+      : b[0] === 0x89 && b[1] === 0x50
+        ? "image/png"
+        : b[0] === 0x47 && b[1] === 0x49
+          ? "image/gif"
+          : b[8] === 0x57 && b[9] === 0x45
+            ? "image/webp"
+            : "";
+  return type ? new Blob([blob], { type }) : blob;
 }
