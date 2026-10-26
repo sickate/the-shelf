@@ -1,6 +1,6 @@
 # 分级分类方案（2026-10-24）
 
-本文是计划，未实现。依赖 `docs/features-plan-2026-10-24.md` 已上线的 AI 详情（F4）与 DeepSeek 检索。
+本文最初为计划；已于 2026-10-25 上线，见 §12。依赖 `docs/features-plan-2026-10-24.md` 已上线的 AI 详情（F4）与 DeepSeek 检索。
 
 ## 1. 问题
 
@@ -110,3 +110,12 @@ CREATE INDEX IF NOT EXISTS book_class_clc ON book_class (clc);
 - 接口：`GET /api/books` 每本增加 `docType`（null = 未归类）；`GET /api/books/:id` 增加 `docType`；`GET /api/clc` 的 `nodes[].count` 只统计 `docType` 为 `book` 或 null 的条目，另返回 `docTypes: {course: n, paper: n, …}`；`PUT /api/books/:id/class` 接受可选 `docType`（手动修改）。
 - 界面（2026-10-25 用户确认：先分“图书”和“资料”，图书用中图法，资料按类型）：侧栏分两段——“图书”（中图法树）与“资料”（按类型列出，带册数，URL 参数 `type=course`）；书卡与详情页显示资料类型标签；所有者在“修改分类”中可改资料类型。
 - 迁移 `0004_doc_type.sql`：`ALTER TABLE book_class ADD COLUMN doc_type TEXT`。已归类的 11 本在批量重跑（`--force`，跳过手动）时补齐。
+
+## 12. 上线结果（2026-10-25）
+
+- 全库 1595 条均已归类（未分类 0）。依据：CIP 374、AI 推断 837、手动 384。AI/CIP 的可信度：高 577、中 459、低 175。
+- 资料类型：图书 1016、文章汇编 287、其他资料 139、课程资料 77、手册与文档 53、论文与报告 23。
+- 图书大类：T 266、I 191、J 171（含漫画 164 话）、F 132、B 57、K 52、O 37、D 30、C 24、G 21，其余各类 ≤ 6。
+- 批量后的手动修正（`source=manual`，批量重跑不覆盖）：`09-漫画` 164 话统一为图书 J2；小于 200 KB 的 DOC/DOCX 单篇文章（职场、公文写作、论坛帖等）224 篇统一为文章汇编，保留各自主题号（《罗织经》《外套》除外）。
+- 抽查 30 本图书：主分类大类基本合理，主要问题在资料类型——个别笔记、白皮书仍标为图书（如《老王缠论教学极简笔记》《数字货币12-22》《Sourcing Innovation Spend Visibility Guide》），可在详情页“修改分类”逐本改正。
+- 网关共享繁忙时批量脚本按 30 次累计等待保护停止，续跑不加 `--force` 只补未分类条目。
