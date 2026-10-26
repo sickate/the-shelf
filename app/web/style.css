@@ -626,4 +626,82 @@ body.reader[data-reader-theme="dark"] {
   .recent-card { flex-basis: 108px; }
   .recent-card .cover { padding: 10px; }
   .recent-card .cover h2 { font-size: 12px; }
+
+/* ---------- Reader notes (N2): selection bar, editor, drawer, highlights ---------- */
+.note-yellow { --hl: var(--hl-yellow); }
+.rn-bar {
+  position: fixed; z-index: 20; display: flex; gap: 6px; align-items: center;
+  padding: 6px; background: var(--white); border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2); user-select: none; -webkit-user-select: none;
+}
+.rn-bar[hidden], .rn-editor[hidden], .rn-drawer[hidden], .rn-toast[hidden] { display: none; }
+.rn-bar > button { padding: 7px 12px; font-size: 13px; }
+.rn-bar .note-colors { padding-left: 6px; border-left: 1px solid var(--line); }
+.rn-bar .note-swatch { width: 26px; height: 26px; }
+.rn-editor {
+  position: fixed; z-index: 21; width: min(420px, calc(100vw - 16px)); padding: 14px 16px;
+  display: grid; gap: 10px; background: var(--white); border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.25);
+}
+.rn-editor.rn-sheet { left: 0; right: 0; top: auto; bottom: 0; width: 100%; border-radius: 10px 10px 0 0; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+.rn-ed-title { font-size: 12px; color: var(--muted); letter-spacing: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rn-quote { margin: 0; max-height: 5.4em; overflow: hidden; font: 14px/1.8 "Songti SC", "Noto Serif CJK SC", Georgia, serif; padding: 2px 8px; border-left: 3px solid var(--hl); background: color-mix(in srgb, var(--hl) 14%, transparent); overflow-wrap: anywhere; }
+.rn-editor textarea { width: 100%; resize: vertical; line-height: 1.7; min-height: 90px; }
+.rn-ed-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rn-ed-actions { display: flex; gap: 8px; align-items: center; }
+.rn-ed-actions button:not(.link-btn) { padding: 7px 14px; font-size: 13px; }
+.rn-spacer { flex: 1; }
+.rn-del { color: var(--err); font-size: 12px; }
+.rn-drawer {
+  position: fixed; z-index: 15; top: 0; right: 0; bottom: 0; width: min(380px, 100vw);
+  display: flex; flex-direction: column; background: var(--paper); border-left: 1px solid var(--line);
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.18);
+}
+.rn-drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.rn-drawer-head h2 { margin: 0; font: 500 16px/1.4 Georgia, "Songti SC", serif; }
+.rn-close { font-size: 22px; line-height: 1; padding: 2px 6px; }
+.rn-empty { padding: 16px; margin: 0; }
+.rn-list { list-style: none; margin: 0; padding: 8px 10px; overflow-y: auto; flex: 1; display: grid; gap: 8px; align-content: start; }
+.rn-item { display: grid; gap: 4px; width: 100%; text-align: left; padding: 10px 12px; border-left: 4px solid var(--hl); font-size: 13px; line-height: 1.6; }
+.rn-item-quote { font-family: "Songti SC", "Noto Serif CJK SC", Georgia, serif; overflow-wrap: anywhere; }
+.rn-item-note { color: var(--muted); overflow-wrap: anywhere; }
+.rn-drawer-foot { padding: 12px 16px; border-top: 1px solid var(--line); font-size: 12px; }
+.rn-drawer-foot a { color: var(--accent); border-bottom: 1px solid currentColor; }
+.rn-open[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.rn-toast {
+  position: fixed; z-index: 22; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100vw - 32px);
+  padding: 9px 16px; border-radius: 4px; background: var(--ink); color: var(--paper); font-size: 13px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+/* TXT highlights */
+mark.rn-hl { color: inherit; background: color-mix(in srgb, var(--hl) 38%, transparent); border-radius: 2px; cursor: pointer; transition: background-color 0.2s; }
+mark.rn-hl.rn-flash { background: color-mix(in srgb, var(--hl) 85%, transparent); }
+/* PDF: page box, highlights, and the minimal pdf.js text-layer rules (from web/pdf_viewer.css) */
+.pdf-box { position: relative; display: inline-block; vertical-align: top; line-height: 0; }
+.pdf-box[hidden] { display: none; }
+.pdf-box .pdf-page { display: block; }
+.rn-pdf-hls { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.rn-pdf-hl { position: absolute; background: var(--hl); opacity: 0.35; mix-blend-mode: multiply; border-radius: 1px; transition: opacity 0.2s; }
+.rn-pdf-hl.rn-flash { opacity: 0.8; }
+.textLayer {
+  position: absolute; inset: 0; overflow: clip; opacity: 1; line-height: 1; text-align: initial;
+  letter-spacing: normal; word-spacing: normal; text-size-adjust: none; -webkit-text-size-adjust: none;
+  forced-color-adjust: none; transform-origin: 0 0; z-index: 1; color-scheme: only light;
+  --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer span, .textLayer br {
+  color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%;
+  user-select: text; -webkit-user-select: text;
+}
+.textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent { display: contents; }
+.textLayer ::selection { background: rgba(0, 90, 255, 0.28); color: transparent; }
+.textLayer br::selection { background: transparent; }
+.textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; -webkit-user-select: none; }
+.textLayer.selecting .endOfContent { top: 0; }
+@media (max-width: 600px) {
+  .rn-bar > button { padding: 7px 10px; }
+  .rn-drawer { width: 100vw; }
 }

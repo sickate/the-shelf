@@ -17,6 +17,7 @@ import {
   spreadStart,
   stepSpread,
 } from "./lib/reader-prefs";
+import { epubNotes, mobiNotes, pdfNotes, textNotes } from "./lib/reader-notes";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const titleEl = $<HTMLHeadingElement>("book-title");
@@ -189,9 +190,12 @@ async function readPdf(sizeBytes: number) {
   // pages are requested, so range loading still fetches just what is needed.
   const PAIR_GAP = 8;
   const canvases = [el("canvas", { class: "pdf-page" }), el("canvas", { class: "pdf-page" })];
-  const spreadEl = el("div", { class: "pdf-spread" }, ...canvases);
+  // Each canvas sits in a box that also holds the notes text layer and highlights.
+  const boxes = canvases.map((c) => el("div", { class: "pdf-box" }, c));
+  const spreadEl = el("div", { class: "pdf-spread" }, ...boxes);
   const wrap = el("div", { class: "pdf-wrap" }, spreadEl);
   view.replaceChildren(wrap);
+  const notes = pdfNotes(id, pdfjs, boxes, (n) => go(n));
 
   const pageInput = el("input", { type: "number", min: "1", max: String(total), class: "page-input", "aria-label": "页码" });
   const zoomLabel = el("span", { class: "muted small zoom-label" });
@@ -225,7 +229,8 @@ async function readPdf(sizeBytes: number) {
     zoomLabel.textContent = zoom ? `${Math.round(scale * 100)}%` : "适合宽度";
     const dpr = window.devicePixelRatio || 1;
     spreadEl.classList.toggle("double", double);
-    canvases[1].hidden = pages.length < 2;
+    boxes[1].hidden = pages.length < 2;
+    if (pages.length < 2) notes.clearSlot(1);
     const run = pages.map((page, i) => {
       const canvas = canvases[i];
       const vp = page.getViewport({ scale });
@@ -233,6 +238,7 @@ async function readPdf(sizeBytes: number) {
       canvas.height = Math.floor(vp.height * dpr);
       canvas.style.width = `${Math.floor(vp.width)}px`;
       canvas.style.height = `${Math.floor(vp.height)}px`;
+      notes.renderPage(i, page, vp, nums[i]);
       return page.render({
         canvas,
         canvasContext: canvas.getContext("2d")!,
@@ -301,6 +307,7 @@ async function readPdf(sizeBytes: number) {
     }),
     el("span", { class: "sep" }),
     ...controls.nodes,
+    notes.button,
     tocSelect,
     busy,
   );
@@ -324,6 +331,7 @@ async function readPdf(sizeBytes: number) {
   });
 
   await render();
+  void notes.start();
 
   // Outline (TOC)
   try {
@@ -374,6 +382,7 @@ async function readEpub() {
   const epubFlow = () => (prefs.flow === "scrolled" ? "scrolled-doc" : "paginated");
   const epubSpread = () => (isDouble() ? "always" : "none");
   const rendition = book.renderTo(area, { width: "100%", height: "100%", flow: epubFlow(), spread: epubSpread() } as any);
+  const notes = epubNotes(id, rendition, book);
 
   // All typography/colour goes through one keyed stylesheet per section document, so a
   // change replaces it in place (hooks.content covers sections rendered later).
@@ -422,6 +431,7 @@ async function readEpub() {
     button("A−", "缩小字号", () => bumpFont(-FONT_STEP)),
     button("A+", "放大字号", () => bumpFont(FONT_STEP)),
     ...controls.nodes,
+    notes.button,
     tocSelect,
     loc,
   );
@@ -465,6 +475,7 @@ async function readEpub() {
     await rendition.display();
   }
   hideLoading();
+  void notes.start();
 
   book.loaded.navigation.then((nav: any) => {
     const opts: HTMLOptionElement[] = [el("option", { value: "" }, "目录")];
@@ -527,6 +538,7 @@ async function readMobi(format: string) {
   area.append(fv);
   view.replaceChildren(area);
   await fv.open(book);
+  const notes = await mobiNotes(id, fv);
   const r = fv.renderer;
   // The paginator keeps its anchor across attribute changes, so the position survives.
   const applyLayout = () => {
@@ -556,6 +568,7 @@ async function readMobi(format: string) {
     button("A−", "缩小字号", () => bumpFont(-FONT_STEP)),
     button("A+", "放大字号", () => bumpFont(FONT_STEP)),
     ...controls.nodes,
+    notes.button,
     tocSelect,
     loc,
   );
@@ -588,6 +601,7 @@ async function readMobi(format: string) {
     await fv.goToTextStart().catch(() => fv.next());
   }
   hideLoading();
+  void notes.start();
 
   const opts: HTMLOptionElement[] = [el("option", { value: "" }, "目录")];
   const walk = (items: any[], depth: number) => {
@@ -629,6 +643,7 @@ async function readText() {
   article.textContent = text;
   view.replaceChildren(article);
   view.classList.add("text-view");
+  const notes = textNotes(id, article, text);
   // Plain text always scrolls; the panel restyles the container (colours follow the page theme).
   const TEXT_WIDTH = { narrow: "52em", medium: "42em", wide: "34em" };
   const applyText = () => {
@@ -647,9 +662,10 @@ async function readText() {
     applyText();
     window.scrollTo(0, frac * (document.documentElement.scrollHeight - innerHeight));
   });
-  toolbar.replaceChildren(...controls.nodes);
+  toolbar.replaceChildren(notes.button, ...controls.nodes);
   toolbar.classList.add("toolbar-end");
   toolbar.hidden = false;
+  void notes.start();
   const saved = Number(store.get(posKey));
   if (saved > 0) {
     requestAnimationFrame(() => window.scrollTo(0, saved * (document.documentElement.scrollHeight - innerHeight)));
