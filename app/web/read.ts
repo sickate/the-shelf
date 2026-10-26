@@ -1,4 +1,21 @@
 import { api, ApiError, Book, bookUrl, el, errorText, fmt, getOwner, humanSize, loginForm, splitTitle, store } from "./lib/common";
+import { applyPageTheme, narrowMedia, PrefField, prefsPanel, spreadSwitch } from "./lib/reader-panel";
+import {
+  clampFont,
+  contentCss,
+  effectiveSpread,
+  FONT_STACKS,
+  FOLIATE_MARGIN,
+  FONT_STEP,
+  loadPrefs,
+  MARGIN_PX,
+  ReaderPrefs,
+  resolveScheme,
+  savePrefs,
+  spreadPages,
+  spreadStart,
+  stepSpread,
+} from "./lib/reader-prefs";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const titleEl = $<HTMLHeadingElement>("book-title");
@@ -15,6 +32,48 @@ const progressBar = $<HTMLDivElement>("progress-bar");
 const id = new URLSearchParams(location.search).get("id") || "";
 const fileUrl = `/api/books/${encodeURIComponent(id)}/file`;
 const posKey = `shelf:pos:${id}`;
+
+// ---------------- Reader preferences (shared by all formats) ----------------
+let prefs: ReaderPrefs = loadPrefs();
+const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+const narrow = narrowMedia();
+const scheme = () => resolveScheme(prefs.theme, systemDark.matches);
+const isDouble = () => effectiveSpread(prefs, narrow.matches) === "double";
+/** Side padding for EPUB / TXT: the chosen margin, but never more than 8vw on small screens. */
+const sidePad = () => `max(8px, min(${MARGIN_PX[prefs.margin]}px, 8vw))`;
+applyPageTheme(prefs.theme);
+
+/**
+ * Builds the spread switch and/or "Aa" panel for a reader. `apply` receives what changed
+ * (also called with `{ spread }` when the viewport crosses the narrow breakpoint and with
+ * `{ theme }` when the system colour scheme flips). Returns the toolbar nodes and `update`.
+ */
+function readerControls(withSpread: boolean, fields: PrefField[], apply: (changed: Partial<ReaderPrefs>) => void) {
+  const update = (patch: Partial<ReaderPrefs>) => {
+    prefs = { ...prefs, ...patch };
+    savePrefs(prefs);
+    if ("theme" in patch) applyPageTheme(prefs.theme);
+    sw?.sync(prefs);
+    panel?.sync();
+    apply(patch);
+  };
+  const sw = withSpread ? spreadSwitch((spread) => update({ spread })) : null;
+  const panel = fields.length ? prefsPanel(fields, () => prefs, update) : null;
+  sw?.sync(prefs);
+  if (withSpread) {
+    narrow.addEventListener?.("change", () => {
+      sw?.sync(prefs);
+      if (prefs.spread === "double") apply({ spread: prefs.spread });
+    });
+  }
+  systemDark.addEventListener?.("change", () => {
+    if (prefs.theme === "system") apply({ theme: prefs.theme });
+  });
+  const nodes = [sw?.el, panel?.el].filter((n): n is HTMLElement => !!n);
+  return { nodes, update };
+}
+
+const REFLOW_FIELDS: PrefField[] = ["font", "fontPct", "lineHeight", "margin", "theme", "flow"];
 
 // ---------------- Loading status ----------------
 function setStage(text: string, detail = "") {
@@ -118,53 +177,75 @@ async function readPdf(sizeBytes: number) {
   const { pdf } = opened;
 
   const total = pdf.numPages;
-  let pageNum = Math.min(Math.max(1, Number(store.get(posKey)) || 1), total);
+  let pageNum = Math.min(Math.max(1, Number(store.get(posKey)) || 1), total); // first page of the shown spread
   let zoom = 0; // 0 = fit width, else absolute scale
-  let task: { cancel(): void; promise: Promise<void> } | null = null;
+  let tasks: { cancel(): void; promise: Promise<void> }[] = [];
+  let gen = 0; // bumps on every render so a superseded one stops early
   let firstRender = true;
   const busy = el("span", { class: "busy muted small", "aria-live": "polite" });
 
-  const canvas = el("canvas", { class: "pdf-page" });
-  const wrap = el("div", { class: "pdf-wrap" }, canvas);
+  // Double mode shows two pages side by side (page 1 alone as the cover); only the shown
+  // pages are requested, so range loading still fetches just what is needed.
+  const PAIR_GAP = 8;
+  const canvases = [el("canvas", { class: "pdf-page" }), el("canvas", { class: "pdf-page" })];
+  const spreadEl = el("div", { class: "pdf-spread" }, ...canvases);
+  const wrap = el("div", { class: "pdf-wrap" }, spreadEl);
   view.replaceChildren(wrap);
 
   const pageInput = el("input", { type: "number", min: "1", max: String(total), class: "page-input", "aria-label": "页码" });
   const zoomLabel = el("span", { class: "muted small zoom-label" });
   const tocSelect = el("select", { "aria-label": "目录", hidden: "" });
 
-  async function render() {
-    task?.cancel();
-    const n = pageNum;
-    pageInput.value = String(n);
-    store.set(posKey, String(n));
-    if (firstRender) setStage(`正在渲染第 ${n} 页…`, `共 ${total} 页`);
-    busy.textContent = `正在渲染第 ${n} 页…`;
-    const page = await pdf.getPage(n);
-    if (n !== pageNum) return; // superseded while loading
-    const base = page.getViewport({ scale: 1 });
+  /** Fit-width scale: one page fills the width, or a pair (cover: half the width) in double mode. */
+  const fitScale = (pages: { getViewport(o: { scale: number }): { width: number } }[], double: boolean) => {
     const avail = Math.max(200, wrap.clientWidth - 16);
-    const scale = zoom || avail / base.width;
+    const widths = pages.map((p) => p.getViewport({ scale: 1 }).width);
+    if (!double) return avail / widths[0];
+    const slot = avail - PAIR_GAP;
+    return widths.length === 2 ? slot / (widths[0] + widths[1]) : slot / 2 / widths[0];
+  };
+
+  async function render() {
+    for (const t of tasks) t.cancel();
+    tasks = [];
+    const my = ++gen;
+    const double = isDouble();
+    pageNum = spreadStart(pageNum, total, double);
+    const nums = spreadPages(pageNum, total, double);
+    const label = nums.join("–");
+    pageInput.value = String(pageNum);
+    store.set(posKey, String(pageNum));
+    if (firstRender) setStage(`正在渲染第 ${label} 页…`, `共 ${total} 页`);
+    busy.textContent = `正在渲染第 ${label} 页…`;
+    const pages = await Promise.all(nums.map((n) => pdf.getPage(n)));
+    if (my !== gen) return; // superseded while loading
+    const scale = zoom || fitScale(pages, double);
     zoomLabel.textContent = zoom ? `${Math.round(scale * 100)}%` : "适合宽度";
-    const vp = page.getViewport({ scale });
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.floor(vp.width * dpr);
-    canvas.height = Math.floor(vp.height * dpr);
-    canvas.style.width = `${Math.floor(vp.width)}px`;
-    canvas.style.height = `${Math.floor(vp.height)}px`;
-    const t = page.render({
-      canvas,
-      canvasContext: canvas.getContext("2d")!,
-      viewport: vp,
-      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+    spreadEl.classList.toggle("double", double);
+    canvases[1].hidden = pages.length < 2;
+    const run = pages.map((page, i) => {
+      const canvas = canvases[i];
+      const vp = page.getViewport({ scale });
+      canvas.width = Math.floor(vp.width * dpr);
+      canvas.height = Math.floor(vp.height * dpr);
+      canvas.style.width = `${Math.floor(vp.width)}px`;
+      canvas.style.height = `${Math.floor(vp.height)}px`;
+      return page.render({
+        canvas,
+        canvasContext: canvas.getContext("2d")!,
+        viewport: vp,
+        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+      });
     });
-    task = t;
+    tasks = run;
     try {
-      await t.promise;
-      if (n === pageNum) busy.textContent = "";
+      await Promise.all(run.map((t) => t.promise));
+      if (my === gen) busy.textContent = "";
     } catch (e: any) {
       if (e?.name !== "RenderingCancelledException") {
         busy.textContent = "";
-        showError(`第 ${n} 页渲染失败：${e?.message || e}`);
+        showError(`第 ${label} 页渲染失败：${e?.message || e}`);
       }
     }
     if (firstRender) {
@@ -173,25 +254,35 @@ async function readPdf(sizeBytes: number) {
     }
   }
   const go = (n: number) => {
-    const next = Math.min(Math.max(1, n), total);
+    const next = spreadStart(n, total, isDouble());
     if (next !== pageNum) {
       pageNum = next;
       render();
       wrap.scrollTop = 0;
     }
   };
+  const step = (dir: 1 | -1) => go(stepSpread(pageNum, total, isDouble(), dir));
   const currentScale = async () => {
     if (zoom) return zoom;
-    const page = await pdf.getPage(pageNum);
-    return Math.max(200, wrap.clientWidth - 16) / page.getViewport({ scale: 1 }).width;
+    const double = isDouble();
+    const pages = await Promise.all(spreadPages(pageNum, total, double).map((n) => pdf.getPage(n)));
+    return fitScale(pages, double);
   };
+
+  // PDF is not reflowable: the panel only offers the theme (page background).
+  const controls = readerControls(true, ["theme"], (changed) => {
+    if ("spread" in changed) {
+      render();
+      wrap.scrollTop = 0;
+    }
+  });
 
   pageInput.addEventListener("change", () => go(Number(pageInput.value) || 1));
   toolbar.replaceChildren(
-    button("‹", "上一页", () => go(pageNum - 1)),
+    button("‹", "上一页", () => step(-1)),
     pageInput,
     el("span", { class: "muted small" }, `/ ${total}`),
-    button("›", "下一页", () => go(pageNum + 1)),
+    button("›", "下一页", () => step(1)),
     el("span", { class: "sep" }),
     button("−", "缩小", async () => {
       zoom = Math.max(0.25, (await currentScale()) / 1.2);
@@ -206,6 +297,8 @@ async function readPdf(sizeBytes: number) {
       zoom = 0;
       render();
     }),
+    el("span", { class: "sep" }),
+    ...controls.nodes,
     tocSelect,
     busy,
   );
@@ -216,8 +309,8 @@ async function readPdf(sizeBytes: number) {
 
   document.addEventListener("keydown", (ev) => {
     if ((ev.target as HTMLElement).tagName === "INPUT" || (ev.target as HTMLElement).tagName === "SELECT") return;
-    if (ev.key === "ArrowLeft" || ev.key === "PageUp") go(pageNum - 1);
-    else if (ev.key === "ArrowRight" || ev.key === "PageDown") go(pageNum + 1);
+    if (ev.key === "ArrowLeft" || ev.key === "PageUp") step(-1);
+    else if (ev.key === "ArrowRight" || ev.key === "PageDown") step(1);
     else return;
     ev.preventDefault();
   });
@@ -273,24 +366,50 @@ async function readEpub() {
   setStage("正在解析 EPUB…");
   const book = ePub(buf as any);
   const area = el("div", { class: "epub-area" });
+  area.classList.toggle("double", isDouble());
+  area.style.paddingInline = sidePad();
   view.replaceChildren(area);
-  const rendition = book.renderTo(area, { width: "100%", height: "100%", flow: "paginated", spread: "none" } as any);
+  const epubFlow = () => (prefs.flow === "scrolled" ? "scrolled-doc" : "paginated");
+  const epubSpread = () => (isDouble() ? "always" : "none");
+  const rendition = book.renderTo(area, { width: "100%", height: "100%", flow: epubFlow(), spread: epubSpread() } as any);
 
-  const dark = window.matchMedia("(prefers-color-scheme: dark)");
-  const applyTheme = () => {
-    rendition.themes.override("color", dark.matches ? "#e6e2d6" : "#282820");
-    rendition.themes.override("background", "transparent");
-  };
-  applyTheme();
-  dark.addEventListener?.("change", applyTheme);
+  // All typography/colour goes through one keyed stylesheet per section document, so a
+  // change replaces it in place (hooks.content covers sections rendered later).
+  const inject = (contents: any) => contents.addStylesheetCss?.(contentCss(prefs, scheme()), "shelf-prefs");
+  rendition.hooks.content.register(inject);
+  const restyle = () => (rendition.getContents() as unknown as any[]).forEach(inject);
 
-  let fontPct = Number(store.get("shelf:epub-font")) || 100;
-  rendition.themes.fontSize(`${fontPct}%`);
-  const setFont = (d: number) => {
-    fontPct = Math.min(200, Math.max(60, fontPct + d));
-    rendition.themes.fontSize(`${fontPct}%`);
-    store.set("shelf:epub-font", String(fontPct));
+  /**
+   * Spread / flow / margin change: re-layout and stay at the same CFI. epub.js already
+   * clears and re-displays the current location on flow() and on a stage resize (the area's
+   * width/padding changes with spread and margin); only when neither happened do we do it
+   * here. Clearing while one of those queued displays runs leaves a blank page.
+   */
+  let flowNow = epubFlow();
+  const relayout = () => {
+    const r = rendition as any;
+    const cfi = r.location?.start?.cfi;
+    const sizeBefore = r.manager?._stageSize;
+    area.classList.toggle("double", isDouble());
+    area.style.paddingInline = sidePad();
+    rendition.spread(epubSpread());
+    if (epubFlow() !== flowNow) {
+      flowNow = epubFlow();
+      rendition.flow(flowNow); // re-displays by itself; a resize now would race with it
+      return;
+    }
+    if (!cfi) return; // not displayed yet; the initial display picks up the settings
+    r.resize(); // re-measure the stage
+    if (r.manager?._stageSize === sizeBefore) {
+      r.manager?.clear?.();
+      rendition.display(cfi).catch(() => {});
+    }
   };
+  const controls = readerControls(true, REFLOW_FIELDS, (changed) => {
+    if ("spread" in changed || "flow" in changed || "margin" in changed) relayout();
+    if ("font" in changed || "fontPct" in changed || "lineHeight" in changed || "theme" in changed) restyle();
+  });
+  const bumpFont = (d: number) => controls.update({ fontPct: clampFont(prefs.fontPct + d) });
 
   const tocSelect = el("select", { "aria-label": "目录", hidden: "" });
   const loc = el("span", { class: "muted small" });
@@ -298,8 +417,9 @@ async function readEpub() {
     button("‹", "上一页", () => rendition.prev()),
     button("›", "下一页", () => rendition.next()),
     el("span", { class: "sep" }),
-    button("A−", "缩小字号", () => setFont(-10)),
-    button("A+", "放大字号", () => setFont(10)),
+    button("A−", "缩小字号", () => bumpFont(-FONT_STEP)),
+    button("A+", "放大字号", () => bumpFont(FONT_STEP)),
+    ...controls.nodes,
     tocSelect,
     loc,
   );
@@ -354,16 +474,10 @@ async function readEpub() {
 // ---------------- MOBI / AZW / AZW3 ----------------
 const MOBI_UNSUPPORTED = "该文件受 DRM 保护或格式不受支持，请下载原文件。";
 
-/** Stylesheet injected into each foliate section: theme colours consistent with the EPUB reader. */
-function mobiCss(fontPct: number, dark: boolean): string {
-  const fg = dark ? "#e6e2d6" : "#282820";
+/** Stylesheet injected into each foliate section: the shared reader prefs plus MOBI fix-ups. */
+function mobiCss(p: ReaderPrefs, dark: boolean): string {
   return `
-    html { color-scheme: ${dark ? "dark" : "light"}; }
-    html, body { color: ${fg} !important; background: transparent !important; }
-    body { font-size: ${fontPct}% !important; }
-    ${dark ? "font[color] { color: inherit !important; }" : ""}
-    p, li, blockquote, dd { line-height: 1.7; }
-    a[href], a[href] * { color: ${dark ? "#9cc3e6" : "#2f5d8a"} !important; }
+    ${contentCss(p, resolveScheme(p.theme, dark))}
     img, svg { max-width: 100%; height: auto; }
     pre { white-space: pre-wrap !important; }
   `;
@@ -389,21 +503,24 @@ async function readMobi(format: string) {
   view.replaceChildren(area);
   await fv.open(book);
   const r = fv.renderer;
-  r.setAttribute("flow", "paginated");
-  r.setAttribute("max-column-count", "1");
-  r.setAttribute("margin", "24px");
-  r.setAttribute("gap", "5%");
-
-  const dark = window.matchMedia("(prefers-color-scheme: dark)");
-  let fontPct = Number(store.get("shelf:epub-font")) || 100;
-  const applyStyles = () => r.setStyles?.(mobiCss(fontPct, dark.matches));
-  applyStyles();
-  dark.addEventListener?.("change", applyStyles);
-  const setFont = (d: number) => {
-    fontPct = Math.min(200, Math.max(60, fontPct + d));
-    store.set("shelf:epub-font", String(fontPct));
-    applyStyles();
+  // The paginator keeps its anchor across attribute changes, so the position survives.
+  const applyLayout = () => {
+    const double = isDouble();
+    area.classList.toggle("double", double);
+    const m = FOLIATE_MARGIN[prefs.margin];
+    r.setAttribute("flow", prefs.flow);
+    r.setAttribute("max-column-count", double ? "2" : "1");
+    r.setAttribute("margin", m.margin);
+    r.setAttribute("gap", m.gap);
   };
+  applyLayout();
+  const applyStyles = () => r.setStyles?.(mobiCss(prefs, systemDark.matches));
+  applyStyles();
+  const controls = readerControls(true, REFLOW_FIELDS, (changed) => {
+    if ("spread" in changed || "flow" in changed || "margin" in changed) applyLayout();
+    if ("font" in changed || "fontPct" in changed || "lineHeight" in changed || "theme" in changed) applyStyles();
+  });
+  const bumpFont = (d: number) => controls.update({ fontPct: clampFont(prefs.fontPct + d) });
 
   const tocSelect = el("select", { "aria-label": "目录", hidden: "" });
   const loc = el("span", { class: "muted small" });
@@ -411,8 +528,9 @@ async function readMobi(format: string) {
     button("‹", "上一页", () => fv.goLeft()),
     button("›", "下一页", () => fv.goRight()),
     el("span", { class: "sep" }),
-    button("A−", "缩小字号", () => setFont(-10)),
-    button("A+", "放大字号", () => setFont(10)),
+    button("A−", "缩小字号", () => bumpFont(-FONT_STEP)),
+    button("A+", "放大字号", () => bumpFont(FONT_STEP)),
+    ...controls.nodes,
     tocSelect,
     loc,
   );
@@ -485,7 +603,27 @@ async function readText() {
   article.textContent = text;
   view.replaceChildren(article);
   view.classList.add("text-view");
-  toolbar.hidden = true;
+  // Plain text always scrolls; the panel restyles the container (colours follow the page theme).
+  const TEXT_WIDTH = { narrow: "52em", medium: "42em", wide: "34em" };
+  const applyText = () => {
+    article.style.fontFamily = FONT_STACKS[prefs.font];
+    article.style.fontSize = `${(17 * prefs.fontPct) / 100}px`;
+    article.style.lineHeight = String(prefs.lineHeight);
+    article.style.maxWidth = TEXT_WIDTH[prefs.margin];
+    article.style.paddingInline = sidePad();
+  };
+  applyText();
+  const controls = readerControls(false, ["font", "fontPct", "lineHeight", "margin", "theme"], (changed) => {
+    if ("theme" in changed) return;
+    // Keep the reading position (as a fraction) across the reflow.
+    const max = document.documentElement.scrollHeight - innerHeight;
+    const frac = max > 0 ? scrollY / max : 0;
+    applyText();
+    window.scrollTo(0, frac * (document.documentElement.scrollHeight - innerHeight));
+  });
+  toolbar.replaceChildren(...controls.nodes);
+  toolbar.classList.add("toolbar-end");
+  toolbar.hidden = false;
   const saved = Number(store.get(posKey));
   if (saved > 0) {
     requestAnimationFrame(() => window.scrollTo(0, saved * (document.documentElement.scrollHeight - innerHeight)));

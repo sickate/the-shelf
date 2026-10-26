@@ -370,6 +370,55 @@ body.reader { min-height: 100vh; display: flex; flex-direction: column; }
   white-space: pre-wrap; word-break: break-word; line-height: 1.8; font-size: 17px;
   font-family: "Songti SC", "Noto Serif CJK SC", Georgia, serif;
 }
+.pdf-spread { display: inline-flex; gap: 8px; align-items: flex-start; vertical-align: top; }
+.pdf-page[hidden] { display: none; }
+.epub-area.double { max-width: 1400px; }
+
+/* Reader themes chosen in the "Aa" panel ("跟随系统" leaves the attribute off). */
+body.reader[data-reader-theme="light"] {
+  --paper: #f7f4ed; --ink: #282820; --muted: #79786c; --line: #dedbd1; --accent: #b64830;
+  --white: #fffdf8; --active: #eae5da; --notice: #ece8df; --shadow: #e4dfd2; --err: #9e3223; --reader-bg: #e6e2d8;
+  color-scheme: light;
+}
+body.reader[data-reader-theme="sepia"] {
+  --paper: #f4ecd8; --ink: #5b4636; --muted: #8a7660; --line: #e0d3b8; --accent: #a4462c;
+  --white: #faf3e3; --active: #ebdfc5; --notice: #ede2c9; --shadow: #e3d6bb; --err: #9e3223; --reader-bg: #e8dcc0;
+  color-scheme: light;
+}
+body.reader[data-reader-theme="dark"] {
+  --paper: #1b1a17; --ink: #e6e2d6; --muted: #9b998c; --line: #36342e; --accent: #e0785e;
+  --white: #24231f; --active: #2c2a25; --notice: #25241f; --shadow: #0f0e0c; --err: #ff8a80; --reader-bg: #121110;
+  color-scheme: dark;
+}
+
+/* Segmented buttons (单页/双页 and panel choices) */
+.seg { display: inline-flex; }
+.toolbar .seg button, .prefs-panel .seg button { padding: 6px 10px; font-size: 13px; }
+.seg button + button { margin-left: -1px; }
+.seg button[aria-pressed="true"] { background: var(--active); color: var(--accent); border-color: var(--accent); position: relative; }
+.seg button:disabled { cursor: not-allowed; opacity: 0.55; }
+.seg button:disabled[aria-pressed="true"] { opacity: 0.8; }
+
+/* "Aa" settings popover, anchored to the sticky toolbar */
+.toolbar-end { justify-content: flex-end; }
+.prefs-toggle { font-family: Georgia, "Songti SC", serif; }
+.prefs-toggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.prefs-panel {
+  position: absolute; top: calc(100% + 4px); right: 16px; z-index: 4;
+  width: min(360px, calc(100vw - 32px)); padding: 14px 16px;
+  display: grid; gap: 12px;
+  background: var(--white); border: 1px solid var(--line); border-radius: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+.prefs-panel[hidden] { display: none; }
+.prefs-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.prefs-label { flex: 0 0 48px; font-size: 12px; color: var(--muted); letter-spacing: 1px; }
+.prefs-row .seg { flex-wrap: wrap; }
+.stepper { display: inline-flex; align-items: center; gap: 6px; }
+.stepper button { min-width: 34px; padding: 5px 8px; font-size: 14px; }
+.step-value { min-width: 48px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.prefs-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 10px; }
+.prefs-reset { font-size: 12px; padding: 5px 10px; }
 
 /* ---------- Responsive ---------- */
 @media (min-width: 1500px) {
@@ -432,6 +481,8 @@ body.reader { min-height: 100vh; display: flex; flex-direction: column; }
   .toolbar select { max-width: 110px; }
   .toolbar .zoom-label, .toolbar .sep { display: none; }
   .page-input { width: 52px; }
+  .toolbar .seg button, .prefs-panel .seg button { padding: 6px 8px; font-size: 12px; }
+  .prefs-panel { right: 10px; width: calc(100vw - 20px); padding: 12px; }
 }
 
 /* ---------- More filters ---------- */
