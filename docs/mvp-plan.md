@@ -59,6 +59,19 @@ AI、正文准备、公开文件、多用户、旧 CF01/CF03/trial 迁移链路�
 | GET /api/books/:id/info | 所有者 | `{status:'none'|'generating'|'ready'|'failed', info?, model?, inputKind?, error?, updatedAt?}`；过期租约按 failed（或保留的旧 ready）显示 |
 | POST /api/books/:id/info[?force=1] `{excerpt?}` | 所有者 | body ≤64 KB，摘录截断 12,000 字。已 ready 且非 force 直接返回。单飞租约 15 分钟，冲突 409 `generating`。先 DeepSeek Search（`DEEPSEEK_KEY`，2 次、每次 20 s，失败降级，401/402 记 `search_auth`/`search_balance`），再 oai `/v1/tasks`（`gpt-luna` medium json_object，600 s）。503 → 释放租约、返回 503 `ai_busy` 并透传 `Retry-After`（默认 10）；其他失败 502 `{error:'ai_failed', reason}`（`ai_bad_output`、`ai_http_<n>`、`ai_timeout`、`ai_network`、`ai_bad_response`）。服务端严格校验输出，sources 只保留检索资料中的 URL；失败不写半截结果，force 重生成失败时保留旧结果。均不自动重试 |
 
+### 2026-10-25 中图法分级分类（`docs/classification-plan-2026-10-24.md`，迁移 `app/migrations/0003_classification.sql`）
+
+分类信息对访客公开（AI 简介仍仅所有者可见）。分类表 `app/clc.json`（§10 契约）随 Worker 打包；写入的分类号都按表内最长前缀解析。
+
+| 方法 路径 | 权限 | 说明 |
+| --- | --- | --- |
+| GET /api/books | 公开 | 每本增加 `clc`（主分类号或 null），访客与所有者相同；所有者附加字段不变 |
+| GET /api/books/:id | 公开 | 增加 `clc`、`clcPath:[{code,name}]`（根→节点）、`clcSecondary`、`clcSource`（`cip`/`ai`/`manual`）、`clcConfidence`、`clcReason`、`clcEvidenceUrl`、`clcStatus`（`none`/`generating`/`ready`/`failed`）；所有者另有 `clcError`。不含 AI 简介 |
+| GET /api/clc | 公开 | `{edition, nodes:[{code,name,parent,count}], unclassified, total}`：只含可见书目（未删除、非 reserved）用到的节点及其祖先，count 含子孙；`Cache-Control: public, max-age=60` |
+| GET /api/clc?all=1 | 所有者 | 完整分类表 `{edition, nodes:[{code,name,parent}]}`，供手动选择器 |
+| POST /api/books/:id/class[?force=1] | 所有者 | 自动归类。已有 `manual` 且非 force → 409 `manual_locked`；已 ready 且非 force 直接返回。单飞租约 15 分钟，冲突 409 `generating`。DeepSeek Search 1 次（`<书名> 中图分类号`，count 8，20 s，失败降级，401/402 记 `search_auth`/`search_balance`），从 title/snippet/summary 中按“中图分类号/分类号/CLC”标签抽取候选号；再 oai `/v1/tasks`（`gpt-luna` medium json_object，600 s），输入书名、来源目录、已有 AI 简介 summary/tags/keyPoints、候选号及来源、限定的候选类目列表。服务端解析：主号不可解析 → 502 `ai_bad_output`；副号不可解析则丢弃（最多 2 个）；`basis:"cip"` 仅当主号（原号或解析后）出现在检索候选中才记 `source:'cip'` 并保存 `evidence_url`，否则降为 `ai`。503 `ai_busy` 透传 `Retry-After`，其他错误与 AI 详情相同；均不自动重试，force 失败保留旧结果 |
+| PUT /api/books/:id/class `{clc, secondary?}` | 所有者 | 手动指定：`clc` 与每个副号（≤2）必须正好是表内节点，否则 400 `bad_clc`；写入 `source:'manual'`、ready，覆盖进行中的自动归类（其结果因租约丢失不再写入） |
+
 脚本鉴权：先 POST /api/login 取得 cookie。
 
 ## 分工

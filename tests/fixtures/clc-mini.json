@@ -1,0 +1,165 @@
+{
+ "edition": "测试子集（tests/fixtures/clc-mini.json）",
+ "nodes": [
+  {
+   "code": "B",
+   "name": "哲学、宗教",
+   "parent": null
+  },
+  {
+   "code": "B5",
+   "name": "欧洲哲学",
+   "parent": "B"
+  },
+  {
+   "code": "F",
+   "name": "经济",
+   "parent": null
+  },
+  {
+   "code": "F3",
+   "name": "农业经济",
+   "parent": "F"
+  },
+  {
+   "code": "G",
+   "name": "文化、科学、教育、体育",
+   "parent": null
+  },
+  {
+   "code": "G64",
+   "name": "高等教育",
+   "parent": "G"
+  },
+  {
+   "code": "G642",
+   "name": "教学理论、教学法",
+   "parent": "G64"
+  },
+  {
+   "code": "I",
+   "name": "文学",
+   "parent": null
+  },
+  {
+   "code": "I7",
+   "name": "各国文学",
+   "parent": "I"
+  },
+  {
+   "code": "I712",
+   "name": "美国文学",
+   "parent": "I7"
+  },
+  {
+   "code": "I712.45",
+   "name": "小说（现代）",
+   "parent": "I712"
+  },
+  {
+   "code": "N",
+   "name": "自然科学总论",
+   "parent": null
+  },
+  {
+   "code": "N49",
+   "name": "科学普及读物",
+   "parent": "N"
+  },
+  {
+   "code": "O",
+   "name": "数理科学和化学",
+   "parent": null
+  },
+  {
+   "code": "O1",
+   "name": "数学",
+   "parent": "O"
+  },
+  {
+   "code": "O13",
+   "name": "数学分析",
+   "parent": "O1"
+  },
+  {
+   "code": "O4",
+   "name": "物理学",
+   "parent": "O"
+  },
+  {
+   "code": "O41",
+   "name": "理论物理学",
+   "parent": "O4"
+  },
+  {
+   "code": "O413",
+   "name": "量子论",
+   "parent": "O41"
+  },
+  {
+   "code": "T",
+   "name": "工业技术",
+   "parent": null
+  },
+  {
+   "code": "TP",
+   "name": "自动化技术、计算机技术",
+   "parent": "T"
+  },
+  {
+   "code": "TP3",
+   "name": "计算技术、计算机技术",
+   "parent": "TP"
+  },
+  {
+   "code": "TP3-0",
+   "name": "计算机理论与方法",
+   "parent": "TP3"
+  },
+  {
+   "code": "TP31",
+   "name": "计算机软件",
+   "parent": "TP3"
+  },
+  {
+   "code": "TP311",
+   "name": "程序设计、软件工程",
+   "parent": "TP31"
+  },
+  {
+   "code": "TP311.1",
+   "name": "程序设计",
+   "parent": "TP311"
+  },
+  {
+   "code": "TP311.13",
+   "name": "数据库理论与系统",
+   "parent": "TP311.1"
+  },
+  {
+   "code": "TP312",
+   "name": "程序语言、算法语言",
+   "parent": "TP31"
+  },
+  {
+   "code": "TP312JA",
+   "name": "Java语言",
+   "parent": "TP312"
+  },
+  {
+   "code": "TP39",
+   "name": "计算机的应用",
+   "parent": "TP3"
+  },
+  {
+   "code": "TP391",
+   "name": "信息处理（信息加工）",
+   "parent": "TP39"
+  },
+  {
+   "code": "TP393",
+   "name": "计算机网络",
+   "parent": "TP39"
+  }
+ ]
+}
