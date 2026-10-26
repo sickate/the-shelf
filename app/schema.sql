@@ -68,3 +68,11 @@ CREATE TABLE IF NOT EXISTS notes (
   deleted_at TEXT
 );
 CREATE INDEX IF NOT EXISTS notes_book ON notes (book_id, deleted_at, created_at);
+-- Added 2026-10-26 (app/migrations/0006_reading.sql). Owner-only recent reading: one row per book.
+CREATE TABLE IF NOT EXISTS reading_history (
+  book_id TEXT PRIMARY KEY REFERENCES books(id),
+  last_opened_at TEXT NOT NULL,
+  open_count INTEGER NOT NULL DEFAULT 1,
+  progress TEXT
+);
+CREATE INDEX IF NOT EXISTS reading_recent ON reading_history (last_opened_at);

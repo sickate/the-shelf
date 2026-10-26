@@ -58,6 +58,7 @@ import {
   serverCounts,
 } from "./lib/clc-tree";
 import { mountThumbPanel } from "./lib/thumb-batch";
+import { mountRecent } from "./lib/recent";
 import { canThumb, ensureThumb } from "./lib/thumb";
 
 const PAGE = 60;
@@ -150,6 +151,7 @@ function setOwner(next: boolean) {
   owner = next;
   renderAuthBox(authBox, owner, setOwner);
   ownerPanel.hidden = !owner;
+  recent(owner);
   if (owner) loadBudget();
   // Owner-only list fields (hasCover/hasInfo/authors) appear or vanish with the session.
   if (changed) loadBooks();
@@ -485,6 +487,9 @@ function clearAll() {
 $("clear").addEventListener("click", clearAll);
 $("clear-all").addEventListener("click", clearAll);
 moreBtn.addEventListener("click", () => render(false));
+
+// ---------------- Recent reading (owner only) ----------------
+const recent = mountRecent($("recent"), () => setOwner(false));
 
 // ---------------- Thumbnails ----------------
 const thumbPanel = $<HTMLDivElement>("thumb-panel");
