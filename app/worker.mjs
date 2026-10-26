@@ -488,10 +488,25 @@ async function readExcerpt(request) {
   return clip(body.excerpt.trim(), MAX_EXCERPT_CHARS);
 }
 
+// Filenames make poor queries: drop edition/scan noise, dates and copy markers, split dotted words.
+export function searchTitle(title) {
+  const cleaned = title
+    .replace(/\s*\[\d+\]$/, "")
+    .replace(/\//g, " ")
+    .replace(/[\[\]【】（）()《》,，]/g, " ")
+    .replace(/(文字版|扫描版|高清版?|中文版|英文版|影印版|完整版|全本|带书签|图文版|PDF|EPUB|MOBI)/gi, " ")
+    .replace(/(^|\s)(19|20)\d{2}(0[1-9]|1[0-2])?(?=\s|$)/g, " ")
+    .replace(/(?<=[A-Za-z])[._](?=[A-Za-z0-9])/g, " ")
+    .replace(/(^|\s)[._]+|[._]+(?=\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || title.trim();
+}
+
 // DeepSeek Search. Failures degrade to "no material"; 401/402 leave a note. Never retried.
 async function searchBook(env, title) {
   if (!env.DEEPSEEK_KEY) return { material: [], note: null };
-  const name = title.replace(/\//g, " ").replace(/\s+/g, " ").trim();
+  const name = searchTitle(title);
   const ask = (t) => `《${t}》的作者、内容与出版背景`;
   const ori = ask(clip(name, 128 - [...ask("")].length));
   const notes = [];

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateInfo } from "../app/worker.mjs";
+import { searchTitle, validateInfo } from "../app/worker.mjs";
 import { ORIGIN, setup, sha } from "./helpers/mvp-fixture.mjs";
 
 const SECRETS = { OWNER_PASSWORD: "correct horse battery staple", SESSION_SECRET: "s".repeat(32) };
@@ -543,4 +543,13 @@ test("mobi family is served with the mobipocket content type", async (t) => {
   const res = await c.fetch(`/api/books/${up.book.id}/file`, { headers: { Cookie: cookie } });
   assert.equal(res.headers.get("Content-Type"), "application/x-mobipocket-ebook");
   assert.equal((await c.bucket.head(`books/${sha(bytes)}`)).httpMetadata.contentType, "application/x-mobipocket-ebook");
+});
+
+test("searchTitle strips filename noise for search queries", () => {
+  assert.equal(searchTitle("200809 Ruby.on.Rails.Bible"), "Ruby on Rails Bible");
+  assert.equal(searchTitle("[Arduino.Robotics(2011)].John.David.Warren.文字版"), "Arduino Robotics John David Warren");
+  assert.equal(searchTitle("《GEB 一条永恒的金带》扫描版全本"), "GEB 一条永恒的金带");
+  assert.equal(searchTitle("lecture1 [2]"), "lecture1");
+  assert.equal(searchTitle("编码 隐匿在计算机软硬件背后的语言"), "编码 隐匿在计算机软硬件背后的语言");
+  assert.equal(searchTitle("[]"), "[]");
 });
