@@ -1,6 +1,9 @@
 # 有声书朗读 + Google 登录（2026-10-27）
 
-状态：计划已确认（2026-10-27），待 DashScope Key 到位后做 S0。未实现、未部署。
+状态（2026-10-27 更新）：
+- G1 Google 登录已上线（Worker 版本 `ed4c69c6`），用户在浏览器用白名单账号登录成功；线上 HTTP 检查：访客/令牌/错误令牌、302 参数（PKCE、scope、回调地址）、`next` 开放跳转拒绝、state 失配、Origin 校验均符合预期。G2（移除密码登录）开发中。
+- A2 章节提取、A3 播放器已合并；朗读按钮在后端上线前隐藏（`?audioMock=1` 可预览）。真实浏览器未验收。
+- S0 受阻：DashScope Key（北京区）对全部 TTS 模型返回 `Access denied by API-Key restrictions`，待用户调整 Key 的模型范围与 IP 白名单。A1 未开始。
 
 用户决定：TTS 用用户新建的 the-shelf 专用 DashScope Key，同意阿里云按字符计费；Google 登录只允许白名单所有者，**去掉密码登录**；CPU 不够时先把每片缩到约 200 字。
 
