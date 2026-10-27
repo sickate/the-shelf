@@ -94,10 +94,6 @@ export function showLoginError(): void {
   document.body.prepend(bar);
 }
 
-export async function login(password: string): Promise<void> {
-  await api("/api/login", { method: "POST", body: JSON.stringify({ password }) });
-}
-
 export async function logout(): Promise<void> {
   await api("/api/logout", { method: "POST" });
 }
@@ -136,7 +132,6 @@ export function el<K extends keyof HTMLElementTagNameMap>(
 
 const ERROR_TEXT: Record<string, string> = {
   unauthorized: "未登录或会话已过期",
-  invalid_password: "密码错误",
   login_required: "需要登录",
   bad_origin: "来源校验失败",
   storage_unknown: "云端写入结果未知，请稍后重试",
@@ -181,31 +176,12 @@ export function errorText(e: unknown): string {
   return `错误：${(e as Error)?.message || String(e)}`;
 }
 
-/** Inline login form. Calls onSuccess after successful login. */
-export function loginForm(onSuccess: () => void): HTMLFormElement {
-  const input = el("input", { type: "password", placeholder: "所有者密码", autocomplete: "current-password", required: "" });
-  const btn = el("button", { type: "submit", class: "primary" }, "登录");
-  const msg = el("span", { class: "msg", role: "status" });
+/** Inline login form: Google sign-in only. */
+export function loginForm(_onSuccess?: () => void): HTMLFormElement {
   const google = el("a", { class: "button primary google-login", href: googleLoginUrl() }, "使用 Google 登录");
   // Recompute on click so the return path reflects the page's current URL.
   google.addEventListener("click", () => google.setAttribute("href", googleLoginUrl()));
-  const or = el("span", { class: "login-or muted" }, "或使用所有者密码");
-  const form = el("form", { class: "login" }, google, or, input, btn, msg);
-  form.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    btn.disabled = true;
-    msg.textContent = "";
-    try {
-      await login(input.value);
-      input.value = "";
-      onSuccess();
-    } catch (e) {
-      msg.textContent = e instanceof ApiError && e.status === 401 ? "密码错误" : errorText(e);
-    } finally {
-      btn.disabled = false;
-    }
-  });
-  return form;
+  return el("form", { class: "login" }, google);
 }
 
 export const store = {

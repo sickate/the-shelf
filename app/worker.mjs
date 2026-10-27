@@ -87,7 +87,7 @@ function bytesEqual(a, b) {
   return diff === 0;
 }
 
-// Session checks need only SESSION_SECRET; password login separately requires OWNER_PASSWORD.
+// Session checks need only SESSION_SECRET.
 function requireConfig(env) {
   if (!env.SESSION_SECRET) throw new HttpError(503, "not_configured");
 }
@@ -135,19 +135,14 @@ async function bearerOwner(request, env) {
   return bytesEqual(new Uint8Array(given), new Uint8Array(expected));
 }
 
-// Session cookie formats (both signed with HMAC(SESSION_SECRET)):
-//   legacy / password: `<expiry>.<sig>`                sig over `owner:<expiry>`
-//   Google:            `<expiry>.<b64url email>.<sig>` sig over `owner:<expiry>:<emailHash>`
-// The e-mail is carried in the HttpOnly cookie so /api/me can return it; the signature covers
-// it via emailHash. A Google session stays valid only while its e-mail is in OWNER_EMAILS.
+// Session cookie (signed with HMAC(SESSION_SECRET)): `<expiry>.<b64url email>.<sig>`,
+// sig over `owner:<expiry>:<emailHash>`. The e-mail is carried in the HttpOnly cookie so /api/me
+// can return it; the signature covers it via emailHash. The session stays valid only while its
+// e-mail is in OWNER_EMAILS. The old password format `<expiry>.<sig>` is no longer accepted.
 async function cookieSession(request, env) {
   const value = readCookie(request, COOKIE);
-  const m = value && /^(\d{1,12})\.(?:([A-Za-z0-9_-]{1,400})\.)?([A-Za-z0-9_-]{43})$/.exec(value);
+  const m = value && /^(\d{1,12})\.([A-Za-z0-9_-]{1,400})\.([A-Za-z0-9_-]{43})$/.exec(value);
   if (!m || Number(m[1]) <= Date.now() / 1000) return null;
-  if (!m[2]) {
-    const expected = b64url(await hmac(env.SESSION_SECRET, `owner:${m[1]}`));
-    return textEqual(expected, m[3]) ? { email: null } : null;
-  }
   let email;
   try {
     email = new TextDecoder("utf-8", { fatal: true }).decode(fromB64url(m[2]));
@@ -175,13 +170,10 @@ async function requireOwner(request, env) {
   if (!(await isOwner(request, env))) throw new HttpError(401, "login_required");
 }
 
-async function sessionCookie(env, email = null) {
+async function sessionCookie(env, email) {
+  if (!email) throw new Error("sessionCookie requires an email");
   const expiry = Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400;
   const attrs = `Max-Age=${SESSION_DAYS * 86400}; HttpOnly; Secure; SameSite=Lax; Path=/`;
-  if (email === null) {
-    const sig = b64url(await hmac(env.SESSION_SECRET, `owner:${expiry}`));
-    return `${COOKIE}=${expiry}.${sig}; ${attrs}`;
-  }
   const sig = b64url(await hmac(env.SESSION_SECRET, `owner:${expiry}:${await emailHash(env, email)}`));
   return `${COOKIE}=${expiry}.${b64urlText(email)}.${sig}; ${attrs}`;
 }
@@ -1739,18 +1731,6 @@ async function handleApi(request, env, url) {
 
   if (path === OAUTH_PATH && method === "GET") return googleStart(env, url);
   if (path === `${OAUTH_PATH}/callback` && method === "GET") return googleCallback(request, env, url);
-  if (path === "/api/login" && method === "POST") {
-    requireConfig(env);
-    if (!env.OWNER_PASSWORD) throw new HttpError(503, "not_configured");
-    const body = await readJson(request);
-    const password = typeof body?.password === "string" ? body.password : "";
-    const [given, expected] = await Promise.all([
-      hmac(env.SESSION_SECRET, `password:${password}`),
-      hmac(env.SESSION_SECRET, `password:${env.OWNER_PASSWORD}`),
-    ]);
-    if (!bytesEqual(given, expected)) return json({ error: "invalid_password" }, 401);
-    return json({ ok: true }, 200, { "Set-Cookie": await sessionCookie(env) });
-  }
   if (path === "/api/logout" && method === "POST")
     return json({ ok: true }, 200, {
       "Set-Cookie": `${COOKIE}=; Max-Age=0; HttpOnly; Secure; SameSite=Lax; Path=/`,
