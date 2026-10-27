@@ -1,7 +1,7 @@
 # 有声书朗读 + Google 登录（2026-10-27）
 
 状态（2026-10-27 更新）：
-- G1 Google 登录已上线（Worker 版本 `ed4c69c6`），用户在浏览器用白名单账号登录成功；线上 HTTP 检查：访客/令牌/错误令牌、302 参数（PKCE、scope、回调地址）、`next` 开放跳转拒绝、state 失配、Origin 校验均符合预期。G2（移除密码登录）开发中。
+- G1 Google 登录已上线（Worker 版本 `ed4c69c6`），用户在浏览器用白名单账号登录成功；线上 HTTP 检查：访客/令牌/错误令牌、302 参数（PKCE、scope、回调地址）、`next` 开放跳转拒绝、state 失配、Origin 校验均符合预期。G2 已上线（版本 `3ac6ce49`）：`/api/login` 404、旧格式 cookie 失效、登录页无密码框，`OWNER_PASSWORD` secret 已删除；令牌与 Google 登录复核正常。
 - A2 章节提取、A3 播放器已合并；朗读按钮在后端上线前隐藏（`?audioMock=1` 可预览）。真实浏览器未验收。
 - S0 受阻：DashScope Key（北京区）对全部 TTS 模型返回 `Access denied by API-Key restrictions`，待用户调整 Key 的模型范围与 IP 白名单。A1 未开始。
 
