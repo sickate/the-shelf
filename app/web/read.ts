@@ -19,6 +19,7 @@ import {
 } from "./lib/reader-prefs";
 import { setChapterSource } from "./lib/chapter-source";
 import { epubChapterSource, mobiChapterSource, pdfChapterSource, textChapter } from "./lib/chapter-text";
+import { audioButton } from "./lib/audio-reader";
 import { epubNotes, mobiNotes, pdfNotes, textNotes } from "./lib/reader-notes";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -764,6 +765,7 @@ async function readText() {
     else if (f === "txt" || f === "md") await readText();
     else if (f === "cbz") await (await import("./lib/comic-reader")).readComic({ view, toolbar, posKey, load: () => fetchFile(" CBZ"), setStage, hideLoading, showError });
     else showError(`不支持在线阅读 ${f.toUpperCase() || "该"} 格式，请下载。`);
+    if (f !== "cbz" && !toolbar.hidden) toolbar.append(audioButton(String(book.id), main));
     if (msg.hidden) reportOpened(String(book.id)); // loaded without an error: record it in 最近阅读
   } catch (e: any) {
     const status = e instanceof ApiError ? e.status : e?.status;
