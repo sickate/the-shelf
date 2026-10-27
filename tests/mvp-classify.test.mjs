@@ -68,10 +68,12 @@ test("classifySummary counts by source, confidence and type", () => {
 // ---- end-to-end against a fake server ----
 function fakeServer(books, { manual = new Set() } = {}) {
   const log = [];
+  const auth = [];
   const srv = http.createServer((req, res) => {
     const url = new URL(req.url, "http://x");
     const send = (code, obj, h = {}) => (res.writeHead(code, { "content-type": "application/json", ...h }), res.end(JSON.stringify(obj)));
     log.push(`${req.method} ${url.pathname}${url.search}`);
+    auth.push(req.headers.authorization ? `bearer:${req.headers.authorization}` : `cookie:${req.headers.cookie || ""}`);
     if (url.pathname === "/api/login") return send(200, { ok: true }, { "set-cookie": "shelf_session=tok; Path=/" });
     if (url.pathname === "/api/books" && req.method === "GET") return send(200, { books });
     let m = /^\/api\/books\/(\w+)$/.exec(url.pathname);
@@ -90,14 +92,14 @@ function fakeServer(books, { manual = new Set() } = {}) {
     }
     send(404, { error: "not_found" });
   });
-  return new Promise((resolve) => srv.listen(0, "127.0.0.1", () => resolve({ srv, log, url: `http://127.0.0.1:${srv.address().port}` })));
+  return new Promise((resolve) => srv.listen(0, "127.0.0.1", () => resolve({ srv, log, auth, url: `http://127.0.0.1:${srv.address().port}` })));
 }
 
-function run(script, cwd, url, args) {
+function run(script, cwd, url, args, extraEnv = { SHELF_OWNER_API_TOKEN: "" }) {
   return new Promise((resolve) => {
     const p = spawn(process.execPath, [path.join(root, script), ...args], {
       cwd,
-      env: { ...process.env, SHELF_URL: url, SHELF_OWNER_PASSWORD: "pw" },
+      env: { ...process.env, SHELF_URL: url, SHELF_OWNER_PASSWORD: "pw", ...extraEnv },
     });
     let out = "";
     p.stdout.on("data", (d) => (out += d));
@@ -172,6 +174,26 @@ test("mvp-enrich still works end to end through the shared runner (--limit 2)", 
     assert.match(r.out, /\[2\/2\] ready b2 [\d.]+s model=m confidence=high search=yes Two/);
     assert.match(r.out, /ready=2 failed=0 skipped=0 busy_waits=0/);
     assert.equal((await stat(path.join(cwd, ".local/mvp-enrich-state.json"))).mode & 0o777, 0o600);
+  } finally {
+    srv.close();
+  }
+});
+
+test("batch scripts use SHELF_OWNER_API_TOKEN as Bearer and skip /api/login", async () => {
+  const books = [{ id: "b1", title: "One", status: "uploaded", hasInfo: false }];
+  const { srv, log, auth, url } = await fakeServer(books);
+  const cwd = await mkdtemp(path.join(tmpdir(), "enrich-"));
+  try {
+    const token = "k".repeat(40);
+    const r = await run("scripts/mvp-enrich.mjs", cwd, url, ["--limit", "1"], {
+      SHELF_OWNER_API_TOKEN: token,
+      SHELF_OWNER_PASSWORD: "",
+    });
+    assert.equal(r.code, 0, r.out);
+    assert.ok(!log.includes("POST /api/login"));
+    assert.ok(auth.length >= 2);
+    assert.ok(auth.every((a) => a === `bearer:Bearer ${token}`));
+    assert.ok(!r.out.includes(token), "token never printed");
   } finally {
     srv.close();
   }

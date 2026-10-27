@@ -87,8 +87,9 @@ function bytesEqual(a, b) {
   return diff === 0;
 }
 
+// Session checks need only SESSION_SECRET; password login separately requires OWNER_PASSWORD.
 function requireConfig(env) {
-  if (!env.OWNER_PASSWORD || !env.SESSION_SECRET) throw new HttpError(503, "not_configured");
+  if (!env.SESSION_SECRET) throw new HttpError(503, "not_configured");
 }
 
 function readCookie(request, name) {
@@ -99,23 +100,230 @@ function readCookie(request, name) {
   return null;
 }
 
-async function isOwner(request, env) {
-  requireConfig(env);
+const b64urlText = (text) => b64url(enc.encode(text));
+function fromB64url(s) {
+  const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+const textEqual = (a, b) => bytesEqual(enc.encode(a), enc.encode(b));
+
+/** Whitelisted owner e-mails (OWNER_EMAILS, comma separated), trimmed and lower-cased. */
+export function ownerEmails(env) {
+  return new Set(
+    String(env.OWNER_EMAILS || "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+const emailHash = async (env, email) => b64url(await hmac(env.SESSION_SECRET, `email:${email}`)).slice(0, 22);
+
+// Owner API token for local scripts: OWNER_API_TOKEN (>= 32 chars, otherwise disabled).
+// Returns null when no Authorization header is present, else whether the bearer is valid.
+async function bearerOwner(request, env) {
+  const header = request.headers.get("Authorization");
+  if (header === null) return null;
+  const m = /^Bearer ([\x21-\x7e]{1,512})$/.exec(header);
+  const token = typeof env.OWNER_API_TOKEN === "string" ? env.OWNER_API_TOKEN : "";
+  if (!m || token.length < 32) return false;
+  // Compare fixed-length digests so the comparison time does not depend on the token.
+  const [given, expected] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(m[1])),
+    crypto.subtle.digest("SHA-256", enc.encode(token)),
+  ]);
+  return bytesEqual(new Uint8Array(given), new Uint8Array(expected));
+}
+
+// Session cookie formats (both signed with HMAC(SESSION_SECRET)):
+//   legacy / password: `<expiry>.<sig>`                sig over `owner:<expiry>`
+//   Google:            `<expiry>.<b64url email>.<sig>` sig over `owner:<expiry>:<emailHash>`
+// The e-mail is carried in the HttpOnly cookie so /api/me can return it; the signature covers
+// it via emailHash. A Google session stays valid only while its e-mail is in OWNER_EMAILS.
+async function cookieSession(request, env) {
   const value = readCookie(request, COOKIE);
-  const m = value && /^(\d{1,12})\.([A-Za-z0-9_-]{43})$/.exec(value);
-  if (!m || Number(m[1]) <= Date.now() / 1000) return false;
-  const expected = b64url(await hmac(env.SESSION_SECRET, `owner:${m[1]}`));
-  return bytesEqual(enc.encode(expected), enc.encode(m[2]));
+  const m = value && /^(\d{1,12})\.(?:([A-Za-z0-9_-]{1,400})\.)?([A-Za-z0-9_-]{43})$/.exec(value);
+  if (!m || Number(m[1]) <= Date.now() / 1000) return null;
+  if (!m[2]) {
+    const expected = b64url(await hmac(env.SESSION_SECRET, `owner:${m[1]}`));
+    return textEqual(expected, m[3]) ? { email: null } : null;
+  }
+  let email;
+  try {
+    email = new TextDecoder("utf-8", { fatal: true }).decode(fromB64url(m[2]));
+  } catch {
+    return null;
+  }
+  const expected = b64url(await hmac(env.SESSION_SECRET, `owner:${m[1]}:${await emailHash(env, email)}`));
+  if (!textEqual(expected, m[3])) return null;
+  return ownerEmails(env).has(email) ? { email } : null;
+}
+
+/** Owner session or null. A present Authorization header decides alone (no cookie fallback). */
+async function ownerSession(request, env) {
+  requireConfig(env);
+  const bearer = await bearerOwner(request, env);
+  if (bearer !== null) return bearer ? { email: null, bearer: true } : null;
+  return cookieSession(request, env);
+}
+
+async function isOwner(request, env) {
+  return (await ownerSession(request, env)) !== null;
 }
 
 async function requireOwner(request, env) {
   if (!(await isOwner(request, env))) throw new HttpError(401, "login_required");
 }
 
-async function sessionCookie(env) {
+async function sessionCookie(env, email = null) {
   const expiry = Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400;
-  const sig = b64url(await hmac(env.SESSION_SECRET, `owner:${expiry}`));
-  return `${COOKIE}=${expiry}.${sig}; Max-Age=${SESSION_DAYS * 86400}; HttpOnly; Secure; SameSite=Lax; Path=/`;
+  const attrs = `Max-Age=${SESSION_DAYS * 86400}; HttpOnly; Secure; SameSite=Lax; Path=/`;
+  if (email === null) {
+    const sig = b64url(await hmac(env.SESSION_SECRET, `owner:${expiry}`));
+    return `${COOKIE}=${expiry}.${sig}; ${attrs}`;
+  }
+  const sig = b64url(await hmac(env.SESSION_SECRET, `owner:${expiry}:${await emailHash(env, email)}`));
+  return `${COOKIE}=${expiry}.${b64urlText(email)}.${sig}; ${attrs}`;
+}
+
+// ---------- Google sign-in (OpenID Connect, authorization code + PKCE) ----------
+const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_ISSUERS = new Set(["https://accounts.google.com", "accounts.google.com"]);
+const GOOGLE_TIMEOUT_MS = 10_000;
+const OAUTH_COOKIE = "shelf_oauth";
+const OAUTH_PATH = "/api/auth/google";
+const OAUTH_TTL = 600;
+const MAX_EMAIL = 254;
+
+const googleConfigured = (env) =>
+  Boolean(env.SESSION_SECRET && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && ownerEmails(env).size);
+const randomToken = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
+const redirectUri = (env, url) => env.GOOGLE_REDIRECT_URI || `${url.origin}${OAUTH_PATH}/callback`;
+const oauthCookie = (value, maxAge) =>
+  `${OAUTH_COOKIE}=${value}; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax; Path=${OAUTH_PATH}`;
+
+/** Same-origin relative path for post-login redirects; anything else becomes "/". */
+export function safeNext(raw) {
+  if (typeof raw !== "string" || raw.length > 1024) return "/";
+  if (!raw.startsWith("/") || raw.startsWith("//") || /[\\\x00-\x20\x7f]/.test(raw)) return "/";
+  return raw;
+}
+
+function redirect(location, cookies = []) {
+  const headers = new Headers({
+    Location: location,
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+    ...SECURITY,
+  });
+  for (const c of cookies) headers.append("Set-Cookie", c);
+  return new Response(null, { status: 302, headers });
+}
+
+async function googleStart(env, url) {
+  if (!googleConfigured(env)) throw new HttpError(503, "not_configured");
+  const state = randomToken();
+  const nonce = randomToken();
+  const verifier = randomToken();
+  const challenge = b64url(await crypto.subtle.digest("SHA-256", enc.encode(verifier)));
+  const expiry = Math.floor(Date.now() / 1000) + OAUTH_TTL;
+  const next = safeNext(url.searchParams.get("next"));
+  const payload = b64urlText(JSON.stringify({ s: state, n: nonce, v: verifier, x: expiry, r: next }));
+  const sig = b64url(await hmac(env.SESSION_SECRET, `oauth:${payload}`));
+  const target = new URL(GOOGLE_AUTH_URL);
+  for (const [k, v] of Object.entries({
+    client_id: env.GOOGLE_CLIENT_ID,
+    redirect_uri: redirectUri(env, url),
+    response_type: "code",
+    scope: "openid email",
+    state,
+    nonce,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    prompt: "select_account",
+  }))
+    target.searchParams.set(k, v);
+  return redirect(target.toString(), [oauthCookie(`${payload}.${sig}`, OAUTH_TTL)]);
+}
+
+async function readOauthState(request, env) {
+  const value = readCookie(request, OAUTH_COOKIE);
+  const m = value && /^([A-Za-z0-9_-]{1,2048})\.([A-Za-z0-9_-]{43})$/.exec(value);
+  if (!m) return null;
+  const expected = b64url(await hmac(env.SESSION_SECRET, `oauth:${m[1]}`));
+  if (!textEqual(expected, m[2])) return null;
+  try {
+    const st = JSON.parse(new TextDecoder().decode(fromB64url(m[1])));
+    if (typeof st?.s !== "string" || typeof st.n !== "string" || typeof st.v !== "string") return null;
+    if (!Number.isFinite(st.x) || st.x <= Date.now() / 1000) return null;
+    return st;
+  } catch {
+    return null;
+  }
+}
+
+/** Validates decoded id_token claims; returns `{email}` (lower-cased) or `{error}`. */
+export function checkGoogleClaims(claims, { clientId, nonce, now = Date.now() / 1000 }) {
+  const bad = { error: "google_claims" };
+  if (!claims || typeof claims !== "object") return bad;
+  if (!GOOGLE_ISSUERS.has(claims.iss)) return bad;
+  if (typeof clientId !== "string" || claims.aud !== clientId) return bad;
+  if (typeof claims.exp !== "number" || claims.exp <= now) return bad;
+  if (typeof claims.nonce !== "string" || !textEqual(claims.nonce, nonce)) return bad;
+  if (claims.email_verified !== true || typeof claims.email !== "string") return bad;
+  const email = claims.email.trim().toLowerCase();
+  if (!email || email.length > MAX_EMAIL) return bad;
+  return { email };
+}
+
+async function googleCallback(request, env, url) {
+  const clear = oauthCookie("", 0);
+  const fail = (code) => redirect(`${url.origin}/?login_error=${code}`, [clear]);
+  if (!googleConfigured(env)) return fail("not_configured");
+  if (url.searchParams.has("error")) return fail("google_denied");
+  const st = await readOauthState(request, env);
+  if (!st || !textEqual(st.s, url.searchParams.get("state") || "")) return fail("google_state");
+  const code = url.searchParams.get("code");
+  if (!code) return fail("google_denied");
+
+  // The id_token comes straight from Google's token endpoint over TLS, so (per Google's OpenID
+  // Connect docs) its signature need not be re-verified; the claims are still checked below.
+  // Tokens and codes are never logged or echoed.
+  let idToken;
+  try {
+    const res = await fetch(GOOGLE_TOKEN_URL, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({
+        code,
+        client_id: env.GOOGLE_CLIENT_ID,
+        client_secret: env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: redirectUri(env, url),
+        code_verifier: st.v,
+        grant_type: "authorization_code",
+      }),
+      signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
+    });
+    if (res.status !== 200) return fail("google_token");
+    idToken = (await res.json())?.id_token;
+  } catch {
+    return fail("google_token");
+  }
+  if (typeof idToken !== "string") return fail("google_token");
+  let claims;
+  try {
+    const parts = idToken.split(".");
+    if (parts.length !== 3) throw new Error("bad_jwt");
+    claims = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(fromB64url(parts[1])));
+  } catch {
+    return fail("google_claims");
+  }
+  const checked = checkGoogleClaims(claims, { clientId: env.GOOGLE_CLIENT_ID, nonce: st.n });
+  if (checked.error) return fail(checked.error);
+  if (!ownerEmails(env).has(checked.email)) return fail("forbidden_email");
+  return redirect(`${url.origin}${safeNext(st.r)}`, [await sessionCookie(env, checked.email), clear]);
 }
 
 // Validates a relative library path and derives category/title/format.
@@ -1520,11 +1728,20 @@ async function removeRecent(request, env, bookId) {
 async function handleApi(request, env, url) {
   const { method } = request;
   const path = url.pathname;
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && request.headers.get("Origin") !== url.origin)
+  // CSRF: browser writes must be same-origin. Only a *valid* owner bearer token is exempt (a
+  // browser never sends it automatically); cookie and invalid-bearer writes are still checked.
+  if (
+    ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
+    request.headers.get("Origin") !== url.origin &&
+    !(await bearerOwner(request, env))
+  )
     throw new HttpError(403, "bad_origin");
 
+  if (path === OAUTH_PATH && method === "GET") return googleStart(env, url);
+  if (path === `${OAUTH_PATH}/callback` && method === "GET") return googleCallback(request, env, url);
   if (path === "/api/login" && method === "POST") {
     requireConfig(env);
+    if (!env.OWNER_PASSWORD) throw new HttpError(503, "not_configured");
     const body = await readJson(request);
     const password = typeof body?.password === "string" ? body.password : "";
     const [given, expected] = await Promise.all([
@@ -1538,7 +1755,10 @@ async function handleApi(request, env, url) {
     return json({ ok: true }, 200, {
       "Set-Cookie": `${COOKIE}=; Max-Age=0; HttpOnly; Secure; SameSite=Lax; Path=/`,
     });
-  if (path === "/api/me" && method === "GET") return json({ owner: await isOwner(request, env) });
+  if (path === "/api/me" && method === "GET") {
+    const session = await ownerSession(request, env);
+    return json(session?.email ? { owner: true, email: session.email } : { owner: Boolean(session) });
+  }
   if (path === "/api/upload" && method === "PUT") return upload(request, env);
   if (path === "/api/upload/check" && method === "POST") return uploadCheck(request, env);
   if (path === "/api/catalog" && method === "POST") return catalog(request, env);

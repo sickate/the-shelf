@@ -39,7 +39,7 @@ AI、正文准备、公开文件、多用户、旧 CF01/CF03/trial 迁移链路�
 | --- | --- | --- |
 | POST /api/login `{password}` | 公开 | 成功设置 `shelf_session` cookie（HMAC 签名，30 天，HttpOnly Secure SameSite=Lax），返回 `{ok:true}`；失败 401 |
 | POST /api/logout | 任意 | 清 cookie |
-| GET /api/me | 公开 | `{owner:boolean}` |
+| GET /api/me | 公开 | `{owner:boolean}`（2026-10-27 起 Google 会话另含 `email`） |
 | GET /api/books | 公开 | `{books:[{id,title,category,format,sizeBytes,status,createdAt}], categories:[...]}`，不含原始路径/哈希/key；status ∈ `uploaded`、`local_only` |
 | GET /api/books/:id | 公开 | 单本元数据 |
 | GET /api/books/:id/file | 所有者 | 从 R2 流式返回，支持 Range/HEAD，`Content-Disposition: inline`（`?download=1` 为 attachment） |
@@ -99,7 +99,22 @@ AI、正文准备、公开文件、多用户、旧 CF01/CF03/trial 迁移链路�
 
 页面：首页（所有者）统计区下方显示“最近阅读 / RECENT”可折叠区块（默认展开，折叠状态存 localStorage `shelf:recent-collapsed`），横向滚动卡片（封面、书名、相对时间、进度、“继续阅读 →” `read.html`、× 移除），默认 12 本（请求 13 判断是否有更多），“查看全部”请求 100；无记录显示引导文字；访客不显示也不请求。阅读页（`lib/recent.ts`）：书加载成功且无错误后 `POST opened` 一次（附当时已知进度）；之后翻页 `PUT progress` 节流（距上次发送 ≥30 秒，尾随发送），`pagehide` 与页面隐藏时以 `fetch keepalive` 补发未发送的最新进度；失败一律忽略。进度文字：PDF / CBZ “第 N / 总 页”（双页 “第 N–M / 总 页”），EPUB（位置生成后）/ MOBI / AZW / TXT “约 N%”。
 
-脚本鉴权：先 POST /api/login 取得 cookie。
+### 2026-10-27 Google 登录与所有者 API 令牌（G1，`docs/audiobook-google-login-plan-2026-10-27.md`）
+
+第一阶段：新增 Google 登录，密码登录暂时保留（G2 线上验收后再移除）。仍是单一所有者：`OWNER_EMAILS` 白名单内且 `email_verified` 为 true 的 Google 账号得到所有者会话。Secrets：`GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`OWNER_EMAILS`（逗号分隔，忽略大小写与首尾空白）、`OWNER_API_TOKEN`（≥32 字符，否则视为未启用）；可选变量 `GOOGLE_REDIRECT_URI`（默认 `<origin>/api/auth/google/callback`）。会话校验只要求 `SESSION_SECRET`；未配置 `OWNER_PASSWORD` 时 `/api/login` 返回 503 `not_configured`。
+
+| 方法 路径 | 权限 | 说明 |
+| --- | --- | --- |
+| GET /api/auth/google[?next=] | 公开 | 未配置 Google（client id/secret、白名单、`SESSION_SECRET` 任一缺失）503 `not_configured`。否则生成 `state`、`nonce`、PKCE verifier（S256），写入 HMAC 签名 cookie `shelf_oauth`（10 分钟，HttpOnly Secure SameSite=Lax，`Path=/api/auth/google`），302 到 Google（scope `openid email`，`prompt=select_account`）。`next` 须以 `/` 开头、非 `//`、无反斜杠/空白/控制字符，否则为 `/` |
+| GET /api/auth/google/callback | 公开 | 校验 state cookie 签名、有效期与 `state` 参数（常量时间）；服务端用 client secret + code_verifier 向 `oauth2.googleapis.com/token` 换码（10 s 超时，不跟随重定向）；解码 id_token 并校验 `iss`、`aud`、`exp`、`nonce`、`email_verified`，邮箱须在白名单。成功设置所有者会话、清 state cookie、302 到 `next`；任何失败都清 state cookie 并 302 到 `/?login_error=<code>`：`google_denied`（用户取消或无 code）、`google_state`、`google_token`、`google_claims`、`forbidden_email`、`not_configured`。不记录、不回显 code 与 token |
+| GET /api/me | 公开 | `{owner:boolean}`；Google 会话为 `{owner:true, email}` |
+| 任意所有者接口 + `Authorization: Bearer <OWNER_API_TOKEN>` | 所有者 | 常量时间比较（SHA-256 摘要）。带 Authorization 头时只看令牌：令牌错误即非所有者，不回落到 cookie。仅有效 Bearer 写请求豁免 Origin 校验；cookie 与无效 Bearer 写请求仍须同源。Bearer 请求不下发 cookie |
+
+会话 cookie `shelf_session`（HMAC(SESSION_SECRET)，30 天）：密码登录与旧 cookie 为 `<expiry>.<sig>`（签名内容 `owner:<expiry>`），过渡期内继续有效直到过期；Google 登录为 `<expiry>.<b64url(email)>.<sig>`（签名内容 `owner:<expiry>:<emailHash>`，emailHash = HMAC(SESSION_SECRET, `email:<email>`) 的 base64url 前 22 字符）。邮箱以签名保护的明文放在 HttpOnly cookie 中，供 `/api/me` 返回；邮箱移出 `OWNER_EMAILS` 后该会话立即失效。
+
+页面：各处登录框顶部加“使用 Google 登录”按钮（`/api/auth/google?next=<当前路径+查询>`），下方保留密码框。`?login_error=` 显示中文提示（如 `forbidden_email` →“此 Google 账号无权访问”）后从地址栏移除。
+
+脚本鉴权：`.env` 有 `SHELF_OWNER_API_TOKEN` 时 `scripts/mvp-upload.mjs` 与 `scripts/lib/batch.mjs`（enrich / classify / reidentify）发送 Bearer、不调用 `/api/login`；否则回落为 POST /api/login 取得 cookie。
 
 ## 分工
 

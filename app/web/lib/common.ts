@@ -52,12 +52,46 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
 }
 
 export async function getOwner(): Promise<boolean> {
+  showLoginError();
   try {
     const me = await api<{ owner: boolean }>("/api/me");
     return !!me.owner;
   } catch {
     return false;
   }
+}
+
+const LOGIN_ERROR_TEXT: Record<string, string> = {
+  forbidden_email: "此 Google 账号无权访问",
+  google_denied: "已取消 Google 登录",
+  google_state: "登录已过期或校验失败，请重新登录",
+  google_token: "无法连接 Google 完成登录，请稍后重试",
+  google_claims: "Google 账号校验失败（邮箱未验证或凭据无效）",
+  not_configured: "Google 登录尚未配置",
+};
+
+/** Google sign-in start URL that returns to the current page (minus any login_error). */
+export function googleLoginUrl(): string {
+  const url = new URL(location.href);
+  url.searchParams.delete("login_error");
+  return `/api/auth/google?next=${encodeURIComponent(url.pathname + url.search)}`;
+}
+
+let loginErrorShown = false;
+/** Shows a `?login_error=` code from the Google callback once, then drops it from the URL. */
+export function showLoginError(): void {
+  if (loginErrorShown) return;
+  loginErrorShown = true;
+  const url = new URL(location.href);
+  const code = url.searchParams.get("login_error");
+  if (code === null) return;
+  url.searchParams.delete("login_error");
+  history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+  const text = LOGIN_ERROR_TEXT[code] || `登录失败（${code.slice(0, 40)}）`;
+  const close = el("button", { type: "button", class: "link-btn", "aria-label": "关闭" }, "×");
+  const bar = el("div", { class: "login-error notice error", role: "alert" }, el("span", {}, text), close);
+  close.addEventListener("click", () => bar.remove());
+  document.body.prepend(bar);
 }
 
 export async function login(password: string): Promise<void> {
@@ -152,7 +186,11 @@ export function loginForm(onSuccess: () => void): HTMLFormElement {
   const input = el("input", { type: "password", placeholder: "所有者密码", autocomplete: "current-password", required: "" });
   const btn = el("button", { type: "submit", class: "primary" }, "登录");
   const msg = el("span", { class: "msg", role: "status" });
-  const form = el("form", { class: "login" }, input, btn, msg);
+  const google = el("a", { class: "button primary google-login", href: googleLoginUrl() }, "使用 Google 登录");
+  // Recompute on click so the return path reflects the page's current URL.
+  google.addEventListener("click", () => google.setAttribute("href", googleLoginUrl()));
+  const or = el("span", { class: "login-or muted" }, "或使用所有者密码");
+  const form = el("form", { class: "login" }, google, or, input, btn, msg);
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     btn.disabled = true;
