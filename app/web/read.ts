@@ -17,6 +17,8 @@ import {
   spreadStart,
   stepSpread,
 } from "./lib/reader-prefs";
+import { setChapterSource } from "./lib/chapter-source";
+import { epubChapterSource, mobiChapterSource, pdfChapterSource, textChapter } from "./lib/chapter-text";
 import { epubNotes, mobiNotes, pdfNotes, textNotes } from "./lib/reader-notes";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -332,6 +334,7 @@ async function readPdf(sizeBytes: number) {
 
   await render();
   void notes.start();
+  setChapterSource(pdfChapterSource(pdf, () => pageNum));
 
   // Outline (TOC)
   try {
@@ -476,6 +479,7 @@ async function readEpub() {
   }
   hideLoading();
   void notes.start();
+  setChapterSource(epubChapterSource(book, () => (rendition as any).currentLocation?.()?.start?.href ?? null));
 
   book.loaded.navigation.then((nav: any) => {
     const opts: HTMLOptionElement[] = [el("option", { value: "" }, "目录")];
@@ -602,6 +606,7 @@ async function readMobi(format: string) {
   }
   hideLoading();
   void notes.start();
+  setChapterSource(mobiChapterSource(fv));
 
   const opts: HTMLOptionElement[] = [el("option", { value: "" }, "目录")];
   const walk = (items: any[], depth: number) => {
@@ -636,6 +641,29 @@ function decode(buf: ArrayBuffer): string {
   }
 }
 
+/** Character offset in the article text at the top of the viewport (scroll fraction as fallback). */
+function textOffsetAtTop(article: HTMLElement, len: number): number {
+  const max = document.documentElement.scrollHeight - innerHeight;
+  const byFraction = max > 0 ? Math.round((scrollY / max) * len) : 0;
+  try {
+    const r = article.getBoundingClientRect();
+    const x = Math.min(Math.max(r.left + 4, 0), innerWidth - 1);
+    const range = (document as any).caretRangeFromPoint?.(x, 4) as Range | null;
+    const pos = (document as any).caretPositionFromPoint?.(x, 4) as { offsetNode: Node; offset: number } | null;
+    const node = range?.startContainer ?? pos?.offsetNode;
+    const off = range?.startOffset ?? pos?.offset;
+    if (node && typeof off === "number" && article.contains(node)) {
+      const pre = document.createRange(); // survives highlight spans the notes layer may add
+      pre.setStart(article, 0);
+      pre.setEnd(node, off);
+      return pre.toString().length;
+    }
+  } catch {
+    /* fall back */
+  }
+  return byFraction;
+}
+
 async function readText() {
   const text = decode(await fetchFile("文本"));
   hideLoading();
@@ -666,6 +694,7 @@ async function readText() {
   toolbar.classList.add("toolbar-end");
   toolbar.hidden = false;
   void notes.start();
+  setChapterSource(() => Promise.resolve(textChapter(text, textOffsetAtTop(article, text.length))));
   const saved = Number(store.get(posKey));
   if (saved > 0) {
     requestAnimationFrame(() => window.scrollTo(0, saved * (document.documentElement.scrollHeight - innerHeight)));
