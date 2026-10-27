@@ -26,9 +26,11 @@ function parseArgs(argv) {
 
 const opts = parseArgs(process.argv.slice(2));
 const BASE = (process.env.SHELF_URL || 'https://the-shelf.iamzhutuo.workers.dev').replace(/\/+$/, '');
+// Owner auth: SHELF_OWNER_API_TOKEN (Bearer, no /api/login) when set, else password login.
+const TOKEN = process.env.SHELF_OWNER_API_TOKEN || '';
 const PASSWORD = process.env.SHELF_OWNER_PASSWORD || '';
-if (!opts.dryRun && !PASSWORD) {
-  console.error('SHELF_OWNER_PASSWORD is required (unless --dry-run)');
+if (!opts.dryRun && !TOKEN && !PASSWORD) {
+  console.error('SHELF_OWNER_API_TOKEN or SHELF_OWNER_PASSWORD is required (unless --dry-run)');
   process.exit(2);
 }
 const root = path.resolve(opts.root);
@@ -118,6 +120,7 @@ function saveState() {
 let cookie = '';
 let loginPromise = null;
 async function login() {
+  if (TOKEN) return;
   const res = await fetch(`${BASE}/api/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: BASE },
@@ -144,13 +147,13 @@ async function request(method, urlPath, { headers = {}, body } = {}) {
     try {
       res = await fetch(`${BASE}${urlPath}`, {
         method, body,
-        headers: { ...headers, Cookie: used, Origin: BASE },
+        headers: { ...headers, ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : { Cookie: used }), Origin: BASE },
       });
     } catch (e) {
       if (attempt < 3) { await sleep(1000 * 2 ** attempt); continue; }
       return { status: 0, json: { error: `network: ${e.cause?.code || e.message}` } };
     }
-    if (res.status === 401 && !reloggedIn) { reloggedIn = true; await relogin(used); continue; }
+    if (res.status === 401 && !reloggedIn && !TOKEN) { reloggedIn = true; await relogin(used); continue; }
     const txt = await res.text();
     let json = {};
     try { json = JSON.parse(txt); } catch { /* ignore */ }

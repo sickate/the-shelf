@@ -19,7 +19,11 @@
   ]
   // Secrets (wrangler secret put): OWNER_PASSWORD, SESSION_SECRET, OAI_KEY (AI book info),
   // DEEPSEEK_KEY (optional web search for AI book info; skipped when unset).
-  // Optional vars: OAI_BASE_URL (default https://oai.parallelstreamllc.com).
+  // Google sign-in (G1, docs/mvp-plan.md 2026-10-27): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+  // OWNER_EMAILS (comma separated whitelist); OWNER_API_TOKEN (>= 32 chars, Bearer for scripts).
+  // OWNER_PASSWORD is now optional (password login answers 503 not_configured without it).
+  // Optional vars: OAI_BASE_URL (default https://oai.parallelstreamllc.com),
+  // GOOGLE_REDIRECT_URI (default <origin>/api/auth/google/callback).
   // Schema migrations: app/migrations/0002_features.sql (covers, book_info),
   // app/migrations/0003_classification.sql (book_class). CLC table app/clc.json is bundled.
 }

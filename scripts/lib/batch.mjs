@@ -95,9 +95,15 @@ export function createStateStore(file, base) {
   };
 }
 
-export function createClient({ base, password, stop }) {
+/**
+ * Owner auth headers. With SHELF_OWNER_API_TOKEN the client sends `Authorization: Bearer` and
+ * never calls /api/login; otherwise it falls back to the password login cookie.
+ */
+export function createClient({ base, password, token = '', stop }) {
   let cookie = '';
+  const auth = () => (token ? { Authorization: `Bearer ${token}` } : { Cookie: cookie });
   async function login() {
+    if (token) return;
     const res = await fetch(`${base}/api/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: base },
@@ -119,14 +125,14 @@ export function createClient({ base, password, stop }) {
         res = await fetch(`${base}${urlPath}`, {
           method,
           body,
-          headers: { Cookie: cookie, Origin: base, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+          headers: { ...auth(), Origin: base, ...(body ? { 'Content-Type': 'application/json' } : {}) },
           signal: AbortSignal.any([stop.signal, AbortSignal.timeout(timeoutMs)]),
         });
       } catch (e) {
         if (stop.signal.aborted) return { status: -1, json: { error: 'interrupted' } };
         return { status: 0, json: { error: e?.name === 'TimeoutError' ? 'client_timeout' : `network_${e.cause?.code || 'error'}` } };
       }
-      if (res.status === 401 && !relogged) {
+      if (res.status === 401 && !relogged && !token) {
         await login();
         continue;
       }
@@ -160,9 +166,12 @@ export async function runCli(cfg) {
     process.exit(2);
   }
   const BASE = (process.env.SHELF_URL || 'https://the-shelf.iamzhutuo.workers.dev').replace(/\/+$/, '');
+  const TOKEN = process.env.SHELF_OWNER_API_TOKEN || '';
   const PASSWORD = process.env.SHELF_OWNER_PASSWORD || '';
-  if (!PASSWORD) {
-    console.error('SHELF_OWNER_PASSWORD is required (the owner book list is needed even for --dry-run)');
+  if (!TOKEN && !PASSWORD) {
+    console.error(
+      'SHELF_OWNER_API_TOKEN or SHELF_OWNER_PASSWORD is required (the owner book list is needed even for --dry-run)',
+    );
     process.exit(2);
   }
   const store = createStateStore(cfg.stateFile, BASE);
@@ -173,7 +182,7 @@ export async function runCli(cfg) {
     console.error('\ninterrupted: finishing state write (the server may still complete the current book)');
     stop.abort();
   });
-  const client = createClient({ base: BASE, password: PASSWORD, stop });
+  const client = createClient({ base: BASE, password: PASSWORD, token: TOKEN, stop });
   const { request } = client;
   const sleep = (ms) =>
     new Promise((resolve) => {
