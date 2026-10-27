@@ -111,12 +111,7 @@ label input, label select { margin-top: 6px; width: 100%; }
   box-shadow: 3px 4px 0 var(--shadow);
 }
 .login { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.login input { flex: 1 1 140px; padding: 9px 11px; }
-.login button { padding: 9px 14px; }
-.login .msg { flex-basis: 100%; color: var(--err); font-size: 12px; }
-.login .msg:empty { display: none; }
 .login .google-login { flex-basis: 100%; text-align: center; text-decoration: none; padding: 10px 14px; font-weight: 600; }
-.login .login-or { flex-basis: 100%; font-size: 12px; text-align: center; }
 .login-error {
   position: sticky;
   top: 0;
@@ -486,7 +481,7 @@ body.reader[data-reader-theme="dark"] {
   .info-block p, .info-block li { font-size: 13px; }
   .info-elapsed { margin-left: 0; flex-basis: 100%; }
   footer { gap: 20px; line-height: 1.7; flex-direction: column; }
-  input[type="search"], input[type="password"] { font-size: 16px; }
+  input[type="search"] { font-size: 16px; }
   .reader-top { padding: 0 10px; gap: 8px; }
   .small-mark { display: none; }
   .toolbar { padding: 6px 10px; gap: 4px; }

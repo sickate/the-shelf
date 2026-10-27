@@ -26,11 +26,10 @@ function parseArgs(argv) {
 
 const opts = parseArgs(process.argv.slice(2));
 const BASE = (process.env.SHELF_URL || 'https://the-shelf.iamzhutuo.workers.dev').replace(/\/+$/, '');
-// Owner auth: SHELF_OWNER_API_TOKEN (Bearer, no /api/login) when set, else password login.
+// Owner auth: SHELF_OWNER_API_TOKEN (Bearer). Password login was removed in G2.
 const TOKEN = process.env.SHELF_OWNER_API_TOKEN || '';
-const PASSWORD = process.env.SHELF_OWNER_PASSWORD || '';
-if (!opts.dryRun && !TOKEN && !PASSWORD) {
-  console.error('SHELF_OWNER_API_TOKEN or SHELF_OWNER_PASSWORD is required (unless --dry-run)');
+if (!opts.dryRun && !TOKEN) {
+  console.error('缺少 SHELF_OWNER_API_TOKEN / SHELF_OWNER_API_TOKEN is required (unless --dry-run)');
   process.exit(2);
 }
 const root = path.resolve(opts.root);
@@ -117,43 +116,19 @@ function saveState() {
 }
 
 // ---------- http ----------
-let cookie = '';
-let loginPromise = null;
-async function login() {
-  if (TOKEN) return;
-  const res = await fetch(`${BASE}/api/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: BASE },
-    body: JSON.stringify({ password: PASSWORD }),
-  });
-  if (!res.ok) throw new Error(`login failed: HTTP ${res.status}`);
-  const sc = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('set-cookie') || ''];
-  const hit = sc.map((s) => /(?:^|[\s,])shelf_session=([^;]*)/.exec(s)).find(Boolean);
-  if (!hit) throw new Error('login: no shelf_session cookie in response');
-  cookie = `shelf_session=${hit[1]}`;
-}
-function relogin(stale) {
-  if (cookie !== stale) return Promise.resolve();
-  loginPromise ??= login().finally(() => { loginPromise = null; });
-  return loginPromise;
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function request(method, urlPath, { headers = {}, body } = {}) {
-  let reloggedIn = false;
   for (let attempt = 0; ; attempt++) {
-    const used = cookie;
     let res;
     try {
       res = await fetch(`${BASE}${urlPath}`, {
         method, body,
-        headers: { ...headers, ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : { Cookie: used }), Origin: BASE },
+        headers: { ...headers, Authorization: `Bearer ${TOKEN}`, Origin: BASE },
       });
     } catch (e) {
       if (attempt < 3) { await sleep(1000 * 2 ** attempt); continue; }
       return { status: 0, json: { error: `network: ${e.cause?.code || e.message}` } };
     }
-    if (res.status === 401 && !reloggedIn && !TOKEN) { reloggedIn = true; await relogin(used); continue; }
     const txt = await res.text();
     let json = {};
     try { json = JSON.parse(txt); } catch { /* ignore */ }
@@ -194,7 +169,6 @@ if (opts.dryRun) {
   process.exit(0);
 }
 
-await login();
 let budgetStop = false;
 let idx = 0, finished = 0;
 let lastSave = Date.now();

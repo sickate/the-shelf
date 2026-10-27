@@ -145,3 +145,11 @@ Garage 复制完成后再次运行 `node scripts/mvp-upload.mjs`，脚本自动�
 - 线上冒烟通过：未登录读文件 401、错误密码 401、登录、上传、重复去重、Range 206、全文 hash 一致。
 - 本机 macOS 12 无法运行 workerd，单元测试使用 Node SQLite + 内存 R2 假实现（14/14）。
 - 批量上传：已复制完整的书已开始上传；Garage 复制完成后重跑 `npm run app:upload`。
+
+## 2026-10-27 G2：移除密码登录
+
+- 删除 `POST /api/login`：现在按未知路由返回 404（先过 Origin/CSRF 检查，跨源仍为 403）。代码中不再有任何 `OWNER_PASSWORD` 读取。
+- 旧格式会话 cookie `<expiry>.<sig>` 不再被接受（即使签名正确）。仅 `<expiry>.<b64url email>.<sig>` 且 email 仍在 `OWNER_EMAILS` 内，或有效的 Bearer 令牌，才视为所有者。`sessionCookie` 必须带 email。已有的旧格式 cookie 随部署立即失效，需重新用 Google 登录。
+- 前端登录区只剩“使用 Google 登录”按钮和 `login_error` 提示，密码输入框已移除。
+- `scripts/mvp-upload.mjs`、`scripts/lib/batch.mjs`（classify/enrich/reidentify）不再有密码回退，必须设置 `SHELF_OWNER_API_TOKEN`，缺失时退出码 2（`mvp-upload --dry-run` 不联网，不要求令牌）。
+- 待办：部署后执行 `wrangler secret delete OWNER_PASSWORD` 删除生产遗留 secret（本任务未执行，未部署）。

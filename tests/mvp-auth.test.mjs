@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
 import { checkGoogleClaims, safeNext } from "../app/worker.mjs";
-import { ORIGIN, PASSWORD, setup } from "./helpers/mvp-fixture.mjs";
+import { ORIGIN, googleCookie, setup } from "./helpers/mvp-fixture.mjs";
 
 // Google sign-in (G1), owner API token and session-format transition.
 const SECRET = "s".repeat(32);
@@ -10,7 +10,6 @@ const CLIENT_ID = "client-123.apps.googleusercontent.com";
 const OWNER = "owner@example.com";
 const TOKEN = "t".repeat(40);
 const CONFIG = {
-  OWNER_PASSWORD: PASSWORD,
   SESSION_SECRET: SECRET,
   GOOGLE_CLIENT_ID: CLIENT_ID,
   GOOGLE_CLIENT_SECRET: "client-secret-value",
@@ -252,25 +251,37 @@ test("google callback: id_token claim checks", async (t) => {
   assert.deepEqual(checkGoogleClaims(null, { clientId: CLIENT_ID, nonce: "n" }), { error: "google_claims" });
 });
 
-test("session formats: legacy cookie still valid, password login still works", async (t) => {
+test("session cookie: only the Google format is accepted", async (t) => {
   const { fetch, login } = await setup(t, CONFIG);
-  const cookie = await login();
-  assert.match(cookie, /^shelf_session=\d+\.[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(await (await fetch("/api/me", { headers: { Cookie: cookie } })).json(), { owner: true });
-  // A hand-built legacy cookie (`<expiry>.<sig>` over `owner:<expiry>`) is accepted until expiry.
+  const me = async (cookie) => (await fetch("/api/me", { headers: { Cookie: cookie } })).json();
+  const cookie = await login(OWNER);
+  assert.match(cookie, /^shelf_session=\d+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
+  assert.deepEqual(await me(cookie), { owner: true, email: OWNER });
+  // A correctly signed legacy cookie (`<expiry>.<sig>` over `owner:<expiry>`) is rejected.
   const legacy = (exp) => `shelf_session=${exp}.${createHmac("sha256", SECRET).update(`owner:${exp}`).digest("base64url")}`;
   const future = Math.floor(Date.now() / 1000) + 600;
-  assert.deepEqual(await (await fetch("/api/me", { headers: { Cookie: legacy(future) } })).json(), { owner: true });
-  const past = Math.floor(Date.now() / 1000) - 1;
-  assert.deepEqual(await (await fetch("/api/me", { headers: { Cookie: legacy(past) } })).json(), { owner: false });
+  assert.deepEqual(await me(legacy(future)), { owner: false });
+  // Expired Google cookie.
+  assert.deepEqual(await me(googleCookie(SECRET, OWNER, Math.floor(Date.now() / 1000) - 1)), { owner: false });
+  // Signed with another secret.
+  assert.deepEqual(await me(googleCookie("x".repeat(32), OWNER)), { owner: false });
 });
 
-test("password login needs OWNER_PASSWORD; sessions need only SESSION_SECRET", async (t) => {
-  const { OWNER_PASSWORD, ...rest } = CONFIG;
-  const { fetch } = await setup(t, rest);
-  const res = await fetch("/api/login", { method: "POST", headers: { Origin: ORIGIN }, body: JSON.stringify({ password: "" }) });
-  assert.equal(res.status, 503);
-  assert.deepEqual(await res.json(), { error: "not_configured" });
+test("google cookie is rejected once its email leaves OWNER_EMAILS", async (t) => {
+  const { fetch, env, login } = await setup(t, CONFIG);
+  const cookie = await login(OWNER);
+  const status = async () => (await (await fetch("/api/me", { headers: { Cookie: cookie } })).json()).owner;
+  assert.equal(await status(), true);
+  env.OWNER_EMAILS = "other@example.com";
+  assert.equal(await status(), false);
+  assert.equal((await fetch("/api/budget", { headers: { Cookie: cookie } })).status, 401);
+});
+
+test("POST /api/login is gone; sessions need only SESSION_SECRET", async (t) => {
+  const { fetch } = await setup(t, CONFIG);
+  const res = await fetch("/api/login", { method: "POST", headers: { Origin: ORIGIN }, body: JSON.stringify({ password: "x" }) });
+  assert.equal(res.status, 404);
+  assert.equal(res.headers.get("Set-Cookie"), null);
   assert.deepEqual(await (await fetch("/api/me")).json(), { owner: false });
   const bearer = await fetch("/api/me", { headers: { Authorization: `Bearer ${TOKEN}` } });
   assert.deepEqual(await bearer.json(), { owner: true });

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseBookPath, parseRange } from "../app/worker.mjs";
-import { ORIGIN, PASSWORD, setup, sha } from "./helpers/mvp-fixture.mjs";
+import { ORIGIN, setup, sha } from "./helpers/mvp-fixture.mjs";
 
 test("path parsing and range parsing", () => {
   assert.deepEqual(parseBookPath("09-漫画/Chainsaw Man/第一部/第001话.pdf"), {
@@ -33,34 +33,23 @@ test("MVP worker API end to end", async (t) => {
     assert.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
   });
 
-  await t.test("login failure, bad origin, success cookie and me", async () => {
-    const bad = await fetch("/api/login", {
-      method: "POST",
-      headers: { Origin: ORIGIN },
-      body: JSON.stringify({ password: "wrong" }),
-    });
-    assert.equal(bad.status, 401);
-    assert.equal(bad.headers.get("Set-Cookie"), null);
-    const cross = await fetch("/api/login", {
-      method: "POST",
-      headers: { Origin: "https://evil.test" },
-      body: JSON.stringify({ password: PASSWORD }),
-    });
-    assert.equal(cross.status, 403);
-    assert.deepEqual(await cross.json(), { error: "bad_origin" });
+  await t.test("password login route is gone; bad origin, cookie and me", async () => {
+    for (const origin of [ORIGIN, "https://evil.test"]) {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { Origin: origin },
+        body: JSON.stringify({ password: "anything" }),
+      });
+      assert.equal(res.status, origin === ORIGIN ? 404 : 403);
+      assert.equal(res.headers.get("Set-Cookie"), null);
+    }
     const noOrigin = await fetch("/api/logout", { method: "POST" });
     assert.equal(noOrigin.status, 403);
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { Origin: ORIGIN },
-      body: JSON.stringify({ password: PASSWORD }),
-    });
-    const cookie = res.headers.get("Set-Cookie");
-    assert.match(cookie, /^shelf_session=\d+\.[A-Za-z0-9_-]{43}; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax; Path=\/$/);
-    const me = await fetch("/api/me", { headers: { Cookie: cookie.split(";")[0] } });
-    assert.deepEqual(await me.json(), { owner: true });
+    const cookie = await login();
+    const me = await fetch("/api/me", { headers: { Cookie: cookie } });
+    assert.deepEqual(await me.json(), { owner: true, email: "owner@example.com" });
     assert.deepEqual(await (await fetch("/api/me")).json(), { owner: false });
-    const forged = cookie.split(";")[0].replace(/\.(.)/, (_, c) => `.${c === "A" ? "B" : "A"}`);
+    const forged = cookie.replace(/\.(.)/, (_, c) => `.${c === "A" ? "B" : "A"}`);
     assert.deepEqual(await (await fetch("/api/me", { headers: { Cookie: forged } })).json(), { owner: false });
   });
 
@@ -210,7 +199,7 @@ test("R2 failure keeps reservation; retry re-puts without new budget", async (t)
 
 test("missing secrets return 503 not_configured", async (t) => {
   const { fetch } = await setup(t, {});
-  const res = await fetch("/api/login", { method: "POST", headers: { Origin: ORIGIN }, body: "{}" });
+  const res = await fetch("/api/me");
   assert.equal(res.status, 503);
   assert.deepEqual(await res.json(), { error: "not_configured" });
 });

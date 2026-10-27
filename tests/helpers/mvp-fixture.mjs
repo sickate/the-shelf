@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -9,7 +9,7 @@ import worker from "../../app/worker.mjs";
 // against small faithful fakes: D1 on node:sqlite, R2 on an in-memory Map.
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const ORIGIN = "https://shelf.test";
-export const PASSWORD = "correct horse battery staple";
+export const OWNER_EMAIL = "owner@example.com";
 export const sha = (b) => createHash("sha256").update(b).digest("hex");
 
 export function fakeD1(sqlite) {
@@ -53,23 +53,23 @@ export function fakeR2() {
   };
 }
 
-export async function setup(t, secrets = { OWNER_PASSWORD: PASSWORD, SESSION_SECRET: "s".repeat(32) }) {
+/** `shelf_session=<expiry>.<b64url email>.<sig>` as the Worker's Google sign-in issues it. */
+export function googleCookie(secret, email = OWNER_EMAIL, expiry = Math.floor(Date.now() / 1000) + 3600) {
+  const hmac = (data) => createHmac("sha256", secret).update(data).digest("base64url");
+  const sig = hmac(`owner:${expiry}:${hmac(`email:${email}`).slice(0, 22)}`);
+  return `shelf_session=${expiry}.${Buffer.from(email).toString("base64url")}.${sig}`;
+}
+
+export async function setup(t, secrets = { SESSION_SECRET: "s".repeat(32) }) {
   const sqlite = new DatabaseSync(":memory:");
   t.after(() => sqlite.close());
   sqlite.exec(await readFile(`${ROOT}app/schema.sql`, "utf8"));
   const db = fakeD1(sqlite);
   const bucket = fakeR2();
-  const env = { ...secrets, DB: db, BOOKS: bucket, ASSETS: { fetch: async () => new Response("static asset") } };
+  const env = { OWNER_EMAILS: OWNER_EMAIL, ...secrets, DB: db, BOOKS: bucket, ASSETS: { fetch: async () => new Response("static asset") } };
   const fetch = (path, init = {}) => worker.fetch(new Request(`${ORIGIN}${path}`, init), env);
-  const login = async () => {
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { Origin: ORIGIN, "Content-Type": "application/json" },
-      body: JSON.stringify({ password: PASSWORD }),
-    });
-    assert.equal(res.status, 200);
-    return res.headers.get("Set-Cookie").split(";")[0];
-  };
+  // Mints a Google-format session cookie directly (no OAuth round trip).
+  const login = async (email = OWNER_EMAIL) => googleCookie(env.SESSION_SECRET, email);
   const upload = (cookie, path, bytes, hash = sha(bytes), extra = {}) =>
     fetch("/api/upload", {
       method: "PUT",

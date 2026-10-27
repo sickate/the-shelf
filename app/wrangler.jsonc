@@ -17,11 +17,11 @@
   "r2_buckets": [
     { "binding": "BOOKS", "bucket_name": "the-shelf-first-book-20261023" }
   ]
-  // Secrets (wrangler secret put): OWNER_PASSWORD, SESSION_SECRET, OAI_KEY (AI book info),
+  // Secrets (wrangler secret put): SESSION_SECRET, OAI_KEY (AI book info),
   // DEEPSEEK_KEY (optional web search for AI book info; skipped when unset).
   // Google sign-in (G1, docs/mvp-plan.md 2026-10-27): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
   // OWNER_EMAILS (comma separated whitelist); OWNER_API_TOKEN (>= 32 chars, Bearer for scripts).
-  // OWNER_PASSWORD is now optional (password login answers 503 not_configured without it).
+  // G2 (2026-10-27): password login removed; delete the leftover OWNER_PASSWORD secret (wrangler secret delete).
   // Optional vars: OAI_BASE_URL (default https://oai.parallelstreamllc.com),
   // GOOGLE_REDIRECT_URI (default <origin>/api/auth/google/callback).
   // Schema migrations: app/migrations/0002_features.sql (covers, book_info),

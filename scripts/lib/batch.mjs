@@ -1,5 +1,5 @@
 // Shared machinery for the owner batch scripts (mvp-enrich, mvp-classify):
-// arg parsing, login/relogin, HTTP with timeout, Retry-After + jitter, state file, sequential run loop.
+// arg parsing, bearer auth, HTTP with timeout, Retry-After + jitter, state file, sequential run loop.
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -96,30 +96,16 @@ export function createStateStore(file, base) {
 }
 
 /**
- * Owner auth headers. With SHELF_OWNER_API_TOKEN the client sends `Authorization: Bearer` and
- * never calls /api/login; otherwise it falls back to the password login cookie.
+ * Owner auth: SHELF_OWNER_API_TOKEN is sent as `Authorization: Bearer` (password login was
+ * removed in G2; there is no cookie fallback).
  */
-export function createClient({ base, password, token = '', stop }) {
-  let cookie = '';
-  const auth = () => (token ? { Authorization: `Bearer ${token}` } : { Cookie: cookie });
-  async function login() {
-    if (token) return;
-    const res = await fetch(`${base}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Origin: base },
-      body: JSON.stringify({ password }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!res.ok) throw new Error(`login failed: HTTP ${res.status}`);
-    const sc = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('set-cookie') || ''];
-    const hit = sc.map((s) => /(?:^|[\s,])shelf_session=([^;]*)/.exec(s)).find(Boolean);
-    if (!hit) throw new Error('login: no shelf_session cookie in response');
-    cookie = `shelf_session=${hit[1]}`;
-  }
+export function createClient({ base, token, stop }) {
+  if (!token) throw new Error('SHELF_OWNER_API_TOKEN is required');
+  const auth = () => ({ Authorization: `Bearer ${token}` });
 
-  /** One HTTP call; relogs in once on 401. Network errors are returned, never retried. */
+  /** One HTTP call. Network errors are returned, never retried. */
   async function request(method, urlPath, { body, timeoutMs = 60_000 } = {}) {
-    for (let relogged = false; ; relogged = true) {
+    for (;;) {
       let res;
       try {
         res = await fetch(`${base}${urlPath}`, {
@@ -132,10 +118,6 @@ export function createClient({ base, password, token = '', stop }) {
         if (stop.signal.aborted) return { status: -1, json: { error: 'interrupted' } };
         return { status: 0, json: { error: e?.name === 'TimeoutError' ? 'client_timeout' : `network_${e.cause?.code || 'error'}` } };
       }
-      if (res.status === 401 && !relogged && !token) {
-        await login();
-        continue;
-      }
       let json = {};
       try {
         json = JSON.parse(await res.text());
@@ -145,7 +127,7 @@ export function createClient({ base, password, token = '', stop }) {
       return { status: res.status, json, retryAfter: res.headers.get('Retry-After') };
     }
   }
-  return { login, request };
+  return { request };
 }
 
 /**
@@ -167,10 +149,9 @@ export async function runCli(cfg) {
   }
   const BASE = (process.env.SHELF_URL || 'https://the-shelf.iamzhutuo.workers.dev').replace(/\/+$/, '');
   const TOKEN = process.env.SHELF_OWNER_API_TOKEN || '';
-  const PASSWORD = process.env.SHELF_OWNER_PASSWORD || '';
-  if (!TOKEN && !PASSWORD) {
+  if (!TOKEN) {
     console.error(
-      'SHELF_OWNER_API_TOKEN or SHELF_OWNER_PASSWORD is required (the owner book list is needed even for --dry-run)',
+      '缺少 SHELF_OWNER_API_TOKEN / SHELF_OWNER_API_TOKEN is required (password login was removed; the owner book list is needed even for --dry-run)',
     );
     process.exit(2);
   }
@@ -182,7 +163,7 @@ export async function runCli(cfg) {
     console.error('\ninterrupted: finishing state write (the server may still complete the current book)');
     stop.abort();
   });
-  const client = createClient({ base: BASE, password: PASSWORD, token: TOKEN, stop });
+  const client = createClient({ base: BASE, token: TOKEN, stop });
   const { request } = client;
   const sleep = (ms) =>
     new Promise((resolve) => {
@@ -190,7 +171,6 @@ export async function runCli(cfg) {
       stop.signal.addEventListener('abort', () => (clearTimeout(t), resolve()), { once: true });
     });
 
-  await client.login();
   const list = await request('GET', '/api/books');
   if (list.status !== 200 || !Array.isArray(list.json?.books)) {
     console.error(`book list failed: HTTP ${list.status} ${list.json?.error || ''}`.trim());
@@ -250,7 +230,7 @@ export async function runCli(cfg) {
         outcome = { result: 'skipped', reason: 'interrupted' };
       } else if (res.status === 401) {
         outcome = { result: 'skipped', reason: 'login_required' };
-        fatal = 'login rejected after relogin; stopping';
+        fatal = 'owner token rejected (401); stopping';
       } else {
         const reason = res.json?.reason || res.json?.error || `http_${res.status}`;
         outcome = { result: 'failed', reason: res.status ? reason : res.json.error };
