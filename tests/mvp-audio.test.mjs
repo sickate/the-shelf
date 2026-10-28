@@ -84,7 +84,9 @@ test("create, dedupe, generate, play and budget end to end", async (t) => {
   const { job } = await res.json();
   assert.match(job.id, /^a_[0-9a-f]{24}$/);
   assert.equal(job.status, "queued");
-  assert.equal(job.voice, "Cherry");
+  assert.equal(job.voice, "xunanchuan_v3.1");
+  assert.equal(job.tone, "auto");
+  assert.equal(job.ttsModel, "qwen-audio-3.1-tts-flash");
   assert.equal(job.chapterLabel, "第一章");
   assert.ok(job.estSeconds > 60);
   assert.ok(job.totalPieces > 0);
@@ -119,7 +121,8 @@ test("create, dedupe, generate, play and budget end to end", async (t) => {
   const spoken = synth.calls.map((x) => x.text).join("");
   for (const gone of ["[1]", "①", "https://", "见第 12 页", "——", "\n12\n"]) assert.ok(!spoken.includes(gone), gone);
   assert.ok(spoken.includes("machine learning"));
-  assert.ok(synth.calls.every((x) => x.text.length <= 200 && x.key === "dash-test" && x.voice === "Cherry"));
+  assert.ok(synth.calls.every((x) => x.text.length <= 200 && x.key === "dash-test" && x.voice === "xunanchuan_v3.1"));
+  assert.ok(synth.calls.every((x) => x.model === "qwen-audio-3.1-tts-flash" && x.instruction === "平稳、客观的讲解语气"));
   // Raw chapter text is not kept once cleaned.
   const { raws } = await c.db.prepare("SELECT COUNT(*) AS raws FROM audio_blocks WHERE raw IS NOT NULL").first();
   assert.equal(raws, 0);
@@ -178,23 +181,38 @@ test("regenerate reuses cleaned text, switches voice and keeps budget", async (t
   const { job } = await (await c.create({ chapterKey: "c", label: "章", text: CHAPTER })).json();
   await drain(c.env, synth);
   const before = (await c.used()).audioBytes;
-  const res = await c.owner(`/api/audio/${job.id}/regenerate`, { method: "POST", body: JSON.stringify({ voice: "Ethan" }) });
+  const res = await c.owner(`/api/audio/${job.id}/regenerate`, { method: "POST", body: JSON.stringify({ voice: "longanhuan_v3.1" }) });
   assert.equal(res.status, 201);
-  const fresh = (await res.json()).job;
-  assert.equal(fresh.voice, "Ethan");
+  const body = await res.json();
+  const fresh = body.job;
+  assert.equal(body.reused, false);
+  assert.equal(fresh.voice, "longanhuan_v3.1");
   assert.equal(fresh.style, "沉稳的语气");
-  assert.equal((await c.owner(`/api/audio/${job.id}`)).status, 404);
-  assert.ok(c.wf.terminated.includes(`${job.id}-p0`));
+  // The ready job of the other voice stays live (switching back is free).
+  assert.equal((await c.owner(`/api/audio/${job.id}`)).status, 200);
+  assert.ok(!c.wf.terminated.includes(`${job.id}-p0`));
   await drain(c.env, synth);
   const ready = await c.getJob(fresh.id);
   assert.equal(ready.status, "ready", ready.error);
   assert.equal(requests.length, 1); // cleaned blocks reused: no second LLM call
-  assert.ok(synth.calls.slice(-ready.totalPieces).every((x) => x.voice === "Ethan"));
+  assert.ok(synth.calls.slice(-ready.totalPieces).every((x) => x.voice === "longanhuan_v3.1"));
   assert.equal((await c.used()).audioBytes, before + (await c.db.prepare("SELECT SUM(size_bytes) AS s FROM audio_pieces WHERE job_id = ?").bind(fresh.id).first()).s);
-  // Same voice again also works (old one soft-deleted first).
+  // Switching back returns the existing job without synthesizing.
+  const calls = synth.calls.length;
+  const back = await c.owner(`/api/audio/${fresh.id}/regenerate`, { method: "POST", body: JSON.stringify({ voice: "xunanchuan_v3.1" }) });
+  assert.equal(back.status, 200);
+  const backBody = await back.json();
+  assert.equal(backBody.reused, true);
+  assert.equal(backBody.job.id, job.id);
+  assert.equal((await c.owner(`/api/audio/${fresh.id}`)).status, 200);
+  await drain(c.env, synth);
+  assert.equal(synth.calls.length, calls);
+  // Same voice again (retry) replaces the job.
   const same = await c.owner(`/api/audio/${fresh.id}/regenerate`, { method: "POST", body: "" });
   assert.equal(same.status, 201);
-  assert.equal((await same.json()).job.voice, "Ethan");
+  assert.equal((await same.json()).job.voice, "longanhuan_v3.1");
+  assert.equal((await c.owner(`/api/audio/${fresh.id}`)).status, 404);
+  assert.ok(c.wf.terminated.includes(`${fresh.id}-p0`));
   assert.equal((await c.owner(`/api/audio/${fresh.id}/regenerate`, { method: "POST", body: JSON.stringify({ voice: "X" }) })).status, 404);
   assert.equal((await c.owner("/api/audio/a_000000000000000000000000/regenerate", { method: "POST", body: "{}" })).status, 404);
 });

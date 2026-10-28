@@ -17,7 +17,18 @@ import {
   validateCleanup,
   validateStyle,
 } from "./audio-text.mjs";
-import { DEFAULT_VOICE, VOICES, synthesize, ttsModel } from "./audio-tts.mjs";
+import {
+  DEFAULT_TONE,
+  DEFAULT_VOICE,
+  LEGACY_TTS_MODEL,
+  LEGACY_VOICES,
+  TONES,
+  VOICES,
+  isQwenAudioModel,
+  synthesize,
+  synthesizeQwenAudio,
+  ttsModel,
+} from "./audio-tts.mjs";
 
 const MAX_FILE_BYTES = 20_000_000;
 const BUDGET_LIMIT = 8_000_000_000;
@@ -1737,7 +1748,7 @@ async function removeRecent(request, env, bookId) {
 }
 
 // ---------------- Read-aloud (A1, docs/audiobook-google-login-plan-2026-10-27.md) ----------------
-// One audio job per (book, chapterKey, sha256(text), voice). A Cloudflare Workflow cleans the text in
+// One audio job per (book, chapterKey, sha256(text), voice, tone). A Cloudflare Workflow cleans the text in
 // ~6,000-char blocks (rules + gpt-luna), splits it into pieces (≤ piece_chars) and synthesizes one
 // piece per step. Each piece is reserved in the 8 GB budget before its R2 put.
 export const AUDIO_PIECE_CHARS = 200;
@@ -1794,7 +1805,7 @@ const liveJob = (env, id) => env.DB.prepare(`${LIVE_JOB} AND j.id = ?`).bind(id)
 /** Public job view (matches app/web/lib/audio-api.ts AudioJob). Pending pieces get provisional segments. */
 async function jobView(env, job) {
   const { results } = await env.DB.prepare(
-    "SELECT seq, segment, status, duration_ms, est_ms, text FROM audio_pieces WHERE job_id = ? AND status != 'split' ORDER BY seq",
+    "SELECT seq, segment, status, duration_ms, est_ms, text, marks FROM audio_pieces WHERE job_id = ? AND status != 'split' ORDER BY seq",
   )
     .bind(job.id)
     .all();
@@ -1808,7 +1819,14 @@ async function jobView(env, job) {
     segMs = s === seg ? segMs + d : d;
     seg = s;
     const out = (segs[s] ??= { index: s, durationMs: 0, pieces: [] });
-    out.pieces.push({ seq: p.seq, durationMs: d, ready, text: p.text ?? "" });
+    const piece = { seq: p.seq, durationMs: d, ready, text: p.text ?? "" };
+    if (ready && p.marks) {
+      try {
+        const marks = JSON.parse(p.marks);
+        if (Array.isArray(marks) && marks.length) piece.marks = marks;
+      } catch {} // a malformed row only loses its marks (the player estimates)
+    }
+    out.pieces.push(piece);
     out.durationMs += d;
   }
   const segments = segs.filter(Boolean).map((s, index) => ({ ...s, index }));
@@ -1816,6 +1834,8 @@ async function jobView(env, job) {
     id: job.id,
     status: job.status,
     voice: job.voice,
+    tone: job.tone === "plain" ? "plain" : "auto",
+    ttsModel: job.tts_model ?? LEGACY_TTS_MODEL,
     chapterLabel: job.chapter_label ?? "",
     style: job.style ?? null,
     estSeconds: job.est_seconds ?? null,
@@ -1845,10 +1865,25 @@ function jobStatements(env, j) {
   const now = nowIso();
   const stmts = [
     env.DB.prepare(
-      `INSERT INTO audio_jobs (id, book_id, chapter_key, chapter_label, source_sha256, voice, style, status, piece_chars,
-         est_seconds, total_pieces, done_pieces, billed_chars, llm_fallback_blocks, cpu_downgraded, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
-    ).bind(j.id, j.bookId, j.chapterKey, j.label, j.sha, j.voice, j.style ?? null, j.pieceChars, j.estSeconds, j.totalPieces, now, now),
+      `INSERT INTO audio_jobs (id, book_id, chapter_key, chapter_label, source_sha256, voice, tone, tts_model, style, status,
+         piece_chars, est_seconds, total_pieces, done_pieces, billed_chars, llm_fallback_blocks, cpu_downgraded, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
+    ).bind(
+      j.id,
+      j.bookId,
+      j.chapterKey,
+      j.label,
+      j.sha,
+      j.voice,
+      j.tone,
+      j.ttsModel,
+      j.style ?? null,
+      j.pieceChars,
+      j.estSeconds,
+      j.totalPieces,
+      now,
+      now,
+    ),
   ];
   if (j.blocks)
     stmts.push(
@@ -1892,17 +1927,25 @@ async function stopWorkflow(env, workflowId) {
 }
 
 const newAudioId = () => `a_${hex(crypto.getRandomValues(new Uint8Array(12)))}`;
-const sameKeyJob = (env, bookId, chapterKey, sha, voice) =>
+const sameKeyJob = (env, bookId, chapterKey, sha, voice, tone) =>
   env.DB.prepare(
-    "SELECT * FROM audio_jobs WHERE book_id = ? AND chapter_key = ? AND source_sha256 = ? AND voice = ? AND deleted_at IS NULL",
+    "SELECT * FROM audio_jobs WHERE book_id = ? AND chapter_key = ? AND source_sha256 = ? AND voice = ? AND tone = ? AND deleted_at IS NULL",
   )
-    .bind(bookId, chapterKey, sha, voice)
+    .bind(bookId, chapterKey, sha, voice, tone)
     .first();
 
+/** Voice for a new job: a current voice; a legacy (qwen3-tts) voice maps to the default; else 400. */
 function audioVoice(value, fallback) {
-  if (value === undefined || value === null) return fallback;
-  if (!VOICES.includes(value)) throw new HttpError(400, "bad_voice");
-  return value;
+  const v = value === undefined || value === null ? fallback : value;
+  if (VOICES.includes(v)) return v;
+  if (LEGACY_VOICES.includes(v)) return DEFAULT_VOICE;
+  throw new HttpError(400, "bad_voice");
+}
+
+function audioTone(value, fallback) {
+  const t = value === undefined || value === null ? fallback : value;
+  if (!TONES.includes(t)) throw new HttpError(400, "bad_tone");
+  return t;
 }
 
 async function audioBody(request, max) {
@@ -1942,8 +1985,9 @@ async function createAudio(request, env, row) {
   if (!text) throw new HttpError(400, "empty_text");
   if (text.length > MAX_AUDIO_CHARS && codePoints(text) > MAX_AUDIO_CHARS) throw new HttpError(413, "text_too_long");
   const voice = audioVoice(body.voice, DEFAULT_VOICE);
+  const tone = audioTone(body.tone, DEFAULT_TONE);
   const sha = await sha256Hex(text);
-  const existing = await sameKeyJob(env, row.id, chapterKey, sha, voice);
+  const existing = await sameKeyJob(env, row.id, chapterKey, sha, voice, tone);
   if (existing) return json({ job: await jobView(env, existing), duplicate: true });
 
   const { pieceChars } = await audioSettings(env);
@@ -1957,6 +2001,8 @@ async function createAudio(request, env, row) {
     label,
     sha,
     voice,
+    tone,
+    ttsModel: ttsModel(env),
     pieceChars,
     estSeconds: Math.round(estimateMs(text) / 1000),
     totalPieces: blocks.reduce((a, b) => a + b.e, 0),
@@ -1966,7 +2012,7 @@ async function createAudio(request, env, row) {
     await env.DB.batch(jobStatements(env, job));
   } catch (error) {
     // A concurrent identical request won the live-key unique index.
-    const raced = await sameKeyJob(env, row.id, chapterKey, sha, voice);
+    const raced = await sameKeyJob(env, row.id, chapterKey, sha, voice, tone);
     if (!raced) throw error;
     return json({ job: await jobView(env, raced), duplicate: true });
   }
@@ -1979,10 +2025,17 @@ async function findAudio(request, env, row, url) {
   requireReadable(row);
   const chapterKey = url.searchParams.get("chapterKey");
   if (!chapterKey || enc.encode(chapterKey).byteLength > MAX_CHAPTER_KEY_BYTES) throw new HttpError(400, "bad_chapter_key");
+  // Optional filters: voice (current or legacy, matched exactly) and tone; latest matching job.
+  const voice = url.searchParams.get("voice");
+  const tone = url.searchParams.get("tone");
+  if (voice !== null && !VOICES.includes(voice) && !LEGACY_VOICES.includes(voice)) throw new HttpError(400, "bad_voice");
+  if (tone !== null && !TONES.includes(tone)) throw new HttpError(400, "bad_tone");
   const job = await env.DB.prepare(
-    "SELECT * FROM audio_jobs WHERE book_id = ? AND chapter_key = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1",
+    `SELECT * FROM audio_jobs WHERE book_id = ?1 AND chapter_key = ?2 AND deleted_at IS NULL
+       AND (?3 IS NULL OR voice = ?3) AND (?4 IS NULL OR tone = ?4)
+     ORDER BY created_at DESC, id DESC LIMIT 1`,
   )
-    .bind(row.id, chapterKey)
+    .bind(row.id, chapterKey, voice, tone)
     .first();
   if (!job) throw new HttpError(404, "not_found");
   return json({ job: await jobView(env, job) });
@@ -1995,6 +2048,15 @@ async function getAudio(request, env, jobId) {
   return json({ job: await jobView(env, job) });
 }
 
+/**
+ * Regenerate / switch voice or tone ({voice?, tone?}; defaults: the job's own, a legacy voice maps to
+ * the default voice). The new job always uses the current TTS model and reuses the cleaned blocks (no
+ * new LLM call); no bytes are released.
+ * - Same key as the job (retry): the job is soft-deleted and replaced.
+ * - Another key that already has a live, usable job: that job is returned (nothing synthesized).
+ * - Another key: a new job; the old one stays live when it is ready (switching back is free),
+ *   otherwise it is soft-deleted and its workflow stopped. A failed job on the target key is replaced.
+ */
 async function regenerateAudio(request, env, jobId) {
   await requireOwner(request, env);
   if (!audioConfigured(env)) throw new HttpError(503, "not_configured");
@@ -2004,16 +2066,20 @@ async function regenerateAudio(request, env, jobId) {
   const book = await env.DB.prepare("SELECT * FROM books WHERE id = ? AND deleted_at IS NULL").bind(old.book_id).first();
   requireReadable(book);
   const voice = audioVoice(body.voice, old.voice);
+  const tone = audioTone(body.tone, old.tone === "plain" ? "plain" : DEFAULT_TONE);
+  const sameKey = voice === old.voice && tone === (old.tone ?? DEFAULT_TONE);
+  const target = sameKey ? null : await sameKeyJob(env, old.book_id, old.chapter_key, old.source_sha256, voice, tone);
+  if (target && target.status !== "failed" && target.status !== "budget_exceeded")
+    return json({ job: await jobView(env, target), reused: true });
+  const keepOld = !sameKey && old.status === "ready";
   const { pieceChars } = await audioSettings(env);
   const id = newAudioId();
   const now = nowIso();
-  // Soft-delete the old job (and any live job already holding the new key), then copy its blocks:
-  // cleaned blocks are reused so regenerating does not call the LLM again. No bytes are released.
   const statements = [
     env.DB.prepare(
-      `UPDATE audio_jobs SET deleted_at = ?, updated_at = ? WHERE deleted_at IS NULL
-         AND (id = ? OR (book_id = ? AND chapter_key = ? AND source_sha256 = ? AND voice = ?))`,
-    ).bind(now, now, old.id, old.book_id, old.chapter_key, old.source_sha256, voice),
+      `UPDATE audio_jobs SET deleted_at = ?1, updated_at = ?1 WHERE deleted_at IS NULL
+         AND ((id = ?2 AND ?3 = 0) OR (book_id = ?4 AND chapter_key = ?5 AND source_sha256 = ?6 AND voice = ?7 AND tone = ?8))`,
+    ).bind(now, old.id, keepOld ? 1 : 0, old.book_id, old.chapter_key, old.source_sha256, voice, tone),
     ...jobStatements(env, {
       id,
       bookId: old.book_id,
@@ -2021,6 +2087,8 @@ async function regenerateAudio(request, env, jobId) {
       label: old.chapter_label,
       sha: old.source_sha256,
       voice,
+      tone,
+      ttsModel: ttsModel(env),
       style: old.style,
       pieceChars,
       estSeconds: old.est_seconds,
@@ -2028,15 +2096,10 @@ async function regenerateAudio(request, env, jobId) {
       copyFrom: old.id,
     }),
   ];
-  const { results: others } = await env.DB.prepare(
-    "SELECT workflow_id FROM audio_jobs WHERE deleted_at IS NULL AND book_id = ? AND chapter_key = ? AND source_sha256 = ? AND voice = ?",
-  )
-    .bind(old.book_id, old.chapter_key, old.source_sha256, voice)
-    .all();
   await env.DB.batch(statements);
-  for (const w of [old.workflow_id, ...others.map((o) => o.workflow_id)]) await stopWorkflow(env, w);
+  for (const w of [keepOld ? null : old.workflow_id, target?.workflow_id]) await stopWorkflow(env, w);
   await startJob(env, id);
-  return json({ job: await jobView(env, await liveJob(env, id)) }, 201);
+  return json({ job: await jobView(env, await liveJob(env, id)), reused: false }, 201);
 }
 
 async function deleteAudio(request, env, jobId) {
@@ -2250,12 +2313,20 @@ export async function audioPieceStep(env, jobId, seq, deps = {}) {
     p = firstRow(again);
     if (p.reserved_bytes === null) return budgetExceeded(env, jobId);
   }
-  const tts = await (deps.synthesize ?? synthesize)(env.DASHSCOPE_KEY, {
-    text: p.text,
-    voice: job.voice,
-    model: ttsModel(env),
-    instructions: job.style ?? DEFAULT_STYLE,
-  });
+  // The job's own model: qwen-audio-* via the inference client (instruction only for tone auto);
+  // jobs from before 0008 (tts_model NULL) keep the realtime client.
+  const model = job.tts_model ?? LEGACY_TTS_MODEL;
+  const style = job.tone === "plain" ? null : (job.style ?? DEFAULT_STYLE);
+  const qwenAudio = isQwenAudioModel(model);
+  const client = deps.synthesize ?? (qwenAudio ? synthesizeQwenAudio : synthesize);
+  const tts = await client(
+    env.DASHSCOPE_KEY,
+    qwenAudio
+      ? { text: p.text, voice: job.voice, model, instruction: style }
+      : { text: p.text, voice: job.voice, model, instructions: style },
+    deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : undefined,
+  );
+  const marks = Array.isArray(tts.marks) && tts.marks.length ? JSON.stringify(tts.marks) : null;
   const size = tts.audio.byteLength;
   if (size > MAX_FILE_BYTES) throw new Error("tts_too_large");
   if (size > p.reserved_bytes) {
@@ -2273,7 +2344,7 @@ export async function audioPieceStep(env, jobId, seq, deps = {}) {
   // Segment by actual duration: continue the previous ready piece's segment unless it would pass 20:00.
   await env.DB.batch([
     env.DB.prepare(
-      `UPDATE audio_pieces SET status = 'ready', size_bytes = ?3, duration_ms = ?4, billed_chars = ?5, error = NULL, updated_at = ?6,
+      `UPDATE audio_pieces SET status = 'ready', size_bytes = ?3, duration_ms = ?4, billed_chars = ?5, error = NULL, updated_at = ?6, marks = ?8,
          segment = COALESCE((
            SELECT CASE WHEN (SELECT COALESCE(SUM(q.duration_ms), 0) FROM audio_pieces q
                                WHERE q.job_id = ?1 AND q.status = 'ready' AND q.segment = prev.segment) + ?4 > ?7
@@ -2281,7 +2352,7 @@ export async function audioPieceStep(env, jobId, seq, deps = {}) {
            FROM (SELECT segment FROM audio_pieces WHERE job_id = ?1 AND seq < ?2 AND status = 'ready'
                  ORDER BY seq DESC LIMIT 1) prev), 0)
        WHERE job_id = ?1 AND seq = ?2 AND status = 'pending'`,
-    ).bind(jobId, seq, size, tts.durationMs, tts.billedChars, nowIso(), SEGMENT_MAX_MS),
+    ).bind(jobId, seq, size, tts.durationMs, tts.billedChars, nowIso(), SEGMENT_MAX_MS, marks),
     refreshStmt(env, jobId),
   ]);
   return { ok: true, durationMs: tts.durationMs, bytes: size };
