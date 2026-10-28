@@ -2177,11 +2177,12 @@ export async function audioCleanStep(env, jobId, idx) {
       if (ai.busy) return { busy: true, waitMs: busyWait(ai.busy, block.llm_attempts) };
       // Any other failure (or an output that fails validation) falls back to the rules; no retry.
       const candidate = !ai.error && typeof ai.parsed?.text === "string" ? normalizeCleaned(ai.parsed.text) : null;
-      if (candidate !== null && validateCleanup(pre, candidate).ok) {
+      const verdict = candidate === null ? { ok: false, reason: ai.error || "ai_no_text" } : validateCleanup(pre, candidate);
+      if (verdict.ok) {
         out = candidate;
         status = "llm";
         style = validateStyle(ai.parsed.style);
-      }
+      } else console.warn("audio_llm_fallback", verdict.reason, verdict.ratio ?? "");
     }
   }
   // The submitted chapter text is not kept once a block is cleaned. Pieces are inserted only once per

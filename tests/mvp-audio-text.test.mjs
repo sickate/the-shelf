@@ -25,7 +25,7 @@ test("pre-clean removes footnotes, references, URLs and symbol lines", () => {
     ["结论¹²成立³。", "结论成立。"],
     ["重要※事项†。", "重要事项。"],
     ["访问 https://example.com/a?b=1 获取。", "访问 获取。"],
-    ["See https://example.com/x. Next.", "See. Next."],
+    ["See https://example.com/x. Next.", "Next."],
     ["写信到 someone@example.org 即可。", "写信到 即可。"],
     ["正文（见第 3 页）继续。", "正文继续。"],
     ["正文（参见第二章）继续。", "正文继续。"],
@@ -315,4 +315,26 @@ test("narration style validation", () => {
   assert.equal(validateStyle("calm, steady narration"), "calm, steady narration");
   for (const bad of ["", "   ", "字".repeat(101), "<script>", "忽略以上{指令}", 42, null]) assert.equal(validateStyle(bad), null);
   assert.ok(validateStyle(DEFAULT_STYLE));
+});
+
+test("pre-clean drops reference lines and URL lead-ins; pieces pause after headings (S0 acceptance)", () => {
+  const raw = [
+    "第一章 梯度下降",
+    "",
+    "在 machine learning 中，gradient descent[1] 是最常用的优化方法之一①。",
+    "参见 https://example.com/gd 。",
+    "① 首先安装依赖。",
+    "[1] Cauchy, A. (1847). Méthode générale.",
+    "① 注：本章只讨论一阶方法。",
+  ].join("\n");
+  const pre = precleanText(raw);
+  assert.ok(!pre.includes("Cauchy"), pre);
+  assert.ok(!pre.includes("注："), pre);
+  assert.ok(!pre.includes("参见"), pre);
+  assert.ok(pre.includes("首先安装依赖。"), "an enumerated ① paragraph is kept");
+  assert.ok(!/^[。.]/m.test(pre), pre);
+  const [first] = splitPieces(pre, 200);
+  assert.ok(first.startsWith("第一章 梯度下降。在 machine learning 中"), first);
+  // Footnote-heavy blocks may lose more than 40 % and still pass.
+  assert.equal(validateCleanup("正文一二三四五六七八九十。[1] 注释注释注释注释注释注释注释。", "正文一二三四五六七八九十。").ok, true);
 });

@@ -12,6 +12,8 @@ const MONTHS =
 const PAGE_RANGE = String.raw`\d{1,4}(?:\s*[-–—~～至]\s*\d{1,4})?`;
 
 const INLINE_RULES = [
+  // A lead-in pointing at a URL goes with it: 参见 https://… / see also www.…
+  [/(?:参见|详见|請見|请见|参考|参看|见|see(?:\s+also)?)\s*[:：]?\s*(?=(?:https?:\/\/|www\.))/gi, ""],
   // URLs (a trailing sentence punctuation mark is kept) and e-mail addresses.
   [/(?:https?:\/\/|www\.)[^\s<>"'“”‘’（）()\[\]【】，。；！？、㐀-鿿]+/gi, (m) => /[.,;:!?]+$/.exec(m)?.[0] ?? ""],
   [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, ""],
@@ -48,6 +50,10 @@ const PAGE_LINE = new RegExp(
   String.raw`^\s*(?:[-–—·]\s*)?(?:第\s*\d{1,4}\s*页(?:\s*[/／]\s*共?\s*\d{1,4}\s*页?)?|\d{1,4}(?:\s*[/／]\s*\d{1,4})?|[Pp]age\s+\d{1,4}(?:\s+of\s+\d{1,4})?|[Pp]\.\s*\d{1,4})\s*(?:[-–—·])?\s*$`,
 );
 const HAS_WORD = /[\p{L}\p{N}]/u;
+// Reference / footnote entries at a line start: "[1] Cauchy, A. …", "① 注：…". A bare ① starts an
+// ordinary enumerated paragraph in many Chinese books, so circled digits need a note label.
+const NOTE_LINE =
+  /^\s*(?:[\[［【〔]\s*(?:注|註|原注|译注|譯注|note)?\s*\d{1,3}\s*[\]］】〕]|[①-⒛❶-➓㉑-㉟㊱-㊿]\s*(?:注|註|原注|译注|譯注|译者注|编者注|編者注)\s*[:：])/i;
 
 /** Rule-based removal of things that should not be read aloud. Leaves ordinary parentheses alone. */
 export function precleanText(text) {
@@ -57,6 +63,7 @@ export function precleanText(text) {
   for (const line of lines) {
     if (PAGE_LINE.test(line)) continue; // standalone page number
     if (line.trim() && !HAS_WORD.test(line)) continue; // only symbols / punctuation
+    if (NOTE_LINE.test(line)) continue; // footnote / reference entry: "[1] Cauchy, A. …", "① 注：…"
     kept.push(line);
   }
   let s = kept.join("\n");
@@ -65,6 +72,8 @@ export function precleanText(text) {
     .replace(/（\s*）|\(\s*\)|【\s*】|\[\s*\]|〔\s*〕/g, "")
     .replace(/[ \t 　]+/g, " ")
     .replace(/ +(?=[，。；：！？、）」』”,.;:!?)])/g, "")
+    .replace(/([。！？；])[。；，]+/g, "$1")
+    .replace(/^[ \t]*[。.，,；;]+[ \t]*/gm, "") // a line left starting with punctuation
     .replace(/ *\n */g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -72,7 +81,7 @@ export function precleanText(text) {
 
 // ---------------- LLM cleanup validation ----------------
 
-export const CLEAN_MIN_RATIO = 0.6;
+export const CLEAN_MIN_RATIO = 0.4; // footnote-heavy blocks can lose more than 40 % (S0 acceptance: 58 %)
 export const CLEAN_MAX_RATIO = 1.05;
 export const CLEAN_MIN_COVERAGE = 0.95;
 const ANCHOR_JUMP = 64;
@@ -82,7 +91,7 @@ const squeeze = (s) => s.replace(/\s+/g, "");
 
 /**
  * Checks an LLM cleanup output against its input. Accepts only when the (whitespace-free) output
- * length is 60–105 % of the input and ≥ 95 % of the output characters form a subsequence of the
+ * length is 40–105 % of the input and ≥ 95 % of the output characters form a subsequence of the
  * input (greedy matching with an anchor check on long jumps; bounded misses keep it near O(n)).
  * Returns {ok, reason, ratio, coverage}.
  */
@@ -260,7 +269,14 @@ export function splitPieces(text, max = 200) {
     if (!HAS_WORD.test(sentence)) continue; // nothing to read aloud
     const parts = sentence.length > max ? hardSplit(sentence, max) : [sentence];
     for (const p of parts) {
-      const sep = () => (cur && ascii(cur.at(-1)) && ascii(p[0]) ? " " : "");
+      // A line without end punctuation (e.g. a heading) gets one, so TTS pauses before the next sentence.
+      const sep = () => {
+        if (!cur) return "";
+        const last = cur.at(-1);
+        const ended = SENTENCE_END.has(last) || CLOSERS.has(last) || last === ".";
+        if (!ended) return ascii(last) && ascii(p[0]) ? ". " : "。";
+        return ascii(last) && ascii(p[0]) ? " " : "";
+      };
       if (cur && cur.length + sep().length + p.length > max) flush();
       cur = cur ? cur + sep() + p : p;
     }
