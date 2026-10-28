@@ -1,6 +1,6 @@
 # 朗读改用 qwen-audio-3.1-tts-flash（2026-10-28）
 
-状态：计划，开发中。未上线。
+状态：Q1（后端）已在分支 `q1-qwen-audio` 实现并通过本地测试；Q2 前端另行开发。未上线，远端迁移未执行。
 
 ## 背景与实测
 
@@ -8,6 +8,12 @@
 - 该模型**不走** realtime 接口（realtime 返回 `Model not found`），走 inference 协议：`wss://dashscope.aliyuncs.com/api-ws/v1/inference`，`Authorization: Bearer <key>`。
   - `run-task`（`header: {action, task_id: UUID, streaming:"duplex"}`；`payload: {task_group:"audio", task:"tts", function:"SpeechSynthesizer", model, parameters:{text_type:"PlainText", voice, format:"mp3", sample_rate:24000, bit_rate:64, volume:50, rate:1, pitch:1, word_timestamp_enabled:true, instruction?}, input:{}}`）→ `task-started` → `continue-task {input:{text}}` → `finish-task` → 多个 `result-generated`（音频为**二进制帧**；JSON 帧带 `output.sentence.{index, words:[{text, begin_index, end_index, begin_time, end_time}]}`，同一句会多次推送、words 累积）→ `task-finished`（`usage.characters`）或 `task-failed`（`header.error_code/error_message`）。
   - 实测（31 字中英混排）：`instruction` 被接受；`bit_rate:64` 得 64 kbps CBR MP3（约 0.48 MB/分钟，默认 160 kbps）；计 51 字符；`begin_index` 看起来是**词序号**而非字符偏移（"。T"、"aleb" 各占一个序号），需按词文本顺序对齐回片文字。多句时 `begin_time` 是否跨句累计**未验证**。
+- Q1 实测（2026-10-28，`xunanchuan_v3.1`，`bit_rate:64`，`word_timestamp_enabled:true`；4 次小样，82–180 字，中英混排、2 段、≥ 3 句）：
+  - **一次 `continue-task` = 一个 sentence**（`index:0`），不按句号拆分；`begin_time`/`end_time` 是相对本任务音频起点的毫秒。拆成多个 `continue-task` 时 `index` 递增，`begin_time` 与 `begin_index` 都**跨句累计**。实现：每片只发一次 `continue-task`（含换行没问题，换行在 `normalized_text` 里被去掉）。
+  - `begin_index`/`end_index` 是**词序号**（与字符偏移无关）。词 `text` 取自 `normalized_text`：半角标点转全角（`,`→`，`、`!`→`！`、`'`→`’`、引号有时转 `“”`），标点**粘在下一个词前**（`，Alice`、`！”她`、`。The`），句末标点粘在最后一个词后（`吧。`、`’s go！`），英文词带前导空格（` weather`），数字被读法替换（`2026年10月`→`二零二六年十月`，`第3章`→`第三章`）。对齐：按词的首个字母/数字在游标后 24 个 UTF-16 单位内查找、贪婪吃掉其余字母/数字；找不到的（数字读法）跳过；跳过数字后找到的中文数字也跳过；片首若无标记补 `[0, 首词时间]`。
+  - `result-generated` 的 `output.type` 依次为 `sentence-begin`（带 `original_text`/`normalized_text`）→ 多个 `sentence-synthesis`（words 累积，有的为空）→ `sentence-end`（**完整 words** + 累计 `usage`）；之后 `task-finished`（`usage.characters`，CJK 计 2）。二进制音频帧全部在 `sentence-end` 之前到达。实现取每个 sentence 最长的 words 列表。
+  - MP3：ID3v2 开头、MPEG-2 Layer III 24 kHz 单声道 **64 kbps CBR**（约 8 KB/s）；`mp3Info` 时长与 `afinfo` 一致（14.352 s / 598 帧、31.32 s、13.272 s、11.88 s）。`AUDIO_BYTES_PER_CHAR = 4000` 仍明显多预留（实测约 1.4–1.7 KB/字）。
+  - 用应用内客户端经 `ws` 适配器实测通过：82 字 → 95 KB、11.88 s、30 个标记、3.6 s。
 - 价格：未找到北京区官方价，以百炼控制台为准；用户已同意按量计费。
 - 用户决定：**默认男声 `xunanchuan_v3.1`**；可选 `longanhuan_v3.1`、`longanlingxin_v3.1`、`longanfengyue_v3.1`。朗读语气两档：`auto`（LLM 选的 style 作为 `instruction`，默认）与 `plain`（不发 instruction），用户可在播放器切换（切换 = 重新生成）。
 
@@ -19,7 +25,8 @@
 ## 契约
 
 - 迁移 `0008_audio_tts.sql`（增量、幂等）：`audio_jobs.tts_model TEXT`（旧行为 NULL = `qwen3-tts-flash-realtime`）、`audio_jobs.tone TEXT NOT NULL DEFAULT 'auto'`（`auto`/`plain`）、`audio_pieces.marks TEXT`（见下）。唯一索引改为 `(book_id, chapter_key, source_sha256, voice, tone) WHERE deleted_at IS NULL`（删旧建新）。
-- API：创建 `POST /api/books/:id/audio` 和 `POST /api/audio/:id/regenerate` 接受可选 `tone`；`GET /api/books/:id/audio?chapterKey=&voice=&tone=` 可按音色/语气查找（缺省返回最新）。任务视图增加 `tone`、`ttsModel`。
+- API：创建 `POST /api/books/:id/audio` 和 `POST /api/audio/:id/regenerate` 接受可选 `tone`（`auto`/`plain`，否则 400 `bad_tone`）；`GET /api/books/:id/audio?chapterKey=&voice=&tone=` 可按音色/语气查找（缺省返回最新；无匹配 404；非法值 400）。任务视图增加 `tone`、`ttsModel`（旧任务 `qwen3-tts-flash-realtime`）。旧音色（Cherry 等）在创建/重新生成里映射为默认音色，不报 400；查找时按原值精确匹配。
+- 重新生成（Q1 实现）：目标（音色, 语气）与原任务相同 = 重试，软删原任务并新建（201）；目标已有可用的活任务（非 failed/budget_exceeded）→ 直接返回该任务（200，`reused: true`，不合成）；否则新建（201，`reused: false`），原任务若已 ready 则保留（切回免费），否则软删并停止其 Workflow。新任务一律用新模型，复用已清洗块与 style。
 - 片：`AudioPiece.marks?: number[]`，扁平数组 `[charOffset0, ms0, charOffset1, ms1, …]`，`charOffset` 为片 `text` 的 UTF-16 偏移，`ms` 为该词在本片音频内的起点；按偏移递增；每片 ≤ 约 2 KB（太长时只保留句首标点后的词）。
 - 前端：`VOICES` 改为 `[{id, label}]`（许南川（男）/龙安欢/龙安灵心/龙安风悦），`DEFAULT_VOICE = "xunanchuan_v3.1"`；旧任务的旧音色在选择框里显示为“旧音色”。语气选择“自动语气 / 不加语气”。`sentenceAt` 在有 `marks` 时用真实时间，否则沿用按字数估算。
 

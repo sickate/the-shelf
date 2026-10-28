@@ -26,14 +26,14 @@
   // DEEPSEEK_KEY (optional web search for AI book info; skipped when unset).
   // Google sign-in (G1, docs/mvp-plan.md 2026-10-27): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
   // OWNER_EMAILS (comma separated whitelist); OWNER_API_TOKEN (>= 32 chars, Bearer for scripts).
-  // Read-aloud (A1, 2026-10-27): DASHSCOPE_KEY (the-shelf DashScope key, Beijing region;
-  // qwen3-tts-flash-realtime). Without it or the AUDIO_WORKFLOW binding, creating audio returns 503.
+  // Read-aloud (A1, 2026-10-27): DASHSCOPE_KEY (the-shelf DashScope key, Beijing region). New jobs use
+  // qwen-audio-3.1-tts-flash (inference WebSocket, 2026-10-28); jobs created before 0008 keep
+  // qwen3-tts-flash-realtime. Without the key or the AUDIO_WORKFLOW binding, creating audio returns 503.
   // LLM text cleanup reuses OAI_KEY (falls back to rule-based cleanup when unset).
-  // Optional var TTS_MODEL (default qwen3-tts-flash-realtime); a model whose name contains "instruct"
-  // also receives the job's narration style in session.update (TTS_INSTRUCTIONS_FIELD in audio-tts.mjs).
+  // Optional var TTS_MODEL: another qwen-audio-* model for new jobs (other names are ignored).
   // G2 (2026-10-27): password login removed; delete the leftover OWNER_PASSWORD secret (wrangler secret delete).
   // Optional vars: OAI_BASE_URL (default https://oai.parallelstreamllc.com),
   // GOOGLE_REDIRECT_URI (default <origin>/api/auth/google/callback).
   // Schema migrations: app/migrations/0002_features.sql (covers, book_info),
-  // app/migrations/0003_classification.sql (book_class), ... app/migrations/0007_audio.sql (read-aloud). CLC table app/clc.json is bundled.
+  // app/migrations/0003_classification.sql (book_class), ... app/migrations/0007_audio.sql (read-aloud), 0008_audio_tts.sql (TTS model/tone/marks). CLC table app/clc.json is bundled.
 }

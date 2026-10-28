@@ -97,9 +97,14 @@ CREATE TABLE IF NOT EXISTS audio_jobs (
   cpu_downgraded INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  deleted_at TEXT
+  deleted_at TEXT,
+  -- Added 2026-10-28 (app/migrations/0008_audio_tts.sql): TTS model (NULL = qwen3-tts-flash-realtime,
+  -- jobs created before 0008) and narration tone (auto = LLM style sent as instruction, plain = none).
+  tts_model TEXT,
+  tone TEXT NOT NULL DEFAULT 'auto' CHECK (tone IN ('auto','plain'))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS audio_jobs_live ON audio_jobs (book_id, chapter_key, source_sha256, voice) WHERE deleted_at IS NULL;
+-- One live job per (book, chapter, sha256(text), voice, tone) (0008; replaces 0007's audio_jobs_live).
+CREATE UNIQUE INDEX IF NOT EXISTS audio_jobs_live_tone ON audio_jobs (book_id, chapter_key, source_sha256, voice, tone) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS audio_jobs_chapter ON audio_jobs (book_id, chapter_key, deleted_at, created_at);
 -- LLM cleanup blocks (~6,000 chars). raw is cleared once the block is cleaned; cleaned text is kept
 -- so regenerating (e.g. another voice) does not call the LLM again.
@@ -136,6 +141,8 @@ CREATE TABLE IF NOT EXISTS audio_pieces (
   error TEXT,
   cpu_split INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
+  -- Added 2026-10-28 (0008): word marks as JSON [charOffset, ms, ...] (UTF-16 offsets into text), ≤ ~2 KB.
+  marks TEXT,
   PRIMARY KEY (job_id, seq)
 );
 CREATE INDEX IF NOT EXISTS audio_pieces_block ON audio_pieces (job_id, block);

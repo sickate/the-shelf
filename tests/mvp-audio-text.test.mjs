@@ -276,9 +276,11 @@ test("large deltas take the fast path (no JSON.parse of the audio message)", asy
 });
 
 test("TTS model config: style instructions only for instruct models", async () => {
-  assert.equal(ttsModel({}), "qwen3-tts-flash-realtime");
-  assert.equal(ttsModel({ TTS_MODEL: "qwen3-tts-instruct-flash-realtime" }), "qwen3-tts-instruct-flash-realtime");
-  assert.equal(ttsModel({ TTS_MODEL: "bad model&x=1" }), "qwen3-tts-flash-realtime");
+  // New jobs: qwen-audio family only (TTS_MODEL of another family is ignored).
+  assert.equal(ttsModel({}), "qwen-audio-3.1-tts-flash");
+  assert.equal(ttsModel({ TTS_MODEL: "qwen-audio-3.2-tts-flash" }), "qwen-audio-3.2-tts-flash");
+  assert.equal(ttsModel({ TTS_MODEL: "qwen3-tts-instruct-flash-realtime" }), "qwen-audio-3.1-tts-flash");
+  assert.equal(ttsModel({ TTS_MODEL: "qwen-audio-x&y=1" }), "qwen-audio-3.1-tts-flash");
   assert.equal(isInstructModel("qwen3-tts-flash-realtime"), false);
   const audio = mp3Frames([8, 8]);
   const sessions = [];

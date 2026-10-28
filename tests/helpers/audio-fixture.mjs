@@ -93,11 +93,11 @@ export async function drain(env, deps = {}, { max = 1000 } = {}) {
   throw new Error("drain did not finish");
 }
 
-/** Synthesizer fake: duration from text length (or `durationFor`), small valid MP3 bytes. */
-export function fakeSynth({ fail, durationFor, sizeFor } = {}) {
+/** Synthesizer fake: duration from text length (or `durationFor`), small valid MP3 bytes; `marksFor` adds marks. */
+export function fakeSynth({ fail, durationFor, sizeFor, marksFor } = {}) {
   const calls = [];
-  const synthesize = async (key, { text, voice }) => {
-    calls.push({ key, text, voice });
+  const synthesize = async (key, { text, voice, model, instruction, instructions }) => {
+    calls.push({ key, text, voice, model, instruction: instruction ?? instructions ?? null });
     const f = fail?.(text, calls.length);
     if (f) throw f;
     const frames = Math.max(1, Math.min(400, text.length));
@@ -111,6 +111,7 @@ export function fakeSynth({ fail, durationFor, sizeFor } = {}) {
       audio,
       billedChars: text.length * 2,
       durationMs: durationFor ? durationFor(text, calls.length) : frames * 24,
+      ...(marksFor ? { marks: marksFor(text) } : {}),
     };
   };
   return { synthesize, calls };
