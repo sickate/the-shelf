@@ -2,6 +2,7 @@ import { audioMockEnabled, getAudioApi } from "./audio-api";
 import { AudioPlayer, createAudioPlayer } from "./audio-player";
 import { getChapterSource } from "./chapter-source";
 import { el, errorText } from "./common";
+import { createReadAlong } from "./read-along";
 
 // The read-aloud backend (A1) is implemented (app/worker.mjs + AudioWorkflow); ?audioMock=1 still previews.
 const AUDIO_BACKEND_READY = true;
@@ -42,7 +43,10 @@ export function audioButton(bookId: string, bookTitle: string): HTMLButtonElemen
         job = await api.create(bookId, { chapterKey: ch.chapterKey, label: ch.label, text: ch.text });
         say(ch.truncated ? `章节过长，从当前位置朗读前 30 万字：${ch.label}` : `开始生成：${ch.label}`);
       }
-      player ??= createAudioPlayer({ api, bookId, bookTitle });
+      if (!player) {
+        const readAlong = createReadAlong();
+        player = createAudioPlayer({ api, bookId, bookTitle, readAlong, onPosition: readAlong.update });
+      }
       player.open(job, ch.chapterKey);
     } catch (e) {
       say(`朗读失败：${errorText(e)}`);

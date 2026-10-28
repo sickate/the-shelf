@@ -742,6 +742,8 @@ body.audio-open .epub-area { height: calc(100vh - 110px - var(--audio-h)); heigh
 .ap-play { min-width: 52px; font-size: 16px !important; }
 .ap-opts { justify-content: center; flex-wrap: wrap; }
 .ap-sel { padding: 5px 8px; font-size: 12px; max-width: 120px; }
+.ap-follow { padding: 5px 10px; font-size: 12px; }
+.ap-follow.on { border-color: var(--accent); color: var(--accent); }
 .audio-bar.waiting .ap-play { opacity: 0.6; }
 .ap-mini { display: block; margin: 0 auto; padding: 4px 16px; font-size: 12px; }
 .audio-note {

@@ -18,7 +18,8 @@ import {
   stepSpread,
 } from "./lib/reader-prefs";
 import { setChapterSource } from "./lib/chapter-source";
-import { epubChapterSource, mobiChapterSource, pdfChapterSource, textChapter } from "./lib/chapter-text";
+import { epubChapterSource, mobiChapterSource, pdfChapterSource, textChapter, textChapterAt } from "./lib/chapter-text";
+import { ReadAlongTarget, setReadAlongTarget, windowTextTarget } from "./lib/read-along";
 import { audioAvailable, audioButton } from "./lib/audio-reader";
 import { epubNotes, mobiNotes, pdfNotes, textNotes } from "./lib/reader-notes";
 
@@ -696,6 +697,17 @@ async function readText() {
   toolbar.hidden = false;
   void notes.start();
   setChapterSource(() => Promise.resolve(textChapter(text, textOffsetAtTop(article, text.length))));
+  // Read-along: chapterKey "text:<start>" names the chapter; one target per chapter.
+  const targets = new Map<string, ReadAlongTarget>();
+  setReadAlongTarget((key) => {
+    const m = /^text:(\d+)$/.exec(key);
+    if (!m) return null;
+    if (!targets.has(key)) {
+      const c = textChapterAt(text, Number(m[1]));
+      targets.set(key, windowTextTarget(article, c.start, c.end));
+    }
+    return targets.get(key)!;
+  });
   const saved = Number(store.get(posKey));
   if (saved > 0) {
     requestAnimationFrame(() => window.scrollTo(0, saved * (document.documentElement.scrollHeight - innerHeight)));

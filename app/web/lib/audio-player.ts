@@ -13,12 +13,14 @@ import {
   totalMs,
 } from "./audio-timeline";
 import { el, errorText, store } from "./common";
+import type { AudioPosition, ReadAlong } from "./read-along";
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const SPEED_KEY = "shelf:audio-speed";
 const POLL_MS = 3000;
 const SKIP_MS = 15000;
 const DONE = new Set(["ready", "failed", "budget_exceeded"]);
+const POS_MS = 250;
 
 export interface AudioPlayerOptions {
   api: AudioApi;
@@ -26,6 +28,10 @@ export interface AudioPlayerOptions {
   bookTitle: string;
   /** Mount point (document.body by default). */
   parent?: HTMLElement;
+  /** Playback position inside the current piece (timeupdate throttled to ≥ 250 ms, piece change, seek). */
+  onPosition?: (pos: AudioPosition) => void;
+  /** Read-along follow state; adds the 跟随 / 回到朗读位置 buttons. Cleared on close. */
+  readAlong?: ReadAlong;
 }
 
 export interface AudioPlayer {
@@ -87,12 +93,22 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   const segSel = el("select", { class: "ap-sel", "aria-label": "选择段落" });
   const voiceSel = el("select", { class: "ap-sel", "aria-label": "音色" });
   for (const v of VOICES) voiceSel.append(el("option", { value: v }, v));
+  const ra = opts.readAlong;
+  const followBtn = el("button", { type: "button", class: "ap-follow", title: "高亮并跟随朗读位置" }, "跟随");
+  followBtn.hidden = !ra;
+  const resumeBtn = el("button", { type: "button", class: "ap-follow", hidden: "" }, "回到朗读位置");
+  const renderFollow = () => {
+    if (!ra) return;
+    followBtn.setAttribute("aria-pressed", String(ra.follow));
+    followBtn.classList.toggle("on", ra.follow);
+    resumeBtn.hidden = !(ra.follow && ra.paused);
+  };
 
   const mini = el("button", { type: "button", class: "ap-mini", title: "展开朗读", "aria-label": "展开朗读", hidden: "" }, "朗读 ▴");
   const row1 = el("div", { class: "ap-row ap-head" }, title, collapseBtn, closeBtn);
   const row2 = el("div", { class: "ap-row ap-prog" }, elapsed, slider, total);
   const row3 = el("div", { class: "ap-row ap-ctl" }, prevBtn, back, playBtn, fwd, nextBtn);
-  const row4 = el("div", { class: "ap-row ap-opts" }, segSel, speedSel, voiceSel);
+  const row4 = el("div", { class: "ap-row ap-opts" }, segSel, speedSel, voiceSel, followBtn, resumeBtn);
   const body = el("div", { class: "ap-body" }, row1, status, retryBtn, row2, row3, row4);
   const bar = el("div", { class: "audio-bar", role: "region", "aria-label": "朗读播放器", hidden: "" }, body, mini);
   parent.append(bar);
@@ -104,6 +120,18 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   }
 
   const seg = () => job?.segments[segPos] ?? null;
+
+  let lastPos = 0;
+  function emitPos(force: boolean) {
+    if (!opts.onPosition || !job) return;
+    const now = Date.now();
+    if (!force && now - lastPos < POS_MS) return;
+    const p = seg()?.pieces[curPiece];
+    if (!p?.text) return;
+    lastPos = now;
+    const durationMs = p.durationMs ?? (Number.isFinite(cur.duration) ? cur.duration * 1000 : 0);
+    opts.onPosition({ chapterKey, pieceText: p.text, offsetMs: pendingSeekMs ?? (cur.currentTime || 0) * 1000, durationMs });
+  }
 
   function posKey() {
     return `shelf:audiopos:${bookId}:${chapterKey}:${job?.id}`;
@@ -229,6 +257,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
       waiting = autoplay;
       playing = autoplay;
       render();
+      emitPos(true);
       return;
     }
     // Seeking past the ready end while wanting to play: wait at the first not-ready piece.
@@ -242,6 +271,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     waiting = false;
     if (autoplay) void startPlayback();
     render();
+    emitPos(true);
   }
 
   function applySeek() {
@@ -345,12 +375,14 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
         void startPlayback();
         preloadNext();
         render();
+        emitPos(true);
       } else {
         // Next piece is still being generated: wait for it.
         curPiece = n;
         pendingSeekMs = 0;
         waiting = true;
         render();
+        emitPos(true);
       }
       return;
     }
@@ -383,6 +415,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     a.addEventListener("timeupdate", () => {
       if (a !== cur) return;
       savePos();
+      emitPos(false);
       if (!dragging) {
         const t = currentMs();
         slider.value = String(t);
@@ -544,6 +577,15 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   collapseBtn.addEventListener("click", () => setCollapsed(true));
   mini.addEventListener("click", () => setCollapsed(false));
   closeBtn.addEventListener("click", close);
+  if (ra) {
+    followBtn.addEventListener("click", () => ra.setFollow(!ra.follow));
+    resumeBtn.addEventListener("click", () => {
+      ra.resume();
+      emitPos(true);
+    });
+    ra.onChange(renderFollow);
+    renderFollow();
+  }
 
   async function regenerate(voice?: string) {
     if (!job) return;
@@ -620,6 +662,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     setJob(j, true);
     bindMediaSession();
     render();
+    emitPos(true);
     schedulePoll();
     syncHeight();
   }
@@ -633,6 +676,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     bar.hidden = true;
     document.body.classList.remove("audio-open");
     unbindMediaSession();
+    ra?.clear();
     syncHeight();
   }
 
