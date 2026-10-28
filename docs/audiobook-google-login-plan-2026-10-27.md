@@ -3,7 +3,7 @@
 状态（2026-10-27 更新）：
 - G1 Google 登录已上线（Worker 版本 `ed4c69c6`），用户在浏览器用白名单账号登录成功；线上 HTTP 检查：访客/令牌/错误令牌、302 参数（PKCE、scope、回调地址）、`next` 开放跳转拒绝、state 失配、Origin 校验均符合预期。G2 已上线（版本 `3ac6ce49`）：`/api/login` 404、旧格式 cookie 失效、登录页无密码框，`OWNER_PASSWORD` secret 已删除；令牌与 Google 登录复核正常。
 - A2 章节提取、A3 播放器已合并；朗读按钮在后端上线前隐藏（`?audioMock=1` 可预览）。真实浏览器未验收。
-- S0 受阻：DashScope Key（北京区）对全部 TTS 模型返回 `Access denied by API-Key restrictions`，待用户调整 Key 的模型范围与 IP 白名单。A1 未开始。
+- S0 完成（结果见下节“S0 实测结论”），A1 开发中。
 
 用户决定：TTS 用用户新建的 the-shelf 专用 DashScope Key，同意阿里云按字符计费；Google 登录只允许白名单所有者，**去掉密码登录**；CPU 不够时先把每片缩到约 200 字。
 
@@ -32,7 +32,7 @@
 - **文本整理两步**：
   1. 规则预处理（确定性、可测）：脚注编号 `[1]`、`①`、上标数字、`※`、URL、邮箱、页眉页码行、连续符号行、`（见第 X 页）`、`[注]` 等。
   2. LLM 整理：按 ~6,000 字分块调用 `gpt-luna`（low effort，json_object），指令为“只删除不该读出的内容，可把少数符号改写成可读形式（如 `%` → 百分之），不得改写、概括、增补正文”。服务端校验：输出长度为输入的 60%–105%，且按字符的最长公共子序列覆盖输出 ≥ 95%（即输出几乎全部来自原文）；不通过则该块回退为规则预处理结果并记 `llm_fallback`，不重试。
-- **语音合成**：DashScope `qwen3-tts-flash-realtime`（WebSocket，输出 MP3 单声道，目标 ~48 kbps，约 0.36 MB/分钟），音色默认 Cherry（中英混读），可在播放器里改音色（改音色 = 重新生成）。若 Spike 证明实时接口在 Workers 上不可用，退回 HTTP `qwen3-tts-flash` 必须解决 WAV 体积问题（见风险）。
+- **语音合成**：DashScope `qwen3-tts-flash-realtime`（WebSocket，输出 MP3 单声道，目标 ~48 kbps，约 0.36 MB/分钟），音色默认 Cherry（中英混读），可在播放器里改音色（改音色 = 重新生成）。S0 已确认实际输出为 MP3（约 0.73 MB/分钟，见“S0 实测结论”）。
 - **分段**：整理后的文本按句子切成 ≤ 500 字的“片”（合成调用单位）；片按顺序装入“段”，每段以**实际合成时长**累计，下一片会使该段超过 20:00 时开新段——保证每段严格 ≤ 20 分钟。生成前按语速估算（中文 ~4.2 字/秒，英文 ~2.6 词/秒）显示“约 N 段、约 M 分钟”。
 - **存储**：每片一个 R2 对象 `audio/<jobId>/<seg>-<piece>.mp3`（每片 ~1–3 MB，远小于 20 MB），不再合并成大文件。段 = 片的有序清单（D1 记录时长）。这样第一片生成好就能开始播放，后台继续生成；也避免 Worker 内做大文件拼接。片字节在写 R2 **之前**原子预留预算并计入 `USED_SQL`；超预算则任务停在 `budget_exceeded`。
 - **缓存**：同一书 + 章节定位 + 整理后文本 hash + 音色 只生成一次；再次点朗读直接播放已生成的结果。可手动“重新生成”。删除朗读缓存只做软删除（与书一致：不释放对象或预算）。
@@ -46,6 +46,16 @@
 - 本机脚本（`scripts/mvp-upload.mjs`、`scripts/lib/batch.mjs` 的 enrich/classify/reidentify）现在用密码换 cookie。改为**所有者 API 令牌**：secret `OWNER_API_TOKEN`（≥ 32 字节随机），脚本发 `Authorization: Bearer <token>`，服务端常量时间比较；只认 Bearer、不设 cookie，因此不受浏览器 CSRF 影响，Origin 校验对 Bearer 请求豁免。令牌放 `.env`（0600），不进 Git。
 - 流程：`GET /api/auth/google` → 生成 `state` + PKCE（签名短期 cookie，10 分钟）→ 302 到 Google；`GET /api/auth/google/callback` 校验 state → 服务端用 client secret 向 `oauth2.googleapis.com/token` 换码 → 校验 id_token 的 `iss`/`aud`/`exp`/`email_verified`/`nonce` → 邮箱在白名单则签发会话 cookie，否则 403 页面“此 Google 账号无权访问”。会话签名内容改为 `owner:<expiry>:<emailHash>`，旧 cookie 在过渡期仍有效。
 - 用户需要在 Google Cloud Console 创建 OAuth Web 客户端（同意屏幕保持 Testing、把自己加为测试用户即可，无需 Google 审核），回调地址 `https://the-shelf.iamzhutuo.workers.dev/api/auth/google/callback`（本地开发另加 `http://localhost:8787/...`）。Secrets：`GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`OWNER_EMAILS`。
+
+## S0 实测结论（2026-10-27，线上，约 20 次调用；临时资源已删除）
+
+- `qwen3-tts-flash-realtime`（北京区 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3-tts-flash-realtime`）真实输出 MP3：24 kHz 单声道 VBR，均值约 100 kbps，约 0.73 MB/分钟；**无 Xing 头**，时长由服务端按帧计算存 D1。MP3 码率不可调；opus 可调码率但 Ogg 时间戳错误，暂不用。
+- 流程：`session.created` → `session.update {voice, mode:"commit", language_type:"Auto", response_format:"mp3", sample_rate:24000}` → `input_text_buffer.append` / `commit` / `session.finish` → `response.audio.delta`（base64）… `response.done`（`usage.characters`）→ `session.finished`；服务端不主动关连接。
+- Worker 与 Workflow `step.do` 内出站 WebSocket、R2 写入均可用。CPU：~200 字约 15 ms，~500 字约 36 ms（Workflow 内约 68 ms），主要耗在接收 base64；均未被 `exceededCpu` 终止，但 Free 10 ms 不保证一直宽松。
+- **用户决定**：先用 Free + 每片约 200 字；出现 CPU 超限终止时自动把该片拆小并把全局片长降到约 120 字，并在状态中提示。默认音色 Cherry。
+- 语速约 21 秒/100 中文字，20 分钟段约 5,700 字。每片延迟 8–12 秒（200 字）。约 14 次中 3 次 1006 断开且无音频：每片需超时、重试与非空校验。
+- 计费：中文每字按 2 字符计；约 ¥2/万中文字。CosyVoice 仍未开放（不需要）。
+- 本机 macOS 12.6 无法运行 workerd（需 13.5+），本地只做 Node 测试，Workers 运行时行为在线上验收。
 
 ## 数据（迁移 `app/migrations/0007_audio.sql`）
 
