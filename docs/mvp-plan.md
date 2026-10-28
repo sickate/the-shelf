@@ -116,6 +116,22 @@ AI、正文准备、公开文件、多用户、旧 CF01/CF03/trial 迁移链路�
 
 脚本鉴权：`.env` 有 `SHELF_OWNER_API_TOKEN` 时 `scripts/mvp-upload.mjs` 与 `scripts/lib/batch.mjs`（enrich / classify / reidentify）发送 Bearer、不调用 `/api/login`；否则回落为 POST /api/login 取得 cookie。
 
+### 2026-10-27 朗读（A1，`docs/audiobook-google-login-plan-2026-10-27.md`，迁移 `app/migrations/0007_audio.sql`）
+
+全部仅所有者（访客 401 先于参数校验；写操作先过 Origin 校验）。JSON 错误 `{error}`、`Cache-Control: no-store`（片音频除外）。创建与重新生成要求 secret `DASHSCOPE_KEY` 和 Workflow 绑定 `AUDIO_WORKFLOW`，缺任一返回 503 `not_configured`；查询与播放不受影响。任务视图 `job` 与 `app/web/lib/audio-api.ts` 的 `AudioJob` 一致：`{id, status, voice, chapterLabel, estSeconds, donePieces, totalPieces, error, segments:[{index, durationMs, pieces:[{seq, durationMs, ready}]}]}`，另含只读的 `style`（朗读语气）、`pieceChars`、`cpuDowngraded`、`llmFallbackBlocks`、`billedChars`、`createdAt`、`updatedAt`。status ∈ `queued`→`cleaning`→`synthesizing`→`ready` | `failed` | `budget_exceeded`。已就绪片按实际时长分段（每段 ≤ 20:00）；未就绪片用估算时长暂列分段，就绪后可能移到下一段。
+
+| 方法 路径 | 说明 |
+| --- | --- |
+| POST /api/books/:id/audio `{chapterKey, label, text, voice?}` | 书须存在、已上传、未删除（否则 404）。body ≤ 1,200,000 字节（413 `too_large`）；`chapterKey` 1–500 字节、无控制字符（400 `bad_chapter_key`）；`text` 去首尾空白后非空（400 `empty_text`/`bad_text`）、≤ 300,000 码点（413 `text_too_long`）；`voice` ∈ Cherry/Ethan/Jennifer/Ryan/Katerina/Elias，默认 Cherry（400 `bad_voice`）；`label` 截到 200 字。未删除任务中 (书, chapterKey, sha256(text), voice) 相同则返回原任务 `{job, duplicate:true}`（200）；否则建任务、按约 6,000 字段落边界切块、启动 Workflow，201 `{job, duplicate:false}`。Workflow 启动失败时任务为 `failed`/`workflow_start_failed` |
+| GET /api/books/:id/audio?chapterKey= | 本章最新的未删除任务 `{job}`；无则 404 `not_found`；缺 chapterKey 400 |
+| GET /api/audio/:jobId | `{job}`；任务或其书已删除 404 |
+| GET/HEAD /api/audio/:jobId/pieces/:seq | 片 MP3（`audio/mpeg`，`Accept-Ranges: bytes`，`Cache-Control: private, max-age=86400`），支持单段 Range（206/416）；片未就绪或任务已删 404 |
+| POST /api/audio/:jobId/regenerate `{voice?}` | 软删除旧任务（及新键上已有的未删除任务，并尽力终止其 Workflow），复制已整理块（不再调用 LLM）和语气，新建任务，201 `{job}` |
+| DELETE /api/audio/:jobId | 软删除，尽力终止 Workflow；对象与预算不释放，`{ok:true}` |
+| GET /api/budget | 增加 `audioBytes`（全部片的 `COALESCE(size_bytes, reserved_bytes)`，含已删除任务与拆分前的父片） |
+
+后台（Workflow `the-shelf-audio`，类 `AudioWorkflow` 由 `app/entry.mjs` 导出，逻辑在 `worker.mjs` `runAudioWorkflow`）：每步先读 D1 决定下一项工作（先合成待合成片，否则整理下一块）。整理块：规则预处理（`app/audio-text.mjs` `precleanText`）→ `gpt-luna`（effort `low`，`json_object`，输出 `{text, style}`）→ 服务端校验（去空白后长度 60–105%，≥ 95% 输出字符为输入子序列）；不通过/其他错误回退规则结果并计 `llm_fallback_blocks`，不重试；503 按 `Retry-After` 指数退避 `step.sleep`，最多 6 次。第 0 块的 `style` 经校验后写入任务（否则默认“用平稳、自然、语速适中的朗读语气，不要过于欢快”）。块整理后按句切片（≤ 任务片长，默认 200 字），`seq = 块×65536 + k×16`。合成片：原子预留预算（≈ 4,000 字节/字，≥ 64 KB，≤ 20 MB）→ DashScope 实时 WebSocket（模型 `TTS_MODEL`，默认 `qwen3-tts-flash-realtime`；名称含 `instruct` 时 `session.update` 带 `instructions` = 任务语气、`optimize_instructions:false`）→ 校验 MP3、按帧计算时长 → 写 R2 `audio/<jobId>/<seq>.mp3` → 结算为实际字节与分段。音频大于预留时先原子扩大预留，失败则 `budget_exceeded`。R2 写失败保留预留，重试覆盖同一 key 不新增预算。片步骤失败（每轮 1 + 2 次重试）后：CPU 超限类错误或长片连续两轮失败 → 在 seq 间隙中拆成 ≤ 120 字子片，同时拆分本任务其他待合成长片，任务与全局片长降为 120（`audio_settings`，`cpuDowngraded` 可见）；其他错误 30/60 秒后再试一轮，三轮后任务 `failed`（`tts_failed: <code>`）。每个实例按最坏情况计划外部请求与 D1 查询（各 ≤ 45），超出前启动续跑实例 `<jobId>-p<n>`。
+
 ## 分工
 
 | 任务 | 模型 | 依赖 |

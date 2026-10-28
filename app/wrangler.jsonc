@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
   "name": "the-shelf",
-  "main": "worker.mjs",
+  "main": "entry.mjs",
   "compatibility_date": "2026-10-15",
   "workers_dev": true,
   "preview_urls": false,
@@ -16,14 +16,24 @@
   ],
   "r2_buckets": [
     { "binding": "BOOKS", "bucket_name": "the-shelf-first-book-20261023" }
+  ],
+  // Read-aloud (A1): one Workflow instance per audio job (chained continuations <jobId>-p<n>).
+  // Class AudioWorkflow is exported from entry.mjs; logic in worker.mjs runAudioWorkflow.
+  "workflows": [
+    { "name": "the-shelf-audio", "binding": "AUDIO_WORKFLOW", "class_name": "AudioWorkflow" }
   ]
   // Secrets (wrangler secret put): SESSION_SECRET, OAI_KEY (AI book info),
   // DEEPSEEK_KEY (optional web search for AI book info; skipped when unset).
   // Google sign-in (G1, docs/mvp-plan.md 2026-10-27): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
   // OWNER_EMAILS (comma separated whitelist); OWNER_API_TOKEN (>= 32 chars, Bearer for scripts).
+  // Read-aloud (A1, 2026-10-27): DASHSCOPE_KEY (the-shelf DashScope key, Beijing region;
+  // qwen3-tts-flash-realtime). Without it or the AUDIO_WORKFLOW binding, creating audio returns 503.
+  // LLM text cleanup reuses OAI_KEY (falls back to rule-based cleanup when unset).
+  // Optional var TTS_MODEL (default qwen3-tts-flash-realtime); a model whose name contains "instruct"
+  // also receives the job's narration style in session.update (TTS_INSTRUCTIONS_FIELD in audio-tts.mjs).
   // G2 (2026-10-27): password login removed; delete the leftover OWNER_PASSWORD secret (wrangler secret delete).
   // Optional vars: OAI_BASE_URL (default https://oai.parallelstreamllc.com),
   // GOOGLE_REDIRECT_URI (default <origin>/api/auth/google/callback).
   // Schema migrations: app/migrations/0002_features.sql (covers, book_info),
-  // app/migrations/0003_classification.sql (book_class). CLC table app/clc.json is bundled.
+  // app/migrations/0003_classification.sql (book_class), ... app/migrations/0007_audio.sql (read-aloud). CLC table app/clc.json is bundled.
 }

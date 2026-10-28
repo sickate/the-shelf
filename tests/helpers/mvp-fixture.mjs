@@ -14,12 +14,30 @@ export const sha = (b) => createHash("sha256").update(b).digest("hex");
 
 export function fakeD1(sqlite) {
   const statement = (sql, args = []) => ({
+    sql,
+    args,
     bind: (...next) => statement(sql, next),
     first: async () => sqlite.prepare(sql).get(...args) ?? null,
     all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
     run: async () => ({ meta: { changes: Number(sqlite.prepare(sql).run(...args).changes) } }),
   });
-  return { prepare: (sql) => statement(sql) };
+  // D1 batch: one transaction; each result is {results, meta} like the real binding.
+  const batch = async (statements) => {
+    sqlite.exec("BEGIN");
+    try {
+      const out = statements.map(({ sql, args }) => {
+        const st = sqlite.prepare(sql);
+        if (st.columns().length) return { results: st.all(...args), meta: { changes: 0 } };
+        return { results: [], meta: { changes: Number(st.run(...args).changes) } };
+      });
+      sqlite.exec("COMMIT");
+      return out;
+    } catch (error) {
+      sqlite.exec("ROLLBACK");
+      throw error;
+    }
+  };
+  return { prepare: (sql) => statement(sql), batch };
 }
 
 export function fakeR2() {

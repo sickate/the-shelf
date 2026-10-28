@@ -3,8 +3,8 @@ import { AudioPlayer, createAudioPlayer } from "./audio-player";
 import { getChapterSource } from "./chapter-source";
 import { el, errorText } from "./common";
 
-// The read-aloud backend (A1) is not deployed yet; until then the button only shows in mock mode.
-const AUDIO_BACKEND_READY = false;
+// The read-aloud backend (A1) is implemented (app/worker.mjs + AudioWorkflow); ?audioMock=1 still previews.
+const AUDIO_BACKEND_READY = true;
 export const audioAvailable = () => AUDIO_BACKEND_READY || audioMockEnabled();
 
 const mockSource = async () => ({ chapterKey: "mock-chapter", label: "示例章节", text: "这是用于预览播放器的示例文字。", truncated: false });

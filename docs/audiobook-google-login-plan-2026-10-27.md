@@ -3,7 +3,7 @@
 状态（2026-10-27 更新）：
 - G1 Google 登录已上线（Worker 版本 `ed4c69c6`），用户在浏览器用白名单账号登录成功；线上 HTTP 检查：访客/令牌/错误令牌、302 参数（PKCE、scope、回调地址）、`next` 开放跳转拒绝、state 失配、Origin 校验均符合预期。G2 已上线（版本 `3ac6ce49`）：`/api/login` 404、旧格式 cookie 失效、登录页无密码框，`OWNER_PASSWORD` secret 已删除；令牌与 Google 登录复核正常。
 - A2 章节提取、A3 播放器已合并；朗读按钮在后端上线前隐藏（`?audioMock=1` 可预览）。真实浏览器未验收。
-- S0 完成（结果见下节“S0 实测结论”），A1 开发中。
+- S0 完成（结果见下节“S0 实测结论”）。A1 后端已实现（本地 Node 测试通过，未部署、未线上验收）：迁移 0007、API、Workflow、预算、CPU 降级、语气（style）；部署步骤见 `docs/mvp-plan.md` “2026-10-27 朗读（A1）”。
 
 用户决定：TTS 用用户新建的 the-shelf 专用 DashScope Key，同意阿里云按字符计费；Google 登录只允许白名单所有者，**去掉密码登录**；CPU 不够时先把每片缩到约 200 字。
 
@@ -57,48 +57,18 @@
 - 计费：中文每字按 2 字符计；约 ¥2/万中文字。CosyVoice 仍未开放（不需要）。
 - 本机 macOS 12.6 无法运行 workerd（需 13.5+），本地只做 Node 测试，Workers 运行时行为在线上验收。
 
-## 数据（迁移 `app/migrations/0007_audio.sql`）
+## 数据（迁移 `app/migrations/0007_audio.sql`，A1 最终设计）
 
-```sql
-CREATE TABLE IF NOT EXISTS audio_jobs (
-  id TEXT PRIMARY KEY,                -- a_<random>
-  book_id TEXT NOT NULL REFERENCES books(id),
-  chapter_key TEXT NOT NULL,          -- 定位：cfi/href | pdf 页范围 | text 偏移，≤ 500 字节
-  chapter_label TEXT,
-  source_sha256 TEXT NOT NULL,        -- 提交原文 hash
-  voice TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('queued','cleaning','synthesizing','ready','failed','budget_exceeded')),
-  workflow_id TEXT,
-  est_seconds INTEGER, total_pieces INTEGER, done_pieces INTEGER NOT NULL DEFAULT 0,
-  error TEXT, llm_fallback_blocks INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT,
-  UNIQUE (book_id, chapter_key, source_sha256, voice)
-);
-CREATE TABLE IF NOT EXISTS audio_pieces (
-  job_id TEXT NOT NULL REFERENCES audio_jobs(id),
-  seq INTEGER NOT NULL,               -- 全章顺序
-  segment INTEGER,                    -- 合成后按实际时长确定
-  text TEXT NOT NULL,                 -- 整理后片文本（≤ 500 字）
-  r2_key TEXT, size_bytes INTEGER, reserved_bytes INTEGER, duration_ms INTEGER,
-  status TEXT NOT NULL CHECK (status IN ('pending','ready','failed')),
-  PRIMARY KEY (job_id, seq)
-);
-```
+- `audio_jobs`：在草案基础上增加 `style`（LLM 按内容选的朗读语气，或默认中性语气）、`piece_chars`（200，CPU 降级后 120）、`billed_chars`、`cpu_downgraded`、`total_pieces`/`done_pieces` 默认 0。唯一约束改为**部分唯一索引** `(book_id, chapter_key, source_sha256, voice) WHERE deleted_at IS NULL`，以便软删除后同键可以重新生成。
+- `audio_blocks`（新增）：LLM 整理块（约 6,000 字，段落边界），`raw` 在整理后清空（不长期保存原文），`cleaned` 保留供重新生成复用；`llm_status` ∈ pending/llm/fallback/short，`llm_attempts`，`split_done`。
+- `audio_pieces`：`seq = 块×65536 + k×16`（间隙供拆片），增加 `block`、`est_ms`、`billed_chars`、`attempts`、`error`、`cpu_split`；status 增加 `split`（拆分后的父片，保留其预留/字节）。`segment` 在片就绪时按实际时长确定。R2 key 为 `audio/<jobId>/<seq>.mp3`（不含段号，因为段在合成后才确定）。
+- `audio_settings`（单行）：全局 `piece_chars`、`cpu_downgraded_at`、`downgrade_reason`。
 
-`USED_SQL` 增加 `SUM(COALESCE(size_bytes, reserved_bytes))`（含软删除的任务）。章节原文不长期保存（整理后的片文本保留，供重生成与以后做“跟读高亮”）。
+`USED_SQL` 增加 `SUM(COALESCE(size_bytes, reserved_bytes)) FROM audio_pieces`（含软删除任务和拆分父片）。
 
 ## 接口（全部 `requireOwner`，写操作校验 Origin）
 
-| 方法 路径 | 说明 |
-| --- | --- |
-| POST /api/books/:id/audio `{chapterKey, label, text, voice?}` | 文本 ≤ 300,000 字、body ≤ 1.2 MB。命中缓存返回现有任务；否则建任务、启动 Workflow，返回 `{job}`（含估算段数/时长） |
-| GET /api/books/:id/audio?chapterKey= | 本章已有任务（或 404） |
-| GET /api/audio/:jobId | 任务状态 + 段与片清单 `{segments:[{index, durationMs, pieces:[{seq, durationMs, ready}]}], status, donePieces, totalPieces}` |
-| GET /api/audio/:jobId/pieces/:seq | 片 MP3，支持 Range，`Cache-Control: private, max-age=86400` |
-| POST /api/audio/:jobId/regenerate `{voice?}` | 新任务（旧任务软删除） |
-| DELETE /api/audio/:jobId | 软删除 |
-| GET /api/auth/google、GET /api/auth/google/callback | 见上 |
-| GET /api/me | 增加 `{owner, email?}` |
+见 `docs/mvp-plan.md` “2026-10-27 朗读（A1）”。与草案的差异：创建返回 201（命中缓存 200 且 `duplicate:true`）；任务视图另含 `style`、`pieceChars`、`cpuDowngraded`、`llmFallbackBlocks`、`billedChars`；片接口支持 HEAD；`/api/budget` 增加 `audioBytes`。语气：LLM 整理时同时返回 `style`，第 0 块的结果写入任务；TTS 模型由 `TTS_MODEL` 配置（默认 `qwen3-tts-flash-realtime`，名称含 `instruct` 时把语气作为 `instructions` 发送）。
 
 ## 分工
 
