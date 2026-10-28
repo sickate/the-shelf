@@ -16,6 +16,11 @@ export interface AudioJob {
   totalPieces: number;
   error?: string | null;
   segments: AudioSegment[];
+  /** Server extras (A1): narration style, piece length and whether a CPU downgrade happened. */
+  style?: string | null;
+  pieceChars?: number;
+  cpuDowngraded?: boolean;
+  llmFallbackBlocks?: number;
 }
 
 export interface AudioApi {

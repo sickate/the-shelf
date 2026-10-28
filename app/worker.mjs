@@ -1,6 +1,23 @@
 // The Shelf MVP Worker: static assets + owner-only private book API.
 // Contract: docs/mvp-plan.md
 import CLC_DATA from "./clc.json" with { type: "json" };
+import {
+  BLOCK_CHARS,
+  CLEAN_INSTRUCTIONS,
+  DEFAULT_STYLE,
+  SEGMENT_MAX_MS,
+  chunkBlocks,
+  cleanupInput,
+  codePoints,
+  estimateMs,
+  nextSegmentIndex,
+  normalizeCleaned,
+  precleanText,
+  splitPieces,
+  validateCleanup,
+  validateStyle,
+} from "./audio-text.mjs";
+import { DEFAULT_VOICE, VOICES, synthesize, ttsModel } from "./audio-tts.mjs";
 
 const MAX_FILE_BYTES = 20_000_000;
 const BUDGET_LIMIT = 8_000_000_000;
@@ -34,9 +51,11 @@ const CLASS_LEASE_MS = 15 * 60_000;
 const MAX_CLASS_LIST_CHARS = 60_000;
 // Document types (classification plan §11); a NULL doc_type (pre-migration result) counts as "book".
 export const DOC_TYPES = ["book", "course", "paper", "articles", "manual", "other"];
-// Every registered storage responsibility: book objects (incl. reservations) plus cover objects.
+// Every registered storage responsibility: book objects (incl. reservations), cover objects and
+// read-aloud pieces (actual size, else the reservation; soft-deleted jobs and split pieces included).
 const USED_SQL = `((SELECT COALESCE(SUM(size_bytes),0) FROM books WHERE r2_key IS NOT NULL)
-  + (SELECT COALESCE(SUM(size_bytes),0) FROM covers))`;
+  + (SELECT COALESCE(SUM(size_bytes),0) FROM covers)
+  + (SELECT COALESCE(SUM(COALESCE(size_bytes, reserved_bytes)),0) FROM audio_pieces))`;
 const SECURITY = { "X-Content-Type-Options": "nosniff" };
 const enc = new TextEncoder();
 
@@ -830,13 +849,13 @@ export function validateInfo(d, allowedUrls) {
 
 // One oai gateway task (no automatic retry: the gateway is not idempotent).
 // Returns {busy: retryAfter} | {error: code} | {task, parsed}.
-async function oaiTask(env, instructions, input) {
+async function oaiTask(env, instructions, input, effort = "medium") {
   let res;
   try {
     res = await fetch(`${(env.OAI_BASE_URL || OAI_DEFAULT_BASE).replace(/\/+$/, "")}/v1/tasks`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.OAI_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "gpt-luna", effort: "medium", output_format: "json_object", instructions, input }),
+      body: JSON.stringify({ model: "gpt-luna", effort, output_format: "json_object", instructions, input }),
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
   } catch (error) {
@@ -1717,6 +1736,717 @@ async function removeRecent(request, env, bookId) {
   return json({ ok: true });
 }
 
+// ---------------- Read-aloud (A1, docs/audiobook-google-login-plan-2026-10-27.md) ----------------
+// One audio job per (book, chapterKey, sha256(text), voice). A Cloudflare Workflow cleans the text in
+// ~6,000-char blocks (rules + gpt-luna), splits it into pieces (≤ piece_chars) and synthesizes one
+// piece per step. Each piece is reserved in the 8 GB budget before its R2 put.
+export const AUDIO_PIECE_CHARS = 200;
+export const AUDIO_PIECE_MIN = 120;
+const MAX_AUDIO_CHARS = 300_000;
+const MAX_AUDIO_BODY = 1_200_000;
+const MAX_CHAPTER_KEY_BYTES = 500;
+const MAX_AUDIO_LABEL = 200;
+export const AUDIO_BYTES_PER_CHAR = 4_000;
+const AUDIO_MIN_RESERVE = 65_536;
+export const SEQ_GAP = 16; // gaps between piece seqs so a piece can be split in place
+export const BLOCK_SEQ = 65_536; // seq = block * BLOCK_SEQ + k * SEQ_GAP
+export const LLM_MAX_ATTEMPTS = 6;
+const LLM_MIN_CHARS = 40;
+const PIECE_ROUNDS = 3; // rounds of (1 + PIECE_STEP retries) attempts before a piece fails the job
+// Free plan, per invocation: 50 external subrequests and 50 D1 queries (a batch counts as one); 1,024
+// steps per instance. Whether Workflows apply these per step or per instance is not documented, so
+// each instance plans conservatively: every step has a worst-case cost (retries of the external call
+// included) and before the next step could pass the budget a continuation instance takes over.
+export const INSTANCE_BUDGET = { ext: 45, d1: 45 };
+export const STEP_COST = {
+  next: { ext: 0, d1: 2 },
+  clean: { ext: 3, d1: 5 },
+  piece: { ext: 3, d1: 6 },
+  fail: { ext: 0, d1: 2 },
+  continue: { ext: 0, d1: 3 },
+};
+const MAX_PARTS = 2_000;
+const AUDIO_DONE = new Set(["ready", "failed", "budget_exceeded"]);
+const CPU_ERROR = /cpu|exceeded|time limit|resource limit/i;
+const AUDIO_JOB_ID = /^a_[0-9a-f]{24}$/;
+const STEP_FAST = { retries: { limit: 3, delay: "2 seconds", backoff: "exponential" }, timeout: "1 minute" };
+const STEP_CLEAN = { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" }, timeout: "15 minutes" };
+const STEP_PIECE = { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" }, timeout: "3 minutes" };
+
+const audioConfigured = (env) => Boolean(env.DASHSCOPE_KEY && env.AUDIO_WORKFLOW);
+const nowIso = () => new Date().toISOString();
+export const pieceReserve = (text) => Math.min(MAX_FILE_BYTES, Math.max(AUDIO_MIN_RESERVE, text.length * AUDIO_BYTES_PER_CHAR));
+
+async function audioSettings(env) {
+  const row = await env.DB.prepare("SELECT piece_chars, cpu_downgraded_at, downgrade_reason FROM audio_settings WHERE id = 1").first();
+  return {
+    pieceChars: row?.piece_chars >= AUDIO_PIECE_MIN ? row.piece_chars : AUDIO_PIECE_CHARS,
+    cpuDowngradedAt: row?.cpu_downgraded_at ?? null,
+    downgradeReason: row?.downgrade_reason ?? null,
+  };
+}
+
+// A live job: not soft-deleted and its book still live.
+const LIVE_JOB = `SELECT j.* FROM audio_jobs j JOIN books b ON b.id = j.book_id
+  WHERE j.deleted_at IS NULL AND b.deleted_at IS NULL`;
+const liveJob = (env, id) => env.DB.prepare(`${LIVE_JOB} AND j.id = ?`).bind(id).first();
+
+/** Public job view (matches app/web/lib/audio-api.ts AudioJob). Pending pieces get provisional segments. */
+async function jobView(env, job) {
+  const { results } = await env.DB.prepare(
+    "SELECT seq, segment, status, duration_ms, est_ms FROM audio_pieces WHERE job_id = ? AND status != 'split' ORDER BY seq",
+  )
+    .bind(job.id)
+    .all();
+  const segs = [];
+  let seg = null;
+  let segMs = 0;
+  for (const p of results) {
+    const ready = p.status === "ready" && p.segment !== null && p.duration_ms !== null;
+    const d = ready ? p.duration_ms : Math.max(0, p.est_ms ?? 0);
+    const s = ready ? p.segment : nextSegmentIndex(seg, segMs, d);
+    segMs = s === seg ? segMs + d : d;
+    seg = s;
+    const out = (segs[s] ??= { index: s, durationMs: 0, pieces: [] });
+    out.pieces.push({ seq: p.seq, durationMs: d, ready });
+    out.durationMs += d;
+  }
+  const segments = segs.filter(Boolean).map((s, index) => ({ ...s, index }));
+  return {
+    id: job.id,
+    status: job.status,
+    voice: job.voice,
+    chapterLabel: job.chapter_label ?? "",
+    style: job.style ?? null,
+    estSeconds: job.est_seconds ?? null,
+    donePieces: job.done_pieces ?? 0,
+    totalPieces: job.total_pieces ?? 0,
+    error: job.error ?? null,
+    segments,
+    pieceChars: job.piece_chars,
+    cpuDowngraded: Boolean(job.cpu_downgraded),
+    llmFallbackBlocks: job.llm_fallback_blocks ?? 0,
+    billedChars: job.billed_chars ?? 0,
+    createdAt: job.created_at,
+    updatedAt: job.updated_at,
+  };
+}
+
+/** Moves a job to a status unless it already reached a terminal one. */
+const setJobStatus = (env, jobId, status, error = null) =>
+  env.DB.prepare(
+    "UPDATE audio_jobs SET status = ?, error = ?, updated_at = ? WHERE id = ? AND status NOT IN ('ready','failed','budget_exceeded')",
+  )
+    .bind(status, error, nowIso(), jobId)
+    .run();
+
+/** Statements creating a job; blocks come from text (`blocks`) or are copied from `copyFrom`. */
+function jobStatements(env, j) {
+  const now = nowIso();
+  const stmts = [
+    env.DB.prepare(
+      `INSERT INTO audio_jobs (id, book_id, chapter_key, chapter_label, source_sha256, voice, style, status, piece_chars,
+         est_seconds, total_pieces, done_pieces, billed_chars, llm_fallback_blocks, cpu_downgraded, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
+    ).bind(j.id, j.bookId, j.chapterKey, j.label, j.sha, j.voice, j.style ?? null, j.pieceChars, j.estSeconds, j.totalPieces, now, now),
+  ];
+  if (j.blocks)
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO audio_blocks (job_id, idx, raw, raw_chars, est_pieces, llm_attempts, llm_status)
+         SELECT ?1, CAST(key AS INTEGER), json_extract(value, '$.t'), json_extract(value, '$.n'), json_extract(value, '$.e'), 0, 'pending'
+         FROM json_each(?2)`,
+      ).bind(j.id, JSON.stringify(j.blocks)),
+    );
+  else
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO audio_blocks (job_id, idx, raw, cleaned, raw_chars, est_pieces, llm_attempts, llm_status)
+         SELECT ?1, idx, raw, cleaned, raw_chars, est_pieces, 0, llm_status FROM audio_blocks WHERE job_id = ?2`,
+      ).bind(j.id, j.copyFrom),
+      env.DB.prepare(
+        `UPDATE audio_jobs SET llm_fallback_blocks = (SELECT COUNT(*) FROM audio_blocks WHERE job_id = ?1 AND llm_status = 'fallback'),
+           total_pieces = (SELECT COALESCE(SUM(est_pieces), 0) FROM audio_blocks WHERE job_id = ?1)
+         WHERE id = ?1`,
+      ).bind(j.id),
+    );
+  return stmts;
+}
+
+async function startJob(env, jobId) {
+  const id = `${jobId}-p0`;
+  try {
+    await env.AUDIO_WORKFLOW.create({ id, params: { jobId, part: 0 } });
+    await env.DB.prepare("UPDATE audio_jobs SET workflow_id = ? WHERE id = ?").bind(id, jobId).run();
+  } catch (error) {
+    console.error("audio_workflow_start", error?.message);
+    await setJobStatus(env, jobId, "failed", "workflow_start_failed");
+  }
+}
+
+async function stopWorkflow(env, workflowId) {
+  if (!workflowId) return;
+  try {
+    await (await env.AUDIO_WORKFLOW.get(workflowId)).terminate();
+  } catch {} // already finished or unknown: the steps also stop on a deleted job
+}
+
+const newAudioId = () => `a_${hex(crypto.getRandomValues(new Uint8Array(12)))}`;
+const sameKeyJob = (env, bookId, chapterKey, sha, voice) =>
+  env.DB.prepare(
+    "SELECT * FROM audio_jobs WHERE book_id = ? AND chapter_key = ? AND source_sha256 = ? AND voice = ? AND deleted_at IS NULL",
+  )
+    .bind(bookId, chapterKey, sha, voice)
+    .first();
+
+function audioVoice(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (!VOICES.includes(value)) throw new HttpError(400, "bad_voice");
+  return value;
+}
+
+async function audioBody(request, max) {
+  const length = request.headers.get("Content-Length");
+  if (length !== null && !(Number(length) <= max)) throw new HttpError(413, "too_large");
+  const bytes = await request.arrayBuffer();
+  if (bytes.byteLength > max) throw new HttpError(413, "too_large");
+  const text = new TextDecoder().decode(bytes);
+  if (!text.trim()) return {};
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new HttpError(400, "bad_json");
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "bad_json");
+  return body;
+}
+
+async function createAudio(request, env, row) {
+  await requireOwner(request, env);
+  requireReadable(row);
+  if (!audioConfigured(env)) throw new HttpError(503, "not_configured");
+  const body = await audioBody(request, MAX_AUDIO_BODY);
+  const { chapterKey } = body;
+  if (
+    typeof chapterKey !== "string" ||
+    !chapterKey ||
+    enc.encode(chapterKey).byteLength > MAX_CHAPTER_KEY_BYTES ||
+    /[\u0000-\u001f\u007f]/.test(chapterKey)
+  )
+    throw new HttpError(400, "bad_chapter_key");
+  if (body.label != null && typeof body.label !== "string") throw new HttpError(400, "bad_label");
+  const label = clip((body.label ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim(), MAX_AUDIO_LABEL);
+  if (typeof body.text !== "string") throw new HttpError(400, "bad_text");
+  const text = body.text.trim();
+  if (!text) throw new HttpError(400, "empty_text");
+  if (text.length > MAX_AUDIO_CHARS && codePoints(text) > MAX_AUDIO_CHARS) throw new HttpError(413, "text_too_long");
+  const voice = audioVoice(body.voice, DEFAULT_VOICE);
+  const sha = await sha256Hex(text);
+  const existing = await sameKeyJob(env, row.id, chapterKey, sha, voice);
+  if (existing) return json({ job: await jobView(env, existing), duplicate: true });
+
+  const { pieceChars } = await audioSettings(env);
+  const blocks = chunkBlocks(text).map((t) => ({ t, n: t.length, e: Math.ceil(t.length / (pieceChars * 0.8)) }));
+  if (!blocks.length) throw new HttpError(400, "empty_text");
+  const id = newAudioId();
+  const job = {
+    id,
+    bookId: row.id,
+    chapterKey,
+    label,
+    sha,
+    voice,
+    pieceChars,
+    estSeconds: Math.round(estimateMs(text) / 1000),
+    totalPieces: blocks.reduce((a, b) => a + b.e, 0),
+    blocks,
+  };
+  try {
+    await env.DB.batch(jobStatements(env, job));
+  } catch (error) {
+    // A concurrent identical request won the live-key unique index.
+    const raced = await sameKeyJob(env, row.id, chapterKey, sha, voice);
+    if (!raced) throw error;
+    return json({ job: await jobView(env, raced), duplicate: true });
+  }
+  await startJob(env, id);
+  return json({ job: await jobView(env, await liveJob(env, id)), duplicate: false }, 201);
+}
+
+async function findAudio(request, env, row, url) {
+  await requireOwner(request, env);
+  requireReadable(row);
+  const chapterKey = url.searchParams.get("chapterKey");
+  if (!chapterKey || enc.encode(chapterKey).byteLength > MAX_CHAPTER_KEY_BYTES) throw new HttpError(400, "bad_chapter_key");
+  const job = await env.DB.prepare(
+    "SELECT * FROM audio_jobs WHERE book_id = ? AND chapter_key = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1",
+  )
+    .bind(row.id, chapterKey)
+    .first();
+  if (!job) throw new HttpError(404, "not_found");
+  return json({ job: await jobView(env, job) });
+}
+
+async function getAudio(request, env, jobId) {
+  await requireOwner(request, env);
+  const job = await liveJob(env, jobId);
+  if (!job) throw new HttpError(404, "not_found");
+  return json({ job: await jobView(env, job) });
+}
+
+async function regenerateAudio(request, env, jobId) {
+  await requireOwner(request, env);
+  if (!audioConfigured(env)) throw new HttpError(503, "not_configured");
+  const body = await audioBody(request, 4_096);
+  const old = await liveJob(env, jobId);
+  if (!old) throw new HttpError(404, "not_found");
+  const book = await env.DB.prepare("SELECT * FROM books WHERE id = ? AND deleted_at IS NULL").bind(old.book_id).first();
+  requireReadable(book);
+  const voice = audioVoice(body.voice, old.voice);
+  const { pieceChars } = await audioSettings(env);
+  const id = newAudioId();
+  const now = nowIso();
+  // Soft-delete the old job (and any live job already holding the new key), then copy its blocks:
+  // cleaned blocks are reused so regenerating does not call the LLM again. No bytes are released.
+  const statements = [
+    env.DB.prepare(
+      `UPDATE audio_jobs SET deleted_at = ?, updated_at = ? WHERE deleted_at IS NULL
+         AND (id = ? OR (book_id = ? AND chapter_key = ? AND source_sha256 = ? AND voice = ?))`,
+    ).bind(now, now, old.id, old.book_id, old.chapter_key, old.source_sha256, voice),
+    ...jobStatements(env, {
+      id,
+      bookId: old.book_id,
+      chapterKey: old.chapter_key,
+      label: old.chapter_label,
+      sha: old.source_sha256,
+      voice,
+      style: old.style,
+      pieceChars,
+      estSeconds: old.est_seconds,
+      totalPieces: 0,
+      copyFrom: old.id,
+    }),
+  ];
+  const { results: others } = await env.DB.prepare(
+    "SELECT workflow_id FROM audio_jobs WHERE deleted_at IS NULL AND book_id = ? AND chapter_key = ? AND source_sha256 = ? AND voice = ?",
+  )
+    .bind(old.book_id, old.chapter_key, old.source_sha256, voice)
+    .all();
+  await env.DB.batch(statements);
+  for (const w of [old.workflow_id, ...others.map((o) => o.workflow_id)]) await stopWorkflow(env, w);
+  await startJob(env, id);
+  return json({ job: await jobView(env, await liveJob(env, id)) }, 201);
+}
+
+async function deleteAudio(request, env, jobId) {
+  await requireOwner(request, env);
+  const job = await liveJob(env, jobId);
+  if (!job) throw new HttpError(404, "not_found");
+  const now = nowIso();
+  // Soft delete only: pieces, objects and their budget stay registered.
+  await env.DB.prepare("UPDATE audio_jobs SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+    .bind(now, now, job.id)
+    .run();
+  await stopWorkflow(env, job.workflow_id);
+  return json({ ok: true });
+}
+
+async function servePiece(request, env, jobId, seq) {
+  await requireOwner(request, env);
+  const p = await env.DB.prepare(
+    `SELECT p.r2_key, p.size_bytes FROM audio_pieces p JOIN audio_jobs j ON j.id = p.job_id JOIN books b ON b.id = j.book_id
+     WHERE p.job_id = ? AND p.seq = ? AND p.status = 'ready' AND j.deleted_at IS NULL AND b.deleted_at IS NULL`,
+  )
+    .bind(jobId, seq)
+    .first();
+  if (!p?.r2_key || !(p.size_bytes > 0)) throw new HttpError(404, "not_found");
+  const size = p.size_bytes;
+  let range;
+  try {
+    range = parseRange(request.headers.get("Range"), size);
+  } catch (error) {
+    if (error.status !== 416) throw error;
+    return new Response(null, {
+      status: 416,
+      headers: { "Content-Range": `bytes */${size}`, "Cache-Control": "no-store", ...SECURITY },
+    });
+  }
+  const headers = {
+    "Content-Type": "audio/mpeg",
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "private, max-age=86400",
+    "Content-Length": String(range ? range.length : size),
+    ...SECURITY,
+  };
+  if (range) headers["Content-Range"] = `bytes ${range.offset}-${range.offset + range.length - 1}/${size}`;
+  const status = range ? 206 : 200;
+  if (request.method === "HEAD") {
+    if (!(await env.BOOKS.head(p.r2_key))) throw new HttpError(404, "not_found");
+    return new Response(null, { status, headers });
+  }
+  const object = await env.BOOKS.get(p.r2_key, range ? { range } : undefined);
+  if (!object?.body) throw new HttpError(404, "not_found");
+  return new Response(object.body, { status, headers });
+}
+
+// ---- Workflow steps (each idempotent: Workflows may re-run a step) ----
+// D1 Free allows 50 queries per invocation (a batch counts as one), so steps batch their statements.
+
+const refreshStmt = (env, jobId) =>
+  env.DB.prepare(
+    `UPDATE audio_jobs SET
+       done_pieces = (SELECT COUNT(*) FROM audio_pieces WHERE job_id = ?1 AND status = 'ready'),
+       total_pieces = (SELECT COUNT(*) FROM audio_pieces WHERE job_id = ?1 AND status != 'split')
+         + (SELECT COALESCE(SUM(est_pieces), 0) FROM audio_blocks WHERE job_id = ?1 AND split_done = 0),
+       billed_chars = (SELECT COALESCE(SUM(billed_chars), 0) FROM audio_pieces WHERE job_id = ?1),
+       llm_fallback_blocks = (SELECT COUNT(*) FROM audio_blocks WHERE job_id = ?1 AND llm_status = 'fallback'),
+       updated_at = ?2
+     WHERE id = ?1`,
+  ).bind(jobId, nowIso());
+const statusStmt = (env, jobId, status, error = null) =>
+  env.DB.prepare(
+    "UPDATE audio_jobs SET status = ?, error = ?, updated_at = ? WHERE id = ? AND status NOT IN ('ready','failed','budget_exceeded')",
+  ).bind(status, error, nowIso(), jobId);
+const liveJobStmt = (env, jobId) => env.DB.prepare(`${LIVE_JOB} AND j.id = ?`).bind(jobId);
+const pieceStmt = (env, jobId, seq) => env.DB.prepare("SELECT * FROM audio_pieces WHERE job_id = ? AND seq = ?").bind(jobId, seq);
+const firstRow = (r) => r?.results?.[0] ?? null;
+
+/** Decides the next unit of work from D1: a pending piece first, else the next uncleaned block. */
+export async function audioNext(env, jobId) {
+  const [, jobR, pieceR, blockR] = await env.DB.batch([
+    env.DB.prepare("UPDATE audio_jobs SET status = 'cleaning', updated_at = ? WHERE id = ? AND status = 'queued' AND deleted_at IS NULL").bind(
+      nowIso(),
+      jobId,
+    ),
+    liveJobStmt(env, jobId),
+    env.DB.prepare("SELECT seq, attempts FROM audio_pieces WHERE job_id = ? AND status = 'pending' ORDER BY seq LIMIT 1").bind(jobId),
+    env.DB.prepare("SELECT idx, llm_attempts FROM audio_blocks WHERE job_id = ? AND split_done = 0 ORDER BY idx LIMIT 1").bind(jobId),
+  ]);
+  const job = firstRow(jobR);
+  if (!job || AUDIO_DONE.has(job.status)) return { action: "stop" };
+  const piece = firstRow(pieceR);
+  if (piece) return { action: "piece", seq: piece.seq, round: piece.attempts };
+  const block = firstRow(blockR);
+  if (block) return { action: "clean", idx: block.idx, attempt: block.llm_attempts };
+  await env.DB.batch([
+    refreshStmt(env, jobId),
+    env.DB.prepare(
+      `UPDATE audio_jobs SET
+         status = CASE WHEN EXISTS (SELECT 1 FROM audio_pieces WHERE job_id = ?1 AND status = 'ready') THEN 'ready' ELSE 'failed' END,
+         error = CASE WHEN EXISTS (SELECT 1 FROM audio_pieces WHERE job_id = ?1 AND status = 'ready') THEN NULL ELSE 'empty_text' END,
+         updated_at = ?2
+       WHERE id = ?1 AND status NOT IN ('ready','failed','budget_exceeded')`,
+    ).bind(jobId, nowIso()),
+  ]);
+  return { action: "done" };
+}
+
+const busyWait = (retryAfter, attempt) =>
+  Math.min(Math.max(10, Number(retryAfter) || 10) * 1000 * 2 ** attempt, 600_000) + Math.floor(Math.random() * 5_000);
+
+const insertPiecesStmt = (env, jobId, block, rows, cpuSplit) =>
+  env.DB.prepare(
+    `INSERT OR IGNORE INTO audio_pieces (job_id, seq, block, text, est_ms, status, attempts, cpu_split, updated_at)
+     SELECT ?1, json_extract(value, '$.s'), ?2, json_extract(value, '$.t'), json_extract(value, '$.e'), 'pending', 0, ?3, ?4
+     FROM json_each(?5)`,
+  ).bind(jobId, block, cpuSplit, nowIso(), JSON.stringify(rows));
+
+/** Cleans one block (rules, then gpt-luna with validation and fallback) and inserts its pieces. */
+export async function audioCleanStep(env, jobId, idx) {
+  const [jobR, blockR] = await env.DB.batch([
+    liveJobStmt(env, jobId),
+    env.DB.prepare("SELECT * FROM audio_blocks WHERE job_id = ? AND idx = ?").bind(jobId, idx),
+  ]);
+  const job = firstRow(jobR);
+  const block = firstRow(blockR);
+  if (!job || AUDIO_DONE.has(job.status) || !block) return { stop: true };
+  let out = block.cleaned;
+  let status = block.llm_status;
+  let style = null;
+  if (out === null) {
+    const pre = precleanText(block.raw ?? "");
+    out = pre;
+    status = "fallback";
+    if (pre.replace(/\s+/g, "").length < LLM_MIN_CHARS) status = "short";
+    else if (env.OAI_KEY && block.llm_attempts < LLM_MAX_ATTEMPTS) {
+      await env.DB.prepare("UPDATE audio_blocks SET llm_attempts = llm_attempts + 1 WHERE job_id = ? AND idx = ?")
+        .bind(jobId, idx)
+        .run();
+      const ai = await oaiTask(env, CLEAN_INSTRUCTIONS, cleanupInput(pre), "low");
+      if (ai.busy) return { busy: true, waitMs: busyWait(ai.busy, block.llm_attempts) };
+      // Any other failure (or an output that fails validation) falls back to the rules; no retry.
+      const candidate = !ai.error && typeof ai.parsed?.text === "string" ? normalizeCleaned(ai.parsed.text) : null;
+      if (candidate !== null && validateCleanup(pre, candidate).ok) {
+        out = candidate;
+        status = "llm";
+        style = validateStyle(ai.parsed.style);
+      }
+    }
+  }
+  // The submitted chapter text is not kept once a block is cleaned. Pieces are inserted only once per
+  // block and job (split_done; a re-run after a piece-length downgrade must not mix two splits).
+  const [, cleanedR, splitR] = await env.DB.batch([
+    env.DB.prepare("UPDATE audio_blocks SET cleaned = ?, raw = NULL, llm_status = ? WHERE job_id = ? AND idx = ? AND cleaned IS NULL").bind(
+      out,
+      status,
+      jobId,
+      idx,
+    ),
+    env.DB.prepare("SELECT cleaned FROM audio_blocks WHERE job_id = ? AND idx = ?").bind(jobId, idx),
+    env.DB.prepare("SELECT split_done FROM audio_blocks WHERE job_id = ? AND idx = ?").bind(jobId, idx),
+  ]);
+  const writes = [];
+  if (!firstRow(splitR).split_done) {
+    const pieces = splitPieces(firstRow(cleanedR).cleaned, job.piece_chars);
+    if (pieces.length * SEQ_GAP >= BLOCK_SEQ) throw new Error("too_many_pieces");
+    writes.push(
+      insertPiecesStmt(env, jobId, idx, pieces.map((t, k) => ({ s: idx * BLOCK_SEQ + k * SEQ_GAP, t, e: estimateMs(t) })), 0),
+      env.DB.prepare("UPDATE audio_blocks SET split_done = 1 WHERE job_id = ? AND idx = ?").bind(jobId, idx),
+    );
+  }
+  writes.push(
+    env.DB.prepare("UPDATE audio_jobs SET status = 'synthesizing', updated_at = ? WHERE id = ? AND status IN ('queued','cleaning')").bind(
+      nowIso(),
+      jobId,
+    ),
+    refreshStmt(env, jobId),
+  );
+  // The narration style comes from the first block (its pieces are synthesized first); a fallback,
+  // invalid style or a block cleaned earlier (regenerate) gets the neutral default.
+  if (idx === 0)
+    writes.push(env.DB.prepare("UPDATE audio_jobs SET style = COALESCE(style, ?) WHERE id = ?").bind(style ?? DEFAULT_STYLE, jobId));
+  await env.DB.batch(writes);
+  return { ok: true, llm: status };
+}
+
+async function budgetExceeded(env, jobId) {
+  await env.DB.batch([statusStmt(env, jobId, "budget_exceeded", "budget_exceeded"), refreshStmt(env, jobId)]);
+  return { budget: true };
+}
+
+/**
+ * Synthesizes one piece: reserve budget → TTS → R2 put (fixed key) → settle size, duration and
+ * segment. Throws on transient failures (the step retries; a kept reservation is reused, so a retry
+ * overwrites the same key without new budget).
+ */
+export async function audioPieceStep(env, jobId, seq, deps = {}) {
+  const [jobR, pieceR] = await env.DB.batch([liveJobStmt(env, jobId), pieceStmt(env, jobId, seq)]);
+  const job = firstRow(jobR);
+  let p = firstRow(pieceR);
+  if (!job || AUDIO_DONE.has(job.status)) return { stop: true };
+  if (!p || p.status !== "pending") return { ok: true };
+  const key = `audio/${jobId}/${seq}.mp3`;
+  if (p.reserved_bytes === null) {
+    const [, again] = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE audio_pieces SET reserved_bytes = ?1, r2_key = ?2, updated_at = ?3
+         WHERE job_id = ?4 AND seq = ?5 AND reserved_bytes IS NULL AND size_bytes IS NULL
+           AND ${USED_SQL} + ?1 + ?6 <= ?7`,
+      ).bind(pieceReserve(p.text), key, nowIso(), jobId, seq, LEGACY_RESERVE, BUDGET_LIMIT),
+      pieceStmt(env, jobId, seq),
+    ]);
+    p = firstRow(again);
+    if (p.reserved_bytes === null) return budgetExceeded(env, jobId);
+  }
+  const tts = await (deps.synthesize ?? synthesize)(env.DASHSCOPE_KEY, {
+    text: p.text,
+    voice: job.voice,
+    model: ttsModel(env),
+    instructions: job.style ?? DEFAULT_STYLE,
+  });
+  const size = tts.audio.byteLength;
+  if (size > MAX_FILE_BYTES) throw new Error("tts_too_large");
+  if (size > p.reserved_bytes) {
+    // Grow the reservation atomically before writing more bytes than were reserved.
+    const grown = await env.DB.prepare(
+      `UPDATE audio_pieces SET reserved_bytes = ?1 WHERE job_id = ?2 AND seq = ?3 AND reserved_bytes = ?4
+         AND ${USED_SQL} - ?4 + ?1 + ?5 <= ?6`,
+    )
+      .bind(size, jobId, seq, p.reserved_bytes, LEGACY_RESERVE, BUDGET_LIMIT)
+      .run();
+    if (!grown.meta.changes) return budgetExceeded(env, jobId);
+  }
+  // An exception here leaves the reservation (outcome unknown); the retry re-puts the same key.
+  await env.BOOKS.put(key, tts.audio, { httpMetadata: { contentType: "audio/mpeg" } });
+  // Segment by actual duration: continue the previous ready piece's segment unless it would pass 20:00.
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE audio_pieces SET status = 'ready', size_bytes = ?3, duration_ms = ?4, billed_chars = ?5, error = NULL, updated_at = ?6,
+         segment = COALESCE((
+           SELECT CASE WHEN (SELECT COALESCE(SUM(q.duration_ms), 0) FROM audio_pieces q
+                               WHERE q.job_id = ?1 AND q.status = 'ready' AND q.segment = prev.segment) + ?4 > ?7
+                       THEN prev.segment + 1 ELSE prev.segment END
+           FROM (SELECT segment FROM audio_pieces WHERE job_id = ?1 AND seq < ?2 AND status = 'ready'
+                 ORDER BY seq DESC LIMIT 1) prev), 0)
+       WHERE job_id = ?1 AND seq = ?2 AND status = 'pending'`,
+    ).bind(jobId, seq, size, tts.durationMs, tts.billedChars, nowIso(), SEGMENT_MAX_MS),
+    refreshStmt(env, jobId),
+  ]);
+  return { ok: true, durationMs: tts.durationMs, bytes: size };
+}
+
+const errorCode = (message) =>
+  String(message || "unknown")
+    .replace(/[^A-Za-z0-9_.:\- ]/g, "")
+    .slice(0, 120) || "unknown";
+
+/**
+ * A piece step failed after its retries. A CPU-limit failure (or a long piece failing two rounds)
+ * splits the piece into ≤ 120-char sub-pieces inside its seq gap, also splits the job's other pending
+ * long pieces, and lowers the job's and the global piece length to 120. Other failures retry in a
+ * later round, then fail the job.
+ */
+export async function audioPieceFailed(env, jobId, seq, message) {
+  const [jobR, pieceR, longR] = await env.DB.batch([
+    liveJobStmt(env, jobId),
+    pieceStmt(env, jobId, seq),
+    env.DB.prepare(
+      `SELECT seq, block, text FROM audio_pieces WHERE job_id = ? AND status = 'pending' AND length(text) > ? AND seq % ? = 0
+       ORDER BY seq LIMIT 200`,
+    ).bind(jobId, AUDIO_PIECE_MIN, SEQ_GAP),
+  ]);
+  const job = firstRow(jobR);
+  const p = firstRow(pieceR);
+  if (!job || AUDIO_DONE.has(job.status)) return { stop: true };
+  if (!p || p.status !== "pending") return { ok: true };
+  const code = errorCode(message);
+  const rounds = p.attempts + 1;
+  const cpu = CPU_ERROR.test(code);
+  const splittable = p.text.length > AUDIO_PIECE_MIN && p.seq % SEQ_GAP === 0;
+  const now = nowIso();
+  if (splittable && (cpu || rounds >= 2)) {
+    const reason = cpu ? "cpu_limit" : "repeated_failure";
+    const targets = longR.results.some((r) => r.seq === seq) ? longR.results : [p, ...longR.results];
+    const rows = [];
+    for (const t of targets)
+      for (const [k, text] of splitPieces(t.text, AUDIO_PIECE_MIN).slice(0, SEQ_GAP - 1).entries())
+        rows.push({ s: t.seq + 1 + k, t: text, e: estimateMs(text), b: t.block });
+    await env.DB.batch([
+      // Parents keep their reservation/size (an object may exist at the failed piece's key).
+      env.DB.prepare(
+        `UPDATE audio_pieces SET status = 'split', attempts = CASE WHEN seq = ?1 THEN ?2 ELSE attempts END,
+           error = CASE WHEN seq = ?1 THEN ?3 ELSE 'split_preemptive' END, updated_at = ?4
+         WHERE job_id = ?5 AND status = 'pending' AND seq IN (SELECT value FROM json_each(?6))`,
+      ).bind(seq, rounds, code, now, jobId, JSON.stringify(targets.map((t) => t.seq))),
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO audio_pieces (job_id, seq, block, text, est_ms, status, attempts, cpu_split, updated_at)
+         SELECT ?1, json_extract(value, '$.s'), json_extract(value, '$.b'), json_extract(value, '$.t'), json_extract(value, '$.e'),
+           'pending', 0, 1, ?2
+         FROM json_each(?3)`,
+      ).bind(jobId, now, JSON.stringify(rows)),
+      env.DB.prepare("UPDATE audio_jobs SET piece_chars = MIN(piece_chars, ?), cpu_downgraded = 1, updated_at = ? WHERE id = ?").bind(
+        AUDIO_PIECE_MIN,
+        now,
+        jobId,
+      ),
+      env.DB.prepare(
+        `INSERT INTO audio_settings (id, piece_chars, cpu_downgraded_at, downgrade_reason, updated_at) VALUES (1, ?1, ?2, ?3, ?2)
+         ON CONFLICT(id) DO UPDATE SET piece_chars = MIN(audio_settings.piece_chars, ?1), cpu_downgraded_at = ?2,
+           downgrade_reason = ?3, updated_at = ?2`,
+      ).bind(AUDIO_PIECE_MIN, now, reason),
+      refreshStmt(env, jobId),
+    ]);
+    return { split: rows.length, reason };
+  }
+  if (rounds < PIECE_ROUNDS) {
+    await env.DB.prepare("UPDATE audio_pieces SET attempts = ?, error = ?, updated_at = ? WHERE job_id = ? AND seq = ?")
+      .bind(rounds, code, now, jobId, seq)
+      .run();
+    return { retryMs: 30_000 * rounds };
+  }
+  await env.DB.batch([
+    env.DB.prepare("UPDATE audio_pieces SET status = 'failed', attempts = ?, error = ?, updated_at = ? WHERE job_id = ? AND seq = ?").bind(
+      rounds,
+      code,
+      now,
+      jobId,
+      seq,
+    ),
+    statusStmt(env, jobId, "failed", clip(`tts_failed: ${code}`, 160)),
+    refreshStmt(env, jobId),
+  ]);
+  return { failed: true };
+}
+
+/** Starts the next instance of a long job (deterministic id, so a re-run step does not duplicate it). */
+export async function audioContinue(env, jobId, part) {
+  const job = await liveJob(env, jobId);
+  if (!job || AUDIO_DONE.has(job.status)) return { stop: true };
+  if (part > MAX_PARTS) {
+    await setJobStatus(env, jobId, "failed", "too_many_parts");
+    return { stop: true };
+  }
+  const id = `${jobId}-p${part}`;
+  try {
+    await env.AUDIO_WORKFLOW.create({ id, params: { jobId, part } });
+  } catch (error) {
+    // Already created by an earlier attempt of this step?
+    try {
+      await env.AUDIO_WORKFLOW.get(id);
+    } catch {
+      throw error;
+    }
+  }
+  await env.DB.prepare("UPDATE audio_jobs SET workflow_id = ?, updated_at = ? WHERE id = ?").bind(id, nowIso(), jobId).run();
+  return { id };
+}
+
+/**
+ * Workflow body (AudioWorkflow.run in app/entry.mjs). Loop: next → clean/piece step. The planned cost
+ * of each step (external calls plus R2/D1 calls, retries included) is summed per instance; before the
+ * sum would pass INSTANCE_BUDGET a continuation instance takes over (Free: 50 external subrequests
+ * and 50 D1 queries per invocation; 1,024 steps per instance).
+ */
+export async function runAudioWorkflow(env, event, step, deps = {}) {
+  const { jobId, part = 0 } = event?.payload ?? {};
+  if (typeof jobId !== "string" || !AUDIO_JOB_ID.test(jobId)) return "bad_payload";
+  const names = new Set();
+  const run = (name, config, fn) => {
+    // A repeated name would return a cached result and loop forever; treat it as a bug.
+    if (names.has(name)) throw new Error(`workflow_loop:${name}`);
+    names.add(name);
+    return step.do(name, config, fn);
+  };
+  const spent = { ext: 0, d1: 0 };
+  const add = (...costs) => costs.forEach((c) => ((spent.ext += c.ext), (spent.d1 += c.d1)));
+  const fits = (...costs) =>
+    ["ext", "d1"].every((k) => spent[k] + costs.reduce((a, c) => a + c[k], 0) <= INSTANCE_BUDGET[k]);
+  try {
+    for (let n = 0; ; n++) {
+      const next = await run(`next-${n}`, STEP_FAST, () => audioNext(env, jobId));
+      add(STEP_COST.next);
+      if (next.action !== "clean" && next.action !== "piece") return next.action;
+      if (!fits(STEP_COST[next.action], STEP_COST.fail, STEP_COST.next, STEP_COST.continue)) {
+        await run(`continue-${part + 1}`, STEP_FAST, () => audioContinue(env, jobId, part + 1));
+        return "continued";
+      }
+      add(STEP_COST[next.action]);
+      if (next.action === "clean") {
+        const r = await run(`clean-${next.idx}-${next.attempt}`, STEP_CLEAN, () => audioCleanStep(env, jobId, next.idx));
+        if (r?.busy) await step.sleep(`llm-wait-${next.idx}-${next.attempt}`, r.waitMs);
+        continue;
+      }
+      const name = `piece-${next.seq}-${next.round}`;
+      try {
+        await run(name, STEP_PIECE, () => audioPieceStep(env, jobId, next.seq, deps));
+      } catch (error) {
+        if (String(error?.message).startsWith("workflow_loop:")) throw error;
+        add(STEP_COST.fail);
+        const f = await run(`${name}-failed`, STEP_FAST, () => audioPieceFailed(env, jobId, next.seq, error?.message));
+        if (f?.retryMs) await step.sleep(`${name}-wait`, f.retryMs);
+      }
+    }
+  } catch (error) {
+    console.error("audio_workflow", errorCode(error?.message));
+    await step.do(`abort-${part}`, STEP_FAST, async () => {
+      await setJobStatus(env, jobId, "failed", clip(`workflow_error: ${errorCode(error?.message)}`, 160));
+      return { ok: true };
+    });
+    return "failed";
+  }
+}
+
 async function handleApi(request, env, url) {
   const { method } = request;
   const path = url.pathname;
@@ -1745,7 +2475,11 @@ async function handleApi(request, env, url) {
   if (path === "/api/budget" && method === "GET") {
     await requireOwner(request, env);
     const { cover } = await env.DB.prepare("SELECT COALESCE(SUM(size_bytes),0) AS cover FROM covers").first();
+    const { audio } = await env.DB.prepare(
+      "SELECT COALESCE(SUM(COALESCE(size_bytes, reserved_bytes)),0) AS audio FROM audio_pieces",
+    ).first();
     return json({
+      audioBytes: audio,
       usedBytes: (await budgetUsed(env)) + LEGACY_RESERVE,
       limitBytes: BUDGET_LIMIT,
       coverBytes: cover,
@@ -1762,7 +2496,14 @@ async function handleApi(request, env, url) {
   if (path === "/api/recent" && method === "GET") return listRecent(request, env, url);
   const rr = /^\/api\/recent\/([A-Za-z0-9_]{1,40})$/.exec(path);
   if (rr && method === "DELETE") return removeRecent(request, env, rr[1]);
-  const m = /^\/api\/books\/([A-Za-z0-9_]{1,40})(?:\/(file|cover|info|class|notes|opened|progress))?$/.exec(path);
+  const au = /^\/api\/audio\/(a_[0-9a-f]{24})(?:\/(regenerate|pieces\/(\d{1,12})))?$/.exec(path);
+  if (au) {
+    if (!au[2] && method === "GET") return getAudio(request, env, au[1]);
+    if (!au[2] && method === "DELETE") return deleteAudio(request, env, au[1]);
+    if (au[2] === "regenerate" && method === "POST") return regenerateAudio(request, env, au[1]);
+    if (au[3] && (method === "GET" || method === "HEAD")) return servePiece(request, env, au[1], Number(au[3]));
+  }
+  const m = /^\/api\/books\/([A-Za-z0-9_]{1,40})(?:\/(file|cover|info|class|notes|opened|progress|audio))?$/.exec(path);
   if (m) {
     const row = await env.DB.prepare("SELECT * FROM books WHERE id = ? AND deleted_at IS NULL")
       .bind(m[1])
@@ -1782,6 +2523,8 @@ async function handleApi(request, env, url) {
     if (m[2] === "notes" && method === "POST") return createNote(request, env, row);
     if (m[2] === "opened" && method === "POST") return bookOpened(request, env, row);
     if (m[2] === "progress" && method === "PUT") return bookProgress(request, env, row);
+    if (m[2] === "audio" && method === "POST") return createAudio(request, env, row);
+    if (m[2] === "audio" && method === "GET") return findAudio(request, env, row, url);
     if (!m[2] && method === "GET") {
       if (!row || row.status === "reserved") throw new HttpError(404, "not_found");
       const owner = await isOwner(request, env).catch(() => false);
