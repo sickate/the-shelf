@@ -208,6 +208,8 @@ export interface AudioPosition {
   pieceText: string;
   offsetMs: number;
   durationMs: number;
+  /** Word marks of the piece: [charOffset, ms, ...] (optional). */
+  marks?: number[];
 }
 
 export interface ReadAlong {
@@ -267,7 +269,7 @@ export function createReadAlong(getFactory: () => ReadAlongTargetFactory | null 
         queued = false;
         const pos = last;
         if (!pos || !follow || paused) break;
-        const hit = sentenceAt(pos.pieceText, pos.durationMs, pos.offsetMs);
+        const hit = sentenceAt(pos.pieceText, pos.durationMs, pos.offsetMs, pos.marks);
         const t = targetOf(pos.chapterKey);
         if (!hit || !t) break;
         const key = `${pos.chapterKey}\n${pos.pieceText}\n${hit.index}`;
