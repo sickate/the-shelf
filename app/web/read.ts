@@ -19,6 +19,7 @@ import {
 } from "./lib/reader-prefs";
 import { setChapterSource } from "./lib/chapter-source";
 import { epubChapterSource, mobiChapterSource, pdfChapterSource, textChapter, textChapterAt } from "./lib/chapter-text";
+import { mountPageButtons, scrollPage } from "./lib/page-buttons";
 import { pdfReadAlongFactory } from "./lib/read-along-pdf";
 import { ReadAlongTarget, setReadAlongTarget, windowTextTarget } from "./lib/read-along";
 import { epubReadAlong, mobiReadAlong } from "./lib/read-along-books";
@@ -325,6 +326,7 @@ async function readPdf(sizeBytes: number) {
   }
   toolbar.hidden = false;
 
+  mountPageButtons({ action: () => step(-1), label: () => "上一页" }, { action: () => step(1), label: () => "下一页" });
   document.addEventListener("keydown", (ev) => {
     if ((ev.target as HTMLElement).tagName === "INPUT" || (ev.target as HTMLElement).tagName === "SELECT") return;
     if (ev.key === "ArrowLeft" || ev.key === "PageUp") step(-1);
@@ -470,6 +472,7 @@ async function readEpub() {
     if (cfi) store.set(posKey, cfi);
     showPct(location?.start);
   });
+  mountPageButtons({ action: () => rendition.prev(), label: () => "上一页" }, { action: () => rendition.next(), label: () => "下一页" });
   const onKey = (ev: KeyboardEvent) => {
     if ((ev.target as HTMLElement)?.tagName === "SELECT") return;
     if (ev.key === "ArrowLeft" || ev.key === "PageUp") rendition.prev();
@@ -594,6 +597,13 @@ async function readMobi(format: string) {
     if (typeof fraction === "number") reportProgress(`约 ${Math.round(fraction * 100)}%`);
     if (tocItem?.label) loc.title = String(tocItem.label).trim();
   });
+  // goLeft / goRight are spatial: in RTL books the left button moves forward.
+  const mobiRtl = () => fv.book?.dir === "rtl";
+  const mobiBtns = mountPageButtons(
+    { action: () => fv.goLeft(), label: () => (mobiRtl() ? "下一页" : "上一页") },
+    { action: () => fv.goRight(), label: () => (mobiRtl() ? "上一页" : "下一页") },
+  );
+  fv.addEventListener("load", () => mobiBtns.refresh());
   const onKey = (ev: KeyboardEvent) => {
     const tag = (ev.target as HTMLElement)?.tagName;
     if (tag === "SELECT" || tag === "INPUT") return;
@@ -682,6 +692,7 @@ async function readText() {
   view.replaceChildren(article);
   view.classList.add("text-view");
   const notes = textNotes(id, article, text);
+  mountPageButtons({ action: () => scrollPage(-1), label: () => "上一页" }, { action: () => scrollPage(1), label: () => "下一页" });
   // Plain text always scrolls; the panel restyles the container (colours follow the page theme).
   const TEXT_WIDTH = { narrow: "52em", medium: "42em", wide: "34em" };
   const applyText = () => {
