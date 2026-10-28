@@ -126,6 +126,9 @@ test("create, dedupe, generate, play and budget end to end", async (t) => {
 
   // Pieces: R2 key, budget settled to actual bytes.
   const rows = (await c.db.prepare("SELECT * FROM audio_pieces WHERE job_id = ? ORDER BY seq").bind(job.id).all()).results;
+  // Job view carries each piece's cleaned text.
+  assert.deepEqual(pieces.map((p) => p.text), rows.map((r) => r.text));
+  assert.ok(pieces.every((p) => p.text.length > 0));
   assert.ok(rows.every((r) => r.r2_key === `audio/${job.id}/${r.seq}.mp3` && r.seq % SEQ_GAP === 0));
   assert.ok(rows.every((r) => r.reserved_bytes >= r.size_bytes && r.reserved_bytes === Math.max(65_536, r.text.length * AUDIO_BYTES_PER_CHAR)));
   const total = rows.reduce((a, r) => a + r.size_bytes, 0);

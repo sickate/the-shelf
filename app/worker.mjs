@@ -1794,7 +1794,7 @@ const liveJob = (env, id) => env.DB.prepare(`${LIVE_JOB} AND j.id = ?`).bind(id)
 /** Public job view (matches app/web/lib/audio-api.ts AudioJob). Pending pieces get provisional segments. */
 async function jobView(env, job) {
   const { results } = await env.DB.prepare(
-    "SELECT seq, segment, status, duration_ms, est_ms FROM audio_pieces WHERE job_id = ? AND status != 'split' ORDER BY seq",
+    "SELECT seq, segment, status, duration_ms, est_ms, text FROM audio_pieces WHERE job_id = ? AND status != 'split' ORDER BY seq",
   )
     .bind(job.id)
     .all();
@@ -1808,7 +1808,7 @@ async function jobView(env, job) {
     segMs = s === seg ? segMs + d : d;
     seg = s;
     const out = (segs[s] ??= { index: s, durationMs: 0, pieces: [] });
-    out.pieces.push({ seq: p.seq, durationMs: d, ready });
+    out.pieces.push({ seq: p.seq, durationMs: d, ready, text: p.text ?? "" });
     out.durationMs += d;
   }
   const segments = segs.filter(Boolean).map((s, index) => ({ ...s, index }));

@@ -98,6 +98,12 @@ export function createMockAudioApi(opts: { pieceEveryMs?: number } = {}): AudioA
   const jobs = new Map<string, MockJob>();
   const byChapter = new Map<string, string>();
   const blobUrls = new Map<string, string>();
+  const MOCK_TEXTS = [
+    "清晨的雾还没有散去。他站在窗前，望着远处的山。山上有一座旧塔！那是谁建的呢？",
+    "书架上落满了灰尘。她抽出一本旧书，翻开第一页。字迹已经模糊，却依然温柔。",
+    "雨下了整整一夜。街道安静得出奇！他撑着伞走过桥，心里想着明天的事。你还记得那个约定吗？",
+    "故事就这样开始了。没有人知道结局会是什么。风从海上吹来，带着咸味。",
+  ];
   let counter = 0;
 
   const make = (chapterKey: string, label: string, voice: string): MockJob => {
@@ -129,7 +135,8 @@ export function createMockAudioApi(opts: { pieceEveryMs?: number } = {}): AudioA
       const pieces = durs.map((d) => {
         const ready = age >= j.readyAt[seq];
         if (ready) done++;
-        return { seq: seq++, durationMs: ready ? d : Math.round(d * 1.05), ready };
+        const text = MOCK_TEXTS[seq % MOCK_TEXTS.length];
+        return { seq: seq++, durationMs: ready ? d : Math.round(d * 1.05), ready, text };
       });
       return { index, durationMs: pieces.reduce((a, p) => a + (p.durationMs || 0), 0), pieces };
     });
