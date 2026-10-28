@@ -157,25 +157,39 @@ export async function resolveOutlinePages(pdf: any): Promise<OutlinePage[]> {
   return out;
 }
 
+/** Normalized text of one PDF page ("" when unreadable). */
+export async function pdfPageText(pdf: any, n: number): Promise<string> {
+  try {
+    const page = await pdf.getPage(n);
+    const tc = await page.getTextContent();
+    let text = "";
+    for (const item of tc.items as any[]) {
+      if (typeof item?.str !== "string") continue;
+      text += item.str + (item.hasEOL ? "\n" : "");
+    }
+    page.cleanup();
+    return normalizeText(text);
+  } catch {
+    return ""; // skip unreadable page
+  }
+}
+
 export async function pdfPagesText(pdf: any, start: number, end: number): Promise<string> {
   const parts: string[] = [];
   for (let n = start; n <= end; n++) {
-    try {
-      const page = await pdf.getPage(n);
-      const tc = await page.getTextContent();
-      let text = "";
-      for (const item of tc.items as any[]) {
-        if (typeof item?.str !== "string") continue;
-        text += item.str + (item.hasEOL ? "\n" : "");
-      }
-      page.cleanup();
-      text = normalizeText(text);
-      if (text) parts.push(text);
-    } catch {
-      /* skip unreadable page */
-    }
+    const text = await pdfPageText(pdf, n);
+    if (text) parts.push(text);
   }
   return parts.join("\n\n");
+}
+
+/** Inverse of the `pdf:<start>-<end>` chapter key. */
+export function parsePdfKey(key: string): { start: number; end: number } | null {
+  const m = /^pdf:(\d+)-(\d+)$/.exec(key);
+  if (!m) return null;
+  const start = Number(m[1]);
+  const end = Number(m[2]);
+  return start >= 1 && end >= start ? { start, end } : null;
 }
 
 /** `currentPage` returns the page the reader shows now (first page of a spread). */
