@@ -244,7 +244,7 @@ interface TocEntry {
   label: string;
   depth: number;
 }
-interface TocIdx {
+export interface TocIdx {
   idx: number;
   depth: number;
   label: string;
@@ -281,27 +281,41 @@ export function sectionRangeFor(
   return { from: toc[k].idx, to, label: toc[k].label };
 }
 
-const MAX_SECTIONS = 200;
+export const MAX_SECTIONS = 200;
+
+/**
+ * Inclusive section span a chapter source reads for `currentIdx`: the TOC range, through `last`
+ * when open-ended, capped at MAX_SECTIONS. Calling it again with the returned `from` (what the
+ * chapter key records) yields the same span.
+ */
+export function chapterSpan(toc: TocIdx[], currentIdx: number, last: number): { from: number; to: number; label: string } {
+  const r = sectionRangeFor(toc, currentIdx);
+  return { from: r.from, to: Math.min(r.to ?? last, r.from + MAX_SECTIONS), label: r.label };
+}
 
 // ---------------- EPUB ----------------
+/** EPUB TOC entries mapped to spine indexes. */
+export async function epubTocIdx(book: any): Promise<TocIdx[]> {
+  const nav = await book.loaded.navigation;
+  return flattenToc(nav?.toc).map((t) => {
+    const s = t.href ? book.spine.get(stripFrag(t.href)) : null;
+    return { idx: s ? (s.index as number) : -1, depth: t.depth, label: t.label };
+  });
+}
+
+export const epubLastIndex = (book: any, fallback: number): number =>
+  (book.spine.length ?? book.spine.items?.length ?? fallback + 1) - 1;
+
 export function epubChapterSource(book: any, currentHref: () => string | null): () => Promise<ChapterText | null> {
   let tocIdx: Promise<TocIdx[]> | null = null;
-  const buildToc = async (): Promise<TocIdx[]> => {
-    const nav = await book.loaded.navigation;
-    return flattenToc(nav?.toc).map((t) => {
-      const s = t.href ? book.spine.get(stripFrag(t.href)) : null;
-      return { idx: s ? (s.index as number) : -1, depth: t.depth, label: t.label };
-    });
-  };
   return async () => {
     const href = currentHref();
     if (!href) return null;
     const cur: any = book.spine.get(stripFrag(href));
     if (!cur) return null;
-    tocIdx ??= buildToc();
-    const r = sectionRangeFor(await tocIdx, cur.index);
-    const last = (book.spine.length ?? book.spine.items?.length ?? r.from + 1) - 1;
-    const to = Math.min(r.to ?? last, r.from + MAX_SECTIONS);
+    tocIdx ??= epubTocIdx(book);
+    const r = chapterSpan(await tocIdx, cur.index, epubLastIndex(book, cur.index));
+    const to = r.to;
     const parts: string[] = [];
     let len = 0;
     for (let i = r.from; i <= to && len <= MAX_CHAPTER_CHARS; i++) {
@@ -325,28 +339,30 @@ export function epubChapterSource(book: any, currentHref: () => string | null): 
 }
 
 // ---------------- MOBI / AZW (foliate) ----------------
+/** foliate TOC entries mapped to section indexes. */
+export async function mobiTocIdx(fv: any): Promise<TocIdx[]> {
+  const out: TocIdx[] = [];
+  for (const t of flattenToc(fv.book?.toc)) {
+    let idx = -1;
+    try {
+      if (t.href) idx = Number((await fv.book.resolveHref(t.href))?.index ?? -1);
+    } catch {
+      /* unresolved */
+    }
+    out.push({ idx: Number.isFinite(idx) ? idx : -1, depth: t.depth, label: t.label });
+  }
+  return out;
+}
+
 export function mobiChapterSource(fv: any): () => Promise<ChapterText | null> {
   let tocIdx: Promise<TocIdx[]> | null = null;
-  const buildToc = async (): Promise<TocIdx[]> => {
-    const out: TocIdx[] = [];
-    for (const t of flattenToc(fv.book?.toc)) {
-      let idx = -1;
-      try {
-        if (t.href) idx = Number((await fv.book.resolveHref(t.href))?.index ?? -1);
-      } catch {
-        /* unresolved */
-      }
-      out.push({ idx: Number.isFinite(idx) ? idx : -1, depth: t.depth, label: t.label });
-    }
-    return out;
-  };
   return async () => {
     const book = fv.book;
     const index = fv.lastLocation?.index;
     if (!book || typeof index !== "number") return null;
-    tocIdx ??= buildToc();
-    const r = sectionRangeFor(await tocIdx, index);
-    const to = Math.min(r.to ?? book.sections.length - 1, r.from + MAX_SECTIONS);
+    tocIdx ??= mobiTocIdx(fv);
+    const r = chapterSpan(await tocIdx, index, book.sections.length - 1);
+    const to = r.to;
     const parts: string[] = [];
     let len = 0;
     for (let i = r.from; i <= to && len <= MAX_CHAPTER_CHARS; i++) {
