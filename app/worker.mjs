@@ -2384,10 +2384,14 @@ export async function audioPieceFailed(env, jobId, seq, message) {
   if (!p || p.status !== "pending") return { ok: true };
   const code = errorCode(message);
   const rounds = p.attempts + 1;
-  const cpu = CPU_ERROR.test(code);
+  // qwen-audio jobs (binary frames, no base64 decoding): only a real CPU-limit signal splits pieces and
+  // lowers the global piece length; the client's own tts_* connection/protocol errors never do, and a
+  // repeated failure just retries. Legacy realtime jobs keep the A1 rule (CPU signal or 2 failed rounds).
+  const qwenAudio = isQwenAudioModel(job.tts_model ?? LEGACY_TTS_MODEL);
+  const cpu = qwenAudio ? !/^tts_/.test(code) && CPU_ERROR.test(code) : CPU_ERROR.test(code);
   const splittable = p.text.length > AUDIO_PIECE_MIN && p.seq % SEQ_GAP === 0;
   const now = nowIso();
-  if (splittable && (cpu || rounds >= 2)) {
+  if (splittable && (cpu || (!qwenAudio && rounds >= 2))) {
     const reason = cpu ? "cpu_limit" : "repeated_failure";
     const targets = longR.results.some((r) => r.seq === seq) ? longR.results : [p, ...longR.results];
     const rows = [];

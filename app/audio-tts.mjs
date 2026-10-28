@@ -364,15 +364,48 @@ export function compactMarks(text, marks, maxBytes = MARKS_MAX_BYTES) {
 
 // ---------------- DashScope inference (qwen-audio) ----------------
 
-const binaryOf = (d) =>
-  d instanceof ArrayBuffer ? new Uint8Array(d) : ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : null;
+const typeName = (d) => Object.prototype.toString.call(d).slice(8, -1);
+/** Compact [a-z0-9] tag of a frame's type for diagnostics (e.g. "arraybuffer", "blob", "uint8array"). */
+export const frameTag = (d) => typeName(d).toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 16) || "unknown";
+
+/**
+ * Bytes of a binary frame without relying on `instanceof` (the runtime's realm may differ): ArrayBuffer
+ * (or SharedArrayBuffer), any ArrayBuffer view, or an ArrayBuffer-like with byteLength. Blob → null.
+ */
+export function frameBytes(d) {
+  if (d == null || typeof d !== "object") return null;
+  const t = typeName(d);
+  if (t === "ArrayBuffer" || t === "SharedArrayBuffer") return new Uint8Array(d);
+  if (ArrayBuffer.isView(d) || (d.buffer && typeof d.byteOffset === "number" && typeof d.byteLength === "number")) {
+    try {
+      return new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+    } catch {}
+  }
+  if (typeof d.byteLength === "number" && typeof d.arrayBuffer !== "function") {
+    try {
+      return new Uint8Array(d);
+    } catch {}
+  }
+  return null;
+}
+
+/** Bytes of a binary frame; Blob-like frames are read asynchronously. */
+async function readFrame(d) {
+  const b = frameBytes(d);
+  if (b) return b;
+  if (d && typeof d.arrayBuffer === "function") return new Uint8Array(await d.arrayBuffer());
+  return null;
+}
 
 /**
  * Synthesizes one piece with a qwen-audio model. Resolves {audio: Uint8Array, billedChars, durationMs,
- * marks, frames}; rejects with TtsError (tts_handshake_timeout, tts_timeout, tts_closed_<code>,
- * tts_ws_error, tts_error_<code> for task-failed, tts_no_audio, tts_bad_audio, ...). Audio arrives as
- * binary frames (no base64); JSON frames carry events. `instruction` is sent only when given. The key
- * is only sent in the Authorization header and never appears in errors.
+ * marks, frames}; rejects with TtsError (tts_handshake_timeout_s<status>_f<frames>, tts_timeout,
+ * tts_closed_<code>, tts_ws_error, tts_error_<code> for task-failed, tts_no_audio_b<binary frames>_<type
+ * tag>_j<json frames>, tts_bad_audio, ...). Audio arrives as binary frames (no base64): ArrayBuffer,
+ * views and Blobs are accepted; a binary frame holding JSON is treated as an event. Frames are handled
+ * strictly in arrival order through a promise queue, so task-finished / close are processed only after
+ * earlier (possibly async Blob) frames. `instruction` is sent only when given. The key is only sent in
+ * the Authorization header and never appears in errors.
  */
 export async function synthesizeQwenAudio(
   key,
@@ -407,6 +440,9 @@ export async function synthesizeQwenAudio(
   ws.accept();
   const chunks = [];
   let total = 0;
+  let binFrames = 0;
+  let jsonFrames = 0;
+  let binTag = "";
   let billedChars = null;
   let startedTask = false;
   let finished = false;
@@ -422,25 +458,42 @@ export async function synthesizeQwenAudio(
         else resolve();
       };
       const handshake = timers.setTimeout(
-        () => !startedTask && finish(new TtsError("tts_handshake_timeout")),
+        () =>
+          !startedTask &&
+          finish(new TtsError(`tts_handshake_timeout_s${safeCode(resp.status)}_f${binFrames + jsonFrames}`)),
         Math.max(1, HANDSHAKE_MS - (Date.now() - started)),
       );
       const overall = timers.setTimeout(() => finish(new TtsError("tts_timeout")), TOTAL_MS);
-      ws.addEventListener("message", (m) => {
-        if (typeof m.data !== "string") {
-          const b = binaryOf(m.data);
-          if (b?.length) {
-            chunks.push(b);
-            total += b.length;
-          }
-          return;
+      let queue = Promise.resolve();
+      const enqueue = (fn) => {
+        queue = queue.then(fn).catch(() => finish(new TtsError("tts_frame_error")));
+      };
+      const onBinary = async (d) => {
+        binFrames++;
+        binTag ||= frameTag(d);
+        const b = await readFrame(d);
+        if (!b?.length) return;
+        // MP3 data starts with 0xFF or "ID3", never "{": such a frame is a JSON event sent as binary.
+        if (b[0] === 0x7b) {
+          try {
+            const ev = JSON.parse(new TextDecoder().decode(b));
+            if (ev?.header) return onEvent(ev);
+          } catch {}
         }
+        chunks.push(b);
+        total += b.length;
+      };
+      const onText = (data) => {
         let ev;
         try {
-          ev = JSON.parse(m.data);
+          ev = JSON.parse(data);
         } catch {
           return;
         }
+        onEvent(ev);
+      };
+      const onEvent = (ev) => {
+        jsonFrames++;
         const h = ev?.header ?? {};
         switch (h.event) {
           case "task-started":
@@ -467,9 +520,14 @@ export async function synthesizeQwenAudio(
             finish(new TtsError(`tts_error_${safeCode(h.error_code)}`));
             break;
         }
+      };
+      ws.addEventListener("message", (m) => {
+        const d = m?.data;
+        if (typeof d === "string") enqueue(() => onText(d));
+        else enqueue(() => onBinary(d));
       });
-      ws.addEventListener("close", (e) => finish(finished ? undefined : new TtsError(`tts_closed_${safeCode(e?.code)}`)));
-      ws.addEventListener("error", () => finish(finished ? undefined : new TtsError("tts_ws_error")));
+      ws.addEventListener("close", (e) => enqueue(() => finish(finished ? undefined : new TtsError(`tts_closed_${safeCode(e?.code)}`))));
+      ws.addEventListener("error", () => enqueue(() => finish(finished ? undefined : new TtsError("tts_ws_error"))));
       send({
         header: header("run-task"),
         payload: { task_group: "audio", task: "tts", function: "SpeechSynthesizer", model, parameters, input: {} },
@@ -480,7 +538,7 @@ export async function synthesizeQwenAudio(
       ws.close(1000, "done");
     } catch {}
   }
-  if (!total) throw new TtsError("tts_no_audio");
+  if (!total) throw new TtsError(`tts_no_audio_b${binFrames}_${binTag || "none"}_j${jsonFrames}`);
   const audio = concat(chunks, total);
   if (!looksLikeMp3(audio)) throw new TtsError("tts_bad_audio");
   const info = mp3Info(audio);

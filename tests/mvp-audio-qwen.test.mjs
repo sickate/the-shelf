@@ -5,6 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_STYLE } from "../app/audio-text.mjs";
 import {
   INFERENCE_URL,
+  frameBytes,
+  frameTag,
   MARKS_MAX_BYTES,
   TtsError,
   alignMarks,
@@ -173,14 +175,27 @@ test("qwen-audio client failures", async () => {
   });
   fetchImpl.script = (e, ws) => e.header.action === "run-task" && ws.json(ev("task-started"));
   await rejects("tts_timeout", { timers: fast((ms) => ms === 90_000) });
+  // Handshake timeout reports the upgrade status and how many frames arrived (none / an unparsable one).
   fetchImpl.script = () => {};
-  await rejects("tts_handshake_timeout", { timers: fast((ms) => ms < 90_000) });
+  await rejects("tts_handshake_timeout_s101_f0", { timers: fast((ms) => ms < 90_000) });
+  fetchImpl.script = (e, ws) => e.header.action === "run-task" && ws.binary(new Uint8Array([1, 2, 3]));
+  await rejects("tts_handshake_timeout_s101_f1", { timers: fast((ms) => ms < 90_000) });
   // Finished without audio / not MP3.
   fetchImpl.script = (e, ws) => {
     if (e.header.action === "run-task") ws.json(ev("task-started"));
     if (e.header.action === "finish-task") ws.json(ev("task-finished", { usage: { characters: 1 } }));
   };
-  await rejects("tts_no_audio");
+  await rejects("tts_no_audio_b0_none_j2");
+  // Unrecognized binary frame types are counted and tagged.
+  fetchImpl.script = (e, ws) => {
+    if (e.header.action === "run-task") ws.json(ev("task-started"));
+    if (e.header.action === "finish-task") {
+      ws.emit("message", { data: { foo: 1 } });
+      ws.emit("message", { data: { foo: 2 } });
+      ws.json(ev("task-finished", { usage: { characters: 1 } }));
+    }
+  };
+  await rejects("tts_no_audio_b2_object_j2");
   fetchImpl.script = okScript(new TextEncoder().encode("RIFF0000WAVEfmt " + "x".repeat(200)));
   await rejects("tts_bad_audio");
   fetchImpl.script = okScript(new Uint8Array([0xff, 0xf3, 0xf0, 0, ...new Uint8Array(300)])); // sync but no valid frame
@@ -444,4 +459,103 @@ test("0008 migration: old rows default to auto / NULL model; the live unique key
   }
   const idx = (d) => d.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'audio_jobs' ORDER BY name").all().map((r) => ({ ...r }));
   assert.deepEqual(idx(fresh), idx(db));
+});
+
+// ---------------- Workers frame types (2026-10-28 live failure: tts_no_audio) ----------------
+
+test("binary frames: Blob, ArrayBuffer, views and JSON-as-binary, kept in arrival order", async () => {
+  const audio = mp3Frames(Array(60).fill(8), { id3: 10 });
+  const parts = [audio.subarray(0, 50), audio.subarray(50, 300), audio.subarray(300, 700), audio.subarray(700)];
+  // A Blob whose read resolves late: later frames and task-finished must wait for it.
+  const slowBlob = (u8) => {
+    const b = new Blob([u8]);
+    return { arrayBuffer: () => new Promise((r) => setTimeout(() => r(b.arrayBuffer()), 20)), size: u8.length };
+  };
+  const enc = (o) => new TextEncoder().encode(JSON.stringify(o));
+  const fetchImpl = fetchWith((e, ws) => {
+    if (e.header.action === "run-task") ws.emit("message", { data: buf(enc(ev("task-started"))) }); // JSON event as binary
+    if (e.header.action === "finish-task") {
+      ws.emit("message", { data: slowBlob(parts[0]) });
+      ws.emit("message", { data: new Blob([parts[1]]) });
+      ws.emit("message", { data: buf(parts[2]) });
+      ws.emit("message", { data: new DataView(parts[3].buffer, parts[3].byteOffset, parts[3].byteLength) });
+      ws.json(sentence("sentence-end", [{ text: "好", begin_time: 80 }]));
+      ws.json(ev("task-finished", { usage: { characters: 2 } }));
+      ws.emit("close", { code: 1000 });
+    }
+  });
+  const r = await synthesizeQwenAudio("k", { text: "好" }, { fetchImpl });
+  assert.deepEqual(r.audio, audio);
+  assert.equal(r.frames, 4);
+  assert.equal(r.durationMs, 60 * 24);
+  assert.deepEqual(r.marks, [0, 80]);
+  // A close that arrives while a Blob is still being read does not pre-empt task-finished.
+  const late = fetchWith((e, ws) => {
+    if (e.header.action === "run-task") ws.json(ev("task-started"));
+    if (e.header.action === "finish-task") {
+      ws.emit("message", { data: slowBlob(audio) });
+      ws.json(ev("task-finished", { usage: { characters: 2 } }));
+      ws.emit("close", { code: 1006 });
+    }
+  });
+  assert.deepEqual((await synthesizeQwenAudio("k", { text: "好" }, { fetchImpl: late })).audio, audio);
+});
+
+test("frame helpers: duck-typed bytes and sanitized type tags", () => {
+  const u8 = new Uint8Array([1, 2, 3]);
+  assert.deepEqual(frameBytes(u8.buffer), u8);
+  assert.deepEqual(frameBytes(new DataView(u8.buffer, 1, 2)), new Uint8Array([2, 3]));
+  assert.deepEqual(frameBytes(new Uint16Array([0x0201])), new Uint8Array([1, 2]));
+  assert.equal(frameBytes(new Blob([u8])), null);
+  assert.equal(frameBytes(null), null);
+  assert.equal(frameBytes("x"), null);
+  assert.equal(frameTag(u8.buffer), "arraybuffer");
+  assert.equal(frameTag(new Blob([u8])), "blob");
+  assert.equal(frameTag(u8), "uint8array");
+  assert.equal(frameTag({ [Symbol.toStringTag]: "Weird Type!<x>" }), "weirdtypex");
+  assert.equal(frameTag(undefined), "undefined");
+});
+
+const LONG = ("这是一个足够长的句子，用来测试连接失败时不会降级" + "，继续".repeat(12) + "。").repeat(4);
+
+test("qwen-audio jobs: tts_* connection errors retry without splitting or the global downgrade", async (t) => {
+  const c = await audioSetup(t);
+  const errors = ["tts_upgrade_520", "tts_handshake_timeout_s101_f0", "tts_no_audio_b0_none_j3", "tts_error_Throttling.RateQuota.exceeded"];
+  let n = 0;
+  const synth = fakeSynth({ fail: () => (n < 12 ? new Error(errors[n++ % errors.length]) : null) });
+  const { job } = await (await c.create({ chapterKey: "long", text: LONG })).json();
+  await drain(c.env, synth);
+  const v = await c.getJob(job.id);
+  const rows = (await c.db.prepare("SELECT status, error FROM audio_pieces WHERE job_id = ?").bind(job.id).all()).results;
+  assert.ok(rows.every((r) => r.status !== "split"), JSON.stringify(rows));
+  assert.equal(v.cpuDowngraded, false);
+  assert.equal(v.pieceChars, 200);
+  const settings = await c.db.prepare("SELECT piece_chars, downgrade_reason FROM audio_settings WHERE id = 1").first();
+  assert.deepEqual({ ...settings }, { piece_chars: 200, downgrade_reason: null });
+  // 3 rounds of 3 attempts all failed on the first piece → the job fails with the last code.
+  assert.equal(v.status, "failed");
+  assert.match(v.error, /^tts_failed: tts_/);
+});
+
+test("qwen-audio jobs: a real CPU-limit signal still splits; legacy jobs keep the repeated-failure rule", async (t) => {
+  const c = await audioSetup(t);
+  const cpu = fakeSynth({ fail: (s) => (s.length > 120 ? new Error("Worker exceeded CPU time limit.") : null) });
+  const a = (await (await c.create({ chapterKey: "cpu", text: LONG })).json()).job;
+  await drain(c.env, cpu);
+  const va = await c.getJob(a.id);
+  assert.equal(va.status, "ready");
+  assert.equal(va.cpuDowngraded, true);
+  assert.equal((await c.db.prepare("SELECT downgrade_reason FROM audio_settings WHERE id = 1").first()).downgrade_reason, "cpu_limit");
+
+  // Legacy (tts_model NULL): two failed rounds of a connection error split the piece (A1 rule unchanged).
+  await c.db.prepare("UPDATE audio_settings SET piece_chars = 200, downgrade_reason = NULL WHERE id = 1").run();
+  const b = (await (await c.create({ chapterKey: "legacy", text: LONG })).json()).job;
+  await c.db.prepare("UPDATE audio_jobs SET tts_model = NULL WHERE id = ?").bind(b.id).run();
+  let drops = 6;
+  const flaky = fakeSynth({ fail: () => (drops-- > 0 ? new Error("tts_closed_1006") : null) });
+  await drain(c.env, flaky);
+  const vb = await c.getJob(b.id);
+  assert.equal(vb.status, "ready", vb.error);
+  assert.equal(vb.cpuDowngraded, true);
+  assert.equal((await c.db.prepare("SELECT downgrade_reason FROM audio_settings WHERE id = 1").first()).downgrade_reason, "repeated_failure");
 });
