@@ -19,6 +19,7 @@ import {
 } from "./lib/reader-prefs";
 import { setChapterSource } from "./lib/chapter-source";
 import { epubChapterSource, mobiChapterSource, pdfChapterSource, textChapter, textChapterAt } from "./lib/chapter-text";
+import { pdfReadAlongFactory } from "./lib/read-along-pdf";
 import { ReadAlongTarget, setReadAlongTarget, windowTextTarget } from "./lib/read-along";
 import { audioAvailable, audioButton } from "./lib/audio-reader";
 import { epubNotes, mobiNotes, pdfNotes, textNotes } from "./lib/reader-notes";
@@ -265,12 +266,15 @@ async function readPdf(sizeBytes: number) {
       hideLoading();
     }
   }
-  const go = (n: number) => {
+  const userPageCbs: (() => void)[] = [];
+  // user=false is for programmatic jumps (read-along), which must not fire onUserPage.
+  const go = (n: number, user = true) => {
     const next = spreadStart(n, total, isDouble());
     if (next !== pageNum) {
       pageNum = next;
       render();
       wrap.scrollTop = 0;
+      if (user) for (const cb of userPageCbs) cb();
     }
   };
   const step = (dir: 1 | -1) => go(stepSpread(pageNum, total, isDouble(), dir));
@@ -337,6 +341,7 @@ async function readPdf(sizeBytes: number) {
   await render();
   void notes.start();
   setChapterSource(pdfChapterSource(pdf, () => pageNum));
+  setReadAlongTarget(pdfReadAlongFactory(pdf, { goTo: (n) => go(n, false), onUserPage: (cb) => userPageCbs.push(cb) }));
 
   // Outline (TOC)
   try {
