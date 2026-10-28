@@ -4,6 +4,7 @@
 import { el, store } from "./common";
 import { reportProgress } from "./recent";
 import { CbzError, openCbz } from "./cbz";
+import { mountPageButtons } from "./page-buttons";
 
 export interface ComicContext {
   view: HTMLElement;
@@ -198,6 +199,10 @@ export async function readComic(ctx: ComicContext): Promise<void> {
     }
   }
 
+  mountPageButtons(
+    { action: left, label: () => (dir === "rtl" ? "下一页" : "上一页") },
+    { action: right, label: () => (dir === "rtl" ? "上一页" : "下一页") },
+  );
   wrap.addEventListener("click", (ev) => {
     if (window.getSelection()?.toString()) return;
     const r = wrap.getBoundingClientRect();
