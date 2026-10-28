@@ -99,3 +99,24 @@ test("findSentence: shorter prefix fallback and null when absent", () => {
   assert.equal(R.findSentence(hay, "完全不相干的句子。", 0), null);
   assert.equal(R.findSentence(hay, "。。", 0), null);
 });
+
+test("findNear: backward seek picks the earlier copy, not a far later duplicate", () => {
+  const filler = "无关的叙述文字".repeat(300); // > NEAR_CHARS
+  const hay = R.normalize(`他终于开口说话了。${filler}中间。${filler}他终于开口说话了。`).text;
+  const later = hay.lastIndexOf("他终于开口说话了");
+  const cursor = hay.indexOf("中间"); // past the first copy, far before the second
+  assert.ok(later - cursor > R.NEAR_CHARS);
+  assert.equal(R.findNear(hay, "他终于开口说话了。", "", cursor).start, 0);
+});
+
+test("findNear: a short sentence is found near the cursor, not a far later copy", () => {
+  const filler = "别的内容".repeat(500);
+  const hay = R.normalize(`是的。开头。问他。是的。${filler}是的。`).text;
+  const cursor = hay.indexOf("问他");
+  const hit = R.findNear(hay, "是的。", "", cursor);
+  assert.equal(hit.start, hay.indexOf("是的", cursor));
+  assert.ok(hit.start - cursor < 10);
+  // Sentence missing: falls back to the piece's first sentence, again near first.
+  assert.equal(R.findNear(hay, "不存在。", "问他。", 0).start, cursor);
+  assert.equal(R.findNear(hay, "不存在。", "也不存在。", 0), null);
+});
