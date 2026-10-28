@@ -36,11 +36,11 @@ test("page index maps offsets to pages and skips empty pages", () => {
 
 test("search: cursor prefers the later duplicate; falls back to chapter start", () => {
   const idx = P.buildPageIndex(pages);
-  assert.equal(P.searchPage(idx, "春天来了，花开满园。", 0).page, 5);
-  assert.equal(P.searchPage(idx, "春天来了，花开满园。", idx.starts[1]).page, 7);
-  assert.equal(P.searchPage(idx, "孩子们在草地上奔跑。", idx.text.length).page, 5);
-  assert.equal(P.searchPage(idx, "完全不存在的句子", 0), null);
-  assert.equal(P.searchPage(idx, "", 0), null);
+  assert.equal(P.searchPage(idx, "春天来了，花开满园。", "", 0).page, 5);
+  assert.equal(P.searchPage(idx, "春天来了，花开满园。", "", idx.starts[1]).page, 7);
+  assert.equal(P.searchPage(idx, "孩子们在草地上奔跑。", "", idx.text.length).page, 5);
+  assert.equal(P.searchPage(idx, "完全不存在的句子", "", 0), null);
+  assert.equal(P.searchPage(idx, "", "", 0), null);
 });
 
 test("factory: key parsing, caching, page turn, user vs programmatic navigation", async () => {

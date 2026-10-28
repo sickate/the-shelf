@@ -1,11 +1,9 @@
 // Read-along adapter for PDF: page turn only (no text layer, so no highlight).
 // The chapter key is `pdf:<start>-<end>` (see pdfChapterSource); we index the same pages with the same
 // text extraction, so a sentence found in the concatenated text maps back to its page.
-import { findSentence, normalize } from "./read-along-core";
+import { findNear, normalize } from "./read-along-core";
 import type { ReadAlongTarget } from "./read-along";
 import { parsePdfKey, pdfPageText } from "./chapter-text";
-
-const NEAR_WINDOW = 1500;
 
 /** Reader hooks provided by read.ts. goTo must not itself count as user navigation. */
 export interface PdfReaderHook {
@@ -47,15 +45,15 @@ export function pageAt(idx: PageIndex, pos: number): number | null {
   return idx.pages[lo];
 }
 
-/** Search near the cursor first (≈1500 chars), then the whole chapter from the start. */
+/** Search near the cursor, then the whole chapter (findNear), and map the hit to its page. */
 export function searchPage(
   idx: PageIndex,
   sentence: string,
+  first: string,
   cursor: number,
 ): { start: number; end: number; page: number } | null {
-  if (!sentence) return null;
-  const near = idx.text.slice(0, Math.min(idx.text.length, cursor + NEAR_WINDOW));
-  const hit = findSentence(near, sentence, cursor) ?? findSentence(idx.text, sentence, 0);
+  if (!sentence && !first) return null;
+  const hit = findNear(idx.text, sentence, first, cursor);
   if (!hit) return null;
   const page = pageAt(idx, hit.start);
   return page == null ? null : { ...hit, page };
@@ -89,7 +87,7 @@ export function pdfReadAlongFactory(pdf: any, hook: PdfReaderHook): (key: string
     return {
       async show(sentence, pieceFirstSentence) {
         const idx = await getIndex();
-        const hit = searchPage(idx, sentence, cursor) ?? (pieceFirstSentence ? searchPage(idx, pieceFirstSentence, cursor) : null);
+        const hit = searchPage(idx, sentence, pieceFirstSentence, cursor);
         if (!hit) return false;
         cursor = hit.end;
         navigating = true;
