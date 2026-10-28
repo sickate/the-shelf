@@ -20,6 +20,7 @@ import {
 import { setChapterSource } from "./lib/chapter-source";
 import { epubChapterSource, mobiChapterSource, pdfChapterSource, textChapter, textChapterAt } from "./lib/chapter-text";
 import { ReadAlongTarget, setReadAlongTarget, windowTextTarget } from "./lib/read-along";
+import { epubReadAlong, mobiReadAlong } from "./lib/read-along-books";
 import { audioAvailable, audioButton } from "./lib/audio-reader";
 import { epubNotes, mobiNotes, pdfNotes, textNotes } from "./lib/reader-notes";
 
@@ -482,6 +483,7 @@ async function readEpub() {
   hideLoading();
   void notes.start();
   setChapterSource(epubChapterSource(book, () => (rendition as any).currentLocation?.()?.start?.href ?? null));
+  setReadAlongTarget(epubReadAlong(book, rendition, area));
 
   book.loaded.navigation.then((nav: any) => {
     const opts: HTMLOptionElement[] = [el("option", { value: "" }, "目录")];
@@ -609,6 +611,7 @@ async function readMobi(format: string) {
   hideLoading();
   void notes.start();
   setChapterSource(mobiChapterSource(fv));
+  setReadAlongTarget(mobiReadAlong(fv));
 
   const opts: HTMLOptionElement[] = [el("option", { value: "" }, "目录")];
   const walk = (items: any[], depth: number) => {
