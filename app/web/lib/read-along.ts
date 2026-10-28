@@ -8,7 +8,7 @@
 //   via highlightRange(doc, range). Keep a cursor (last hit) so repeats are found in order.
 // - Programmatic navigation must not trigger onUserNavigate; only real user scrolls/page turns do.
 // - TextIndex and highlightRange take any Node/Document, so they work inside epub/foliate iframes.
-import { findSentence, normalize, sentenceAt } from "./read-along-core";
+import { findNear, normalize, sentenceAt } from "./read-along-core";
 import { store } from "./common";
 
 export interface ReadAlongTarget {
@@ -131,13 +131,13 @@ export function highlightRange(doc: Document, range: Range | null): boolean {
 
 // ---------------- Search helper shared by adapters ----------------
 /**
- * Finds `sentence` (else `first`) in index.text[from, to) starting at `cursor` (normalized,
- * absolute). Returns absolute normalized [start, end) or null.
+ * Finds `sentence` (else `first`) in index.text[from, to): near `cursor` (normalized, absolute)
+ * first, then the whole range (see findNear). Returns absolute normalized [start, end) or null.
  */
 export function locateIn(index: TextIndex, from: number, to: number, cursor: number, sentence: string, first: string) {
   const hay = index.text.slice(from, to);
   const rel = Math.max(0, cursor - from);
-  const hit = findSentence(hay, sentence, rel) ?? (first && first !== sentence ? findSentence(hay, first, rel) : null);
+  const hit = findNear(hay, sentence, first, rel);
   return hit ? { start: hit.start + from, end: hit.end + from } : null;
 }
 

@@ -161,3 +161,23 @@ function backward(h: string, needle: string, k: number, pos: number): { matched:
   }
   return { matched: k - 1 - j, start };
 }
+
+/** Normalized chars after the cursor searched before falling back to the whole chapter. */
+export const NEAR_CHARS = 1500;
+
+/**
+ * Cursor-aware lookup: `sentence` (else `first`) within NEAR_CHARS after `cursor`, then over the
+ * whole haystack from its start — so a backward seek or a short sentence never jumps to a far
+ * later duplicate.
+ */
+export function findNear(hay: string, sentence: string, first: string, cursor: number, near = NEAR_CHARS) {
+  const rel = Math.min(Math.max(0, cursor | 0), hay.length);
+  const one = (s: string) => {
+    // Let the end match run past the window edge; only the start must fall inside it.
+    const win = hay.slice(rel, rel + near + Math.ceil(normalize(s).text.length * 1.6));
+    const a = findSentence(win, s, 0);
+    if (a && a.start < near) return { start: a.start + rel, end: a.end + rel };
+    return findSentence(hay, s, 0);
+  };
+  return one(sentence) ?? (first && first !== sentence ? one(first) : null);
+}
