@@ -4,7 +4,7 @@ export type AudioStatus = "queued" | "cleaning" | "synthesizing" | "ready" | "fa
 export const VOICES = ["Cherry", "Ethan", "Jennifer", "Ryan", "Katerina", "Elias"] as const;
 export const DEFAULT_VOICE = "Cherry";
 
-export interface AudioPiece { seq: number; durationMs: number | null; ready: boolean }
+export interface AudioPiece { seq: number; durationMs: number | null; ready: boolean; /** Cleaned text of the piece (read-along). */ text?: string }
 export interface AudioSegment { index: number; durationMs: number | null; pieces: AudioPiece[] }
 export interface AudioJob {
   id: string;
