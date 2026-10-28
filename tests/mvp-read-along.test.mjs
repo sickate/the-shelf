@@ -52,6 +52,31 @@ test("starts are monotonic, start at 0 and the last is < duration", () => {
   assert.deepEqual(R.sentenceStarts(["a。"], 0), [0]);
 });
 
+test("sentenceAt uses word marks when present and falls back to the estimate", () => {
+  const text = "甲乙丙丁。戊己庚辛。";
+  // Second sentence starts at offset 5; its first word mark says 1000 ms (estimate would be 4000).
+  const marks = [0, 0, 2, 300, 5, 1000, 7, 1500];
+  assert.equal(R.sentenceAt(text, 8000, 999, marks).index, 0);
+  assert.equal(R.sentenceAt(text, 8000, 1000, marks).index, 1);
+  assert.equal(R.sentenceAt(text, 8000, 3999, marks).index, 1);
+  // First mark with offset >= sentence start applies even if not exactly at the start.
+  assert.equal(R.sentenceAt(text, 8000, 1200, [0, 0, 6, 1200]).index, 1);
+  // No mark applies to the second sentence -> estimate (4000).
+  assert.equal(R.sentenceAt(text, 8000, 3999, [0, 0, 2, 300]).index, 0);
+  assert.equal(R.sentenceAt(text, 8000, 4000, [0, 0, 2, 300]).index, 1);
+  // Empty / absent marks keep the old behaviour.
+  assert.equal(R.sentenceAt(text, 8000, 4000, []).index, 1);
+  assert.equal(R.sentenceAt(text, 8000, 3999, undefined).index, 0);
+});
+
+test("sentenceStartsFromMarks stays non-decreasing", () => {
+  const t = "甲乙。丙丁。戊己。";
+  const ss = R.splitSentences(t);
+  assert.deepEqual(R.sentenceOffsets(t, ss), [0, 3, 6]);
+  const starts = R.sentenceStartsFromMarks(t, ss, [0, 0, 3, 3000, 6, 1000], R.sentenceStarts(ss, 6000));
+  assert.deepEqual(starts, [0, 3000, 3000]);
+});
+
 test("sentenceAt picks the sentence by time", () => {
   const text = "甲乙丙丁。戊己庚辛。";
   assert.deepEqual(R.sentenceAt(text, 8000, 0), { index: 0, sentence: "甲乙丙丁。", first: "甲乙丙丁。" });

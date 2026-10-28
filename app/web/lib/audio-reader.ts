@@ -1,4 +1,4 @@
-import { audioMockEnabled, getAudioApi } from "./audio-api";
+import { audioMockEnabled, getAudioApi, savedTone, savedVoice } from "./audio-api";
 import { AudioPlayer, createAudioPlayer } from "./audio-player";
 import { getChapterSource } from "./chapter-source";
 import { el, errorText } from "./common";
@@ -38,9 +38,10 @@ export function audioButton(bookId: string, bookTitle: string): HTMLButtonElemen
       const ch = await source();
       if (!ch || !ch.text.trim()) return say("本章没有可朗读的文字");
       if (player?.isOpenFor(ch.chapterKey)) return player.togglePlay();
-      let job = await api.find(bookId, ch.chapterKey);
+      const pref = { voice: savedVoice(), tone: savedTone() };
+      let job = await api.find(bookId, ch.chapterKey, pref);
       if (!job) {
-        job = await api.create(bookId, { chapterKey: ch.chapterKey, label: ch.label, text: ch.text });
+        job = await api.create(bookId, { chapterKey: ch.chapterKey, label: ch.label, text: ch.text, ...pref });
         say(ch.truncated ? `章节过长，从当前位置朗读前 30 万字：${ch.label}` : `开始生成：${ch.label}`);
       }
       if (!player) {

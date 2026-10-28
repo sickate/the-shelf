@@ -68,11 +68,47 @@ export interface SentenceHit {
   first: string;
 }
 
+/** UTF-16 offset of each sentence (as returned by splitSentences) within the piece text. */
+export function sentenceOffsets(pieceText: string, sentences: string[]): number[] {
+  const out: number[] = [];
+  let from = 0;
+  for (const s of sentences) {
+    const at = pieceText.indexOf(s, from);
+    out.push(at >= 0 ? at : from);
+    if (at >= 0) from = at + s.length;
+  }
+  return out;
+}
+
+/**
+ * Sentence start times from word marks ([charOffset, ms, ...] flattened): the ms of the first mark
+ * whose charOffset >= the sentence offset; sentences with no applicable mark keep the estimate.
+ * Result is made non-decreasing.
+ */
+export function sentenceStartsFromMarks(pieceText: string, sentences: string[], marks: readonly number[], estimate: number[]): number[] {
+  const offs = sentenceOffsets(pieceText, sentences);
+  const out: number[] = [];
+  let prev = 0;
+  for (let i = 0; i < sentences.length; i++) {
+    let t = estimate[i];
+    for (let k = 0; k + 1 < marks.length; k += 2) {
+      if (marks[k] >= offs[i]) {
+        if (Number.isFinite(marks[k + 1])) t = marks[k + 1];
+        break;
+      }
+    }
+    prev = Math.max(prev, t);
+    out.push(prev);
+  }
+  return out;
+}
+
 /** The sentence being read at `offsetMs` into a piece; null when the piece has no text. */
-export function sentenceAt(pieceText: string, durationMs: number, offsetMs: number): SentenceHit | null {
+export function sentenceAt(pieceText: string, durationMs: number, offsetMs: number, marks?: readonly number[]): SentenceHit | null {
   const ss = splitSentences(pieceText);
   if (!ss.length) return null;
-  const starts = sentenceStarts(ss, durationMs);
+  const est = sentenceStarts(ss, durationMs);
+  const starts = marks && marks.length >= 2 ? sentenceStartsFromMarks(pieceText, ss, marks, est) : est;
   let index = 0;
   for (let i = 0; i < starts.length; i++) if (starts[i] <= offsetMs) index = i;
   return { index, sentence: ss[index], first: ss[0] };

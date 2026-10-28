@@ -1,4 +1,4 @@
-import { AudioApi, AudioJob, DEFAULT_VOICE, VOICES } from "./audio-api";
+import { AudioApi, AudioJob, AudioTone, DEFAULT_TONE, DEFAULT_VOICE, TONES, VOICES, VOICE_KEY, TONE_KEY } from "./audio-api";
 import {
   firstNotReady,
   formatTime,
@@ -92,7 +92,22 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   speedSel.value = String(speed);
   const segSel = el("select", { class: "ap-sel", "aria-label": "选择段落" });
   const voiceSel = el("select", { class: "ap-sel", "aria-label": "音色" });
-  for (const v of VOICES) voiceSel.append(el("option", { value: v }, v));
+  for (const v of VOICES) voiceSel.append(el("option", { value: v.id }, v.label));
+  const toneSel = el("select", { class: "ap-sel", "aria-label": "语气" });
+  for (const t of TONES) toneSel.append(el("option", { value: t.id }, t.label));
+  const legacyOpt = el("option", { value: "", disabled: "" }, "");
+  /** Selects the job's voice; an unknown (old) voice shows as a disabled "旧音色" option. */
+  const syncVoice = (j: AudioJob) => {
+    if (VOICES.some((v) => v.id === j.voice)) {
+      legacyOpt.remove();
+    } else {
+      legacyOpt.value = j.voice;
+      legacyOpt.textContent = `旧音色（${j.voice}）`;
+      if (!legacyOpt.parentNode) voiceSel.append(legacyOpt);
+    }
+    voiceSel.value = j.voice;
+    toneSel.value = j.tone === "plain" ? "plain" : "auto";
+  };
   const ra = opts.readAlong;
   const followBtn = el("button", { type: "button", class: "ap-follow", title: "高亮并跟随朗读位置" }, "跟随");
   followBtn.hidden = !ra;
@@ -108,7 +123,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   const row1 = el("div", { class: "ap-row ap-head" }, title, collapseBtn, closeBtn);
   const row2 = el("div", { class: "ap-row ap-prog" }, elapsed, slider, total);
   const row3 = el("div", { class: "ap-row ap-ctl" }, prevBtn, back, playBtn, fwd, nextBtn);
-  const row4 = el("div", { class: "ap-row ap-opts" }, segSel, speedSel, voiceSel, followBtn, resumeBtn);
+  const row4 = el("div", { class: "ap-row ap-opts" }, segSel, speedSel, voiceSel, toneSel, followBtn, resumeBtn);
   const body = el("div", { class: "ap-body" }, row1, status, retryBtn, row2, row3, row4);
   const bar = el("div", { class: "audio-bar", role: "region", "aria-label": "朗读播放器", hidden: "" }, body, mini);
   parent.append(bar);
@@ -130,7 +145,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     if (!p?.text) return;
     lastPos = now;
     const durationMs = p.durationMs ?? (Number.isFinite(cur.duration) ? cur.duration * 1000 : 0);
-    opts.onPosition({ chapterKey, pieceText: p.text, offsetMs: pendingSeekMs ?? (cur.currentTime || 0) * 1000, durationMs });
+    opts.onPosition({ chapterKey, pieceText: p.text, offsetMs: pendingSeekMs ?? (cur.currentTime || 0) * 1000, durationMs, marks: p.marks });
   }
 
   function posKey() {
@@ -176,7 +191,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     segSel.hidden = nSeg === 0;
     prevBtn.disabled = prevSegment(job.segments, segPos) === null;
     nextBtn.disabled = nextSegment(job.segments, segPos) === null;
-    if (document.activeElement !== voiceSel) voiceSel.value = job.voice;
+    if (document.activeElement !== voiceSel && document.activeElement !== toneSel) syncVoice(job);
 
     // Timeline
     const tot = s ? totalMs(s) : 0;
@@ -567,13 +582,28 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     if (!job) return;
     const v = voiceSel.value;
     if (v === job.voice) return;
-    if (!window.confirm(`更换音色为 ${v} 会重新生成本章语音，是否继续？`)) {
-      voiceSel.value = job.voice;
+    const label = VOICES.find((x) => x.id === v)?.label ?? v;
+    if (!window.confirm(`更换音色为 ${label} 会重新生成本章语音，是否继续？`)) {
+      syncVoice(job);
       return;
     }
-    await regenerate(v);
+    store.set(VOICE_KEY, v);
+    await regenerate(v, currentTone());
   });
-  retryBtn.addEventListener("click", () => void regenerate(job?.voice));
+  const currentTone = (): AudioTone => (job?.tone === "plain" ? "plain" : "auto");
+  toneSel.addEventListener("change", async () => {
+    if (!job) return;
+    const t: AudioTone = toneSel.value === "plain" ? "plain" : "auto";
+    if (t === currentTone()) return;
+    const label = TONES.find((x) => x.id === t)?.label ?? t;
+    if (!window.confirm(`切换为“${label}”会重新生成本章语音，是否继续？`)) {
+      syncVoice(job);
+      return;
+    }
+    store.set(TONE_KEY, t);
+    await regenerate(job.voice, t);
+  });
+  retryBtn.addEventListener("click", () => void regenerate(job?.voice, currentTone()));
   collapseBtn.addEventListener("click", () => setCollapsed(true));
   mini.addEventListener("click", () => setCollapsed(false));
   closeBtn.addEventListener("click", close);
@@ -587,12 +617,12 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     renderFollow();
   }
 
-  async function regenerate(voice?: string) {
+  async function regenerate(voice?: string, tone?: AudioTone) {
     if (!job) return;
     status.textContent = "正在重新生成…";
     status.hidden = false;
     try {
-      const fresh = await api.regenerate(job.id, voice);
+      const fresh = await api.regenerate(job.id, voice, tone);
       const wasPlaying = playing;
       stopAudio();
       setJob(fresh, false);
@@ -603,7 +633,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     } catch (e) {
       status.textContent = `重新生成失败：${errorText(e)}`;
       status.classList.add("err");
-      if (job) voiceSel.value = job.voice;
+      if (job) syncVoice(job);
     }
   }
 
@@ -688,4 +718,4 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   };
 }
 
-export { DEFAULT_VOICE };
+export { DEFAULT_VOICE, DEFAULT_TONE };
