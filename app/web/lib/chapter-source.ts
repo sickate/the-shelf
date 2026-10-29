@@ -21,3 +21,22 @@ export function setChapterSource(fn: ChapterSource | null): void {
 export function getChapterSource(): ChapterSource | null {
   return current;
 }
+
+/**
+ * Chapter navigation for continuous playback and "follow chapter", registered next to the source.
+ * Keys are chapterKeys the source produces; keys of another book/format give null.
+ */
+export interface ChapterNav {
+  /** Cheap check (no text extraction): is the reader's current position inside chapter `chapterKey`? null = unknown. */
+  contains(chapterKey: string): Promise<boolean | null>;
+  /** The chapter right after `chapterKey` (chapters without text are skipped); null at the end of the book. */
+  next(chapterKey: string): Promise<ChapterText | null>;
+}
+
+let nav: ChapterNav | null = null;
+export function setChapterNav(n: ChapterNav | null): void {
+  nav = n;
+}
+export function getChapterNav(): ChapterNav | null {
+  return nav;
+}
