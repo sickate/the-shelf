@@ -17,8 +17,18 @@ import {
   spreadStart,
   stepSpread,
 } from "./lib/reader-prefs";
-import { setChapterSource } from "./lib/chapter-source";
-import { epubChapterSource, mobiChapterSource, pdfChapterSource, textChapter, textChapterAt } from "./lib/chapter-text";
+import { setChapterNav, setChapterSource } from "./lib/chapter-source";
+import {
+  epubChapterNav,
+  epubChapterSource,
+  mobiChapterNav,
+  mobiChapterSource,
+  pdfChapterNav,
+  pdfChapterSource,
+  textChapter,
+  textChapterForKey,
+  textChapterNav,
+} from "./lib/chapter-text";
 import { mountPageButtons, scrollPage } from "./lib/page-buttons";
 import { pdfReadAlongFactory } from "./lib/read-along-pdf";
 import { ReadAlongTarget, setReadAlongTarget, windowTextTarget } from "./lib/read-along";
@@ -344,6 +354,7 @@ async function readPdf(sizeBytes: number) {
   await render();
   void notes.start();
   setChapterSource(pdfChapterSource(pdf, () => pageNum));
+  setChapterNav(pdfChapterNav(pdf, () => pageNum));
   setReadAlongTarget(pdfReadAlongFactory(pdf, { goTo: (n) => go(n, false), onUserPage: (cb) => userPageCbs.push(cb) }));
 
   // Outline (TOC)
@@ -490,7 +501,9 @@ async function readEpub() {
   }
   hideLoading();
   void notes.start();
-  setChapterSource(epubChapterSource(book, () => (rendition as any).currentLocation?.()?.start?.href ?? null));
+  const epubHref = () => (rendition as any).currentLocation?.()?.start?.href ?? null;
+  setChapterSource(epubChapterSource(book, epubHref));
+  setChapterNav(epubChapterNav(book, epubHref));
   setReadAlongTarget(epubReadAlong(book, rendition, area));
 
   book.loaded.navigation.then((nav: any) => {
@@ -626,6 +639,7 @@ async function readMobi(format: string) {
   hideLoading();
   void notes.start();
   setChapterSource(mobiChapterSource(fv));
+  setChapterNav(mobiChapterNav(fv));
   setReadAlongTarget(mobiReadAlong(fv));
 
   const opts: HTMLOptionElement[] = [el("option", { value: "" }, "目录")];
@@ -662,14 +676,14 @@ function decode(buf: ArrayBuffer): string {
 }
 
 /** Character offset in the article text at the top of the viewport (scroll fraction as fallback). */
-function textOffsetAtTop(article: HTMLElement, len: number): number {
+function textOffsetAtTop(article: HTMLElement, len: number, y = 4): number {
   const max = document.documentElement.scrollHeight - innerHeight;
   const byFraction = max > 0 ? Math.round((scrollY / max) * len) : 0;
   try {
     const r = article.getBoundingClientRect();
     const x = Math.min(Math.max(r.left + 4, 0), innerWidth - 1);
-    const range = (document as any).caretRangeFromPoint?.(x, 4) as Range | null;
-    const pos = (document as any).caretPositionFromPoint?.(x, 4) as { offsetNode: Node; offset: number } | null;
+    const range = (document as any).caretRangeFromPoint?.(x, y) as Range | null;
+    const pos = (document as any).caretPositionFromPoint?.(x, y) as { offsetNode: Node; offset: number } | null;
     const node = range?.startContainer ?? pos?.offsetNode;
     const off = range?.startOffset ?? pos?.offset;
     if (node && typeof off === "number" && article.contains(node)) {
@@ -716,13 +730,22 @@ async function readText() {
   toolbar.hidden = false;
   void notes.start();
   setChapterSource(() => Promise.resolve(textChapter(text, textOffsetAtTop(article, text.length))));
+  // Follow chapter: offsets at the top and middle of the view, recomputed only after scrolling.
+  let probe = { at: "", offs: [] as number[] };
+  setChapterNav(
+    textChapterNav(text, () => {
+      const at = `${scrollY}:${innerHeight}:${document.documentElement.scrollHeight}`;
+      if (probe.at !== at) probe = { at, offs: [textOffsetAtTop(article, text.length), textOffsetAtTop(article, text.length, innerHeight / 2)] };
+      return probe.offs;
+    }),
+  );
   // Read-along: chapterKey "text:<start>" names the chapter; one target per chapter.
   const targets = new Map<string, ReadAlongTarget>();
   setReadAlongTarget((key) => {
     const m = /^text:(\d+)$/.exec(key);
     if (!m) return null;
     if (!targets.has(key)) {
-      const c = textChapterAt(text, Number(m[1]));
+      const c = textChapterForKey(text, Number(m[1]));
       targets.set(key, windowTextTarget(article, c.start, c.end));
     }
     return targets.get(key)!;

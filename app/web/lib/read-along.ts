@@ -14,6 +14,8 @@ import { store } from "./common";
 export interface ReadAlongTarget {
   /** 在本章内找到这句话并显示出来（必要时翻页/跨节加载），返回是否成功。 */
   show(sentence: string, pieceFirstSentence: string, opts: { highlight: boolean }): Promise<boolean>;
+  /** 显示本章开头（换章后找不到句子时的兜底；不算用户翻页）。 */
+  showStart?(): Promise<boolean>;
   clear(): void;
   /** 用户自己翻页/滚动时回调（适配器自己区分程序翻页）。 */
   onUserNavigate(cb: () => void): void;
@@ -189,6 +191,18 @@ export function windowTextTarget(root: HTMLElement, rawStart: number, rawEnd: nu
       }
       return true;
     },
+    async showStart() {
+      index ??= new TextIndex(root);
+      const from = index.normPos(rawStart);
+      const range = index.rangeFor(from, from + 1);
+      if (!range) return false;
+      highlightRange(document, null);
+      lit = null;
+      cursor = -1;
+      progUntil = Date.now() + PROGRAMMATIC_MS;
+      window.scrollBy({ top: range.getBoundingClientRect().top - innerHeight / 4, behavior: "auto" });
+      return true;
+    },
     clear() {
       highlightRange(document, null);
       lit = null;
@@ -235,6 +249,8 @@ export function createReadAlong(getFactory: () => ReadAlongTargetFactory | null 
   const hooked = new WeakSet<ReadAlongTarget>();
   let busy = false;
   let queued = false;
+  /** Chapter just switched to (e.g. continuous playback): show its start if the sentence isn't found. */
+  let entered = "";
   const subs: (() => void)[] = [];
   const changed = () => subs.forEach((cb) => cb());
 
@@ -276,7 +292,11 @@ export function createReadAlong(getFactory: () => ReadAlongTargetFactory | null 
         if (key === shownKey) continue;
         shownKey = key;
         try {
-          await t.show(hit.sentence, hit.first, { highlight: true });
+          const ok = await t.show(hit.sentence, hit.first, { highlight: true });
+          if (entered === pos.chapterKey) {
+            entered = "";
+            if (!ok) await t.showStart?.();
+          }
         } catch {
           /* adapter failure: keep playing */
         }
@@ -288,6 +308,7 @@ export function createReadAlong(getFactory: () => ReadAlongTargetFactory | null 
 
   return {
     update(pos) {
+      if (last && last.chapterKey !== pos.chapterKey) entered = pos.chapterKey;
       last = pos;
       void run();
     },
@@ -319,6 +340,7 @@ export function createReadAlong(getFactory: () => ReadAlongTargetFactory | null 
       targetFactory = null;
       last = null;
       shownKey = "";
+      entered = "";
       if (paused) {
         paused = false;
         changed();

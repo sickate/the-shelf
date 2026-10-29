@@ -10,7 +10,7 @@
 // compute the CFI used to navigate; the hit is then re-found in the rendered document (same text)
 // and highlighted there.
 import { MAX_CHAPTER_CHARS } from "./chapter-source";
-import { chapterSpan, epubLastIndex, epubTocIdx, mobiTocIdx, type TocIdx } from "./chapter-text";
+import { epubLastIndex, keySpan, epubTocIdx, mobiTocIdx, type TocIdx } from "./chapter-text";
 import { highlightRange, locateIn, TextIndex, type ReadAlongTarget, type ReadAlongTargetFactory } from "./read-along";
 
 // ---------------- pure helpers (tested) ----------------
@@ -126,6 +126,8 @@ export interface SectionHost {
   /** CFI of a range inside (any copy of) a section. */
   cfi(section: number, range: Range): string | null;
   display(cfi: string): Promise<void>;
+  /** Shows the start of a section (chapter-start fallback). */
+  displayStart(section: number): Promise<void>;
   /** Visible reading area in top-level page coordinates. */
   viewport(): Box | null;
   /** A section document was (re-)rendered. */
@@ -221,12 +223,12 @@ export function sectionTarget(host: SectionHost): ReadAlongTarget {
     const r = rects.length ? rects[0] : range.getBoundingClientRect();
     return startVisible(r, frameOffset(doc), view);
   };
-  const navigate = async (cfi: string | null) => {
+  const navigate = async (cfi: string | null, go: () => Promise<void> = () => host.display(cfi!)) => {
     if (!cfi) return;
     navigating++;
     progUntil = Date.now() + PROGRAMMATIC_MS;
     try {
-      await host.display(cfi);
+      await go();
     } finally {
       navigating--;
       progUntil = Date.now() + PROGRAMMATIC_MS;
@@ -286,6 +288,20 @@ export function sectionTarget(host: SectionHost): ReadAlongTarget {
         return false;
       }
     },
+    async showStart() {
+      try {
+        const my = ++gen;
+        if (span === undefined) span = await host.span();
+        if (!span || my !== gen) return false;
+        const from = span.from;
+        unpaint();
+        cursor = null;
+        await navigate("start", () => host.displayStart(from));
+        return my === gen;
+      } catch {
+        return false;
+      }
+    },
     clear() {
       gen++;
       unpaint();
@@ -334,8 +350,8 @@ function hub<A extends unknown[]>() {
 function spanFrom(toc: Promise<TocIdx[]>, from: number, last: number) {
   return toc.then(
     (t) => {
-      const s = chapterSpan(t, from, last);
-      return s.from === from ? { from, to: Math.max(from, s.to) } : { from, to: from };
+      const s = keySpan(t, from, last);
+      return { from: s.from, to: s.to };
     },
     () => ({ from, to: from }),
   );
@@ -377,6 +393,10 @@ export function epubReadAlong(book: any, rendition: any, area: HTMLElement): Rea
       cfi: (i, range) => book.spine.get(i)?.cfiFromRange(range) ?? null,
       display: async (cfi) => {
         await rendition.display(cfi);
+      },
+      displayStart: async (i) => {
+        const href = book.spine.get(i)?.href;
+        if (href) await rendition.display(href);
       },
       viewport: () => (rendition.manager?.container ?? area).getBoundingClientRect(),
       onRendered: rendered.on,
@@ -425,6 +445,9 @@ export function mobiReadAlong(fv: any): ReadAlongTargetFactory {
       cfi: (i, range) => fv.getCFI(i, range) ?? null,
       display: async (cfi) => {
         await fv.goTo(cfi);
+      },
+      displayStart: async (i) => {
+        await fv.goTo(i);
       },
       viewport: () => fv.getBoundingClientRect(),
       onRendered: rendered.on,

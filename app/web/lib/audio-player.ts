@@ -12,12 +12,22 @@ import {
   timeOf,
   totalMs,
 } from "./audio-timeline";
+import {
+  CONTINUOUS_KEY,
+  continuousOn,
+  PIECE_RETRIES,
+  pieceRetryDelay,
+  POLL_MS,
+  pollDelay,
+  pollNoteVisible,
+  remainingMs,
+  retryUrl,
+} from "./audio-follow";
 import { el, errorText, store } from "./common";
 import type { AudioPosition, ReadAlong } from "./read-along";
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const SPEED_KEY = "shelf:audio-speed";
-const POLL_MS = 3000;
 const SKIP_MS = 15000;
 const DONE = new Set(["ready", "failed", "budget_exceeded"]);
 const POS_MS = 250;
@@ -32,12 +42,38 @@ export interface AudioPlayerOptions {
   onPosition?: (pos: AudioPosition) => void;
   /** Read-along follow state; adds the 跟随 / 回到朗读位置 buttons. Cleared on close. */
   readAlong?: ReadAlong;
+  /** The last piece of the chapter finished playing (continuous playback hooks in here). */
+  onChapterEnd?: (chapterKey: string, job: AudioJob) => void;
+  /** Throttled (≈ 1 s while playing, and after each poll) playback progress. */
+  onProgress?: (info: PlayerProgress) => void;
+  /** The "朗读本章" button (shown with setReadHere) was clicked. */
+  onReadHere?: () => void;
+}
+
+export interface PlayerProgress {
+  chapterKey: string;
+  job: AudioJob;
+  /** Estimated playback left in the job (ms, at 1×). */
+  remainingMs: number;
+  /** User intent to play (also true while waiting for a piece). */
+  playing: boolean;
+}
+
+export interface OpenOptions {
+  /** Ignore the saved position and start at the beginning. */
+  fromStart?: boolean;
+  /** Start playing (or wait for the first piece) right away. */
+  autoplay?: boolean;
 }
 
 export interface AudioPlayer {
   /** Opens the bar for a job (replaces the current one). */
-  open(job: AudioJob, chapterKey: string): void;
+  open(job: AudioJob, chapterKey: string, opts?: OpenOptions): void;
   isOpenFor(chapterKey: string): boolean;
+  /** The open job, or null when closed. */
+  current(): { job: AudioJob; chapterKey: string; playing: boolean } | null;
+  /** Shows/hides the "朗读本章" button (reader is in another chapter, follow off). */
+  setReadHere(visible: boolean): void;
   togglePlay(): void;
   close(): void;
 }
@@ -61,6 +97,12 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   let speed = Number(store.get(SPEED_KEY)) || 1;
   if (!SPEEDS.includes(speed)) speed = 1;
   let dragging = false;
+  let pollFailures = 0;
+  /** The current piece failed to load even after PIECE_RETRIES reloads. */
+  let loadFailed = false;
+  const pieceRetries = new Map<string, number>();
+  let regenerating = false;
+  let lastProgress = 0;
 
   const audios = [new Audio(), new Audio()];
   let cur = audios[0];
@@ -79,6 +121,15 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   const closeBtn = el("button", { type: "button", class: "ap-icon", title: "关闭朗读", "aria-label": "关闭朗读" }, "×");
   const status = el("div", { class: "ap-status", role: "status", "aria-live": "polite" });
   const retryBtn = el("button", { type: "button", class: "ap-retry", hidden: "" }, "重试");
+  const pollNote = el("div", { class: "ap-status", role: "status", hidden: "" }, "网络不稳定，正在重新连接…");
+  const readHereBtn = el("button", { type: "button", class: "ap-follow", hidden: "", title: "改为朗读阅读器当前所在的章节" }, "朗读本章");
+  const contBtn = el("button", { type: "button", class: "ap-follow", title: "本章读完后自动朗读下一章" }, "连续播放");
+  let continuous = continuousOn(store.get(CONTINUOUS_KEY));
+  const renderCont = () => {
+    contBtn.setAttribute("aria-pressed", String(continuous));
+    contBtn.classList.toggle("on", continuous);
+  };
+  renderCont();
   const elapsed = el("span", { class: "ap-time" }, "00:00");
   const total = el("span", { class: "ap-time" }, "00:00");
   const slider = el("input", { type: "range", class: "ap-slider", min: "0", max: "0", step: "1", value: "0", "aria-label": "播放进度" });
@@ -123,8 +174,8 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   const row1 = el("div", { class: "ap-row ap-head" }, title, collapseBtn, closeBtn);
   const row2 = el("div", { class: "ap-row ap-prog" }, elapsed, slider, total);
   const row3 = el("div", { class: "ap-row ap-ctl" }, prevBtn, back, playBtn, fwd, nextBtn);
-  const row4 = el("div", { class: "ap-row ap-opts" }, segSel, speedSel, voiceSel, toneSel, followBtn, resumeBtn);
-  const body = el("div", { class: "ap-body" }, row1, status, retryBtn, row2, row3, row4);
+  const row4 = el("div", { class: "ap-row ap-opts" }, segSel, speedSel, voiceSel, toneSel, followBtn, resumeBtn, contBtn, readHereBtn);
+  const body = el("div", { class: "ap-body" }, row1, status, pollNote, retryBtn, row2, row3, row4);
   const bar = el("div", { class: "audio-bar", role: "region", "aria-label": "朗读播放器", hidden: "" }, body, mini);
   parent.append(bar);
 
@@ -230,9 +281,12 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
       void gi;
     }
     if (waiting && job.status === "ready") text = "加载中…";
+    if (loadFailed) text = "音频加载失败，请点击播放重试";
     status.textContent = text;
     status.hidden = !text;
-    status.classList.toggle("err", job.status === "failed" || job.status === "budget_exceeded");
+    status.classList.toggle("err", loadFailed || job.status === "failed" || job.status === "budget_exceeded");
+    retryBtn.disabled = regenerating;
+    pollNote.hidden = !pollNoteVisible(pollFailures, playing, waiting);
     updateMediaSession();
   }
 
@@ -245,13 +299,22 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     }
   }
 
-  function setSrc(a: HTMLAudioElement, seg: number, piece: number) {
+  /** Loads a piece into an element (no-op when already loaded); attempt ≥ 1 forces a fresh URL. */
+  function setSrc(a: HTMLAudioElement, seg: number, piece: number, attempt = 0) {
     const k = keyOf(seg, piece);
-    if (loadedKey.get(a) === k) return;
+    if (!attempt && loadedKey.get(a) === k) return;
     loadedKey.set(a, k);
     const p = job!.segments[seg].pieces[piece];
-    a.src = api.pieceUrl(job!.id, p.seq);
+    a.src = retryUrl(api.pieceUrl(job!.id, p.seq), attempt);
     a.load();
+  }
+
+  function emitProgress(force: boolean) {
+    if (!opts.onProgress || !job) return;
+    const now = Date.now();
+    if (!force && now - lastProgress < 1000) return;
+    lastProgress = now;
+    opts.onProgress({ chapterKey, job, remainingMs: remainingMs(job.segments, segPos, currentMs()), playing });
   }
 
   function preloadNext() {
@@ -284,6 +347,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     preloadNext();
     playing = autoplay;
     waiting = false;
+    loadFailed = false;
     if (autoplay) void startPlayback();
     render();
     emitPos(true);
@@ -378,7 +442,8 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     const n = curPiece + 1;
     if (n < s.pieces.length) {
       if (s.pieces[n].ready) {
-        // Near-gapless: the preloaded element takes over immediately.
+        // Near-gapless: the preloaded element takes over immediately (reloaded if its preload failed).
+        if (nxt.error) loadedKey.delete(nxt);
         setSrc(nxt, segPos, n);
         const prev = cur;
         cur = nxt;
@@ -408,6 +473,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
       playing = false;
       savePos(true);
       render();
+      opts.onChapterEnd?.(chapterKey, job);
     }
   }
 
@@ -431,6 +497,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
       if (a !== cur) return;
       savePos();
       emitPos(false);
+      emitProgress(false);
       if (!dragging) {
         const t = currentMs();
         slider.value = String(t);
@@ -443,13 +510,39 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     a.addEventListener("playing", () => {
       if (a === cur) bar.classList.remove("waiting");
     });
+    a.addEventListener("canplay", () => {
+      const k = loadedKey.get(a);
+      if (k) pieceRetries.delete(k);
+    });
     a.addEventListener("error", () => {
-      if (a !== cur || !loadedKey.has(a) || !a.src) return;
-      status.textContent = "音频加载失败，请重试";
-      status.classList.add("err");
-      status.hidden = false;
+      const k = loadedKey.get(a);
+      if (!k || !a.src) return;
+      if (a !== cur) {
+        loadedKey.delete(a); // failed preload: reloaded when it is needed
+        return;
+      }
+      // Reload the same piece (fresh URL) a couple of times before giving up.
+      const attempt = (pieceRetries.get(k) ?? 0) + 1;
+      const at = pendingSeekMs ?? (a.currentTime || 0) * 1000;
+      if (attempt <= PIECE_RETRIES) {
+        pieceRetries.set(k, attempt);
+        pendingSeekMs = at;
+        const seg0 = segPos;
+        const piece0 = curPiece;
+        window.setTimeout(() => {
+          if (!open || !job || a !== cur || loadedKey.get(a) !== k || keyOf(seg0, piece0) !== k) return;
+          setSrc(a, seg0, piece0, attempt);
+          if (playing) void startPlayback();
+        }, pieceRetryDelay(attempt));
+        return;
+      }
+      pieceRetries.delete(k);
+      loadedKey.delete(a); // play() reloads it
+      pendingSeekMs = at;
+      loadFailed = true;
       playing = false;
-      playBtn.textContent = "▶";
+      waiting = false;
+      render();
     });
     a.addEventListener("play", () => {
       if (a === cur) {
@@ -469,9 +562,10 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     // Keep polling in the background while listening (e.g. a locked phone) so playback can continue
     // into pieces that finish later; otherwise pause polling while the page is hidden.
     if (!open || !job || DONE.has(job.status) || (document.hidden && !playing)) return;
-    pollTimer = window.setTimeout(poll, POLL_MS);
+    pollTimer = window.setTimeout(poll, pollFailures ? pollDelay(pollFailures) : POLL_MS);
   }
 
+  /** Background refresh: failures retry silently with backoff (see pollDelay / pollNoteVisible). */
   async function poll() {
     if (!open || !job) return;
     const id = job.id;
@@ -479,13 +573,17 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
       const fresh = await api.get(id);
       if (!open || !job || job.id !== id) return;
       job = fresh;
+      pollFailures = 0;
       if (segPos >= job.segments.length) segPos = Math.max(0, job.segments.length - 1);
       tryResumeWaiting();
       if (playing && !waiting) preloadNext();
       render();
+      emitProgress(true);
     } catch (e) {
-      status.textContent = `状态刷新失败：${errorText(e)}`;
-      status.hidden = false;
+      if (!open || !job || job.id !== id) return;
+      pollFailures++;
+      pollNote.title = errorText(e);
+      render();
     }
     schedulePoll();
   }
@@ -603,7 +701,14 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     store.set(TONE_KEY, t);
     await regenerate(job.voice, t);
   });
+  // Same voice + tone: the backend resumes the job (same id, ready pieces kept).
   retryBtn.addEventListener("click", () => void regenerate(job?.voice, currentTone()));
+  readHereBtn.addEventListener("click", () => opts.onReadHere?.());
+  contBtn.addEventListener("click", () => {
+    continuous = !continuous;
+    store.set(CONTINUOUS_KEY, continuous ? "1" : "0");
+    renderCont();
+  });
   collapseBtn.addEventListener("click", () => setCollapsed(true));
   mini.addEventListener("click", () => setCollapsed(false));
   closeBtn.addEventListener("click", close);
@@ -618,22 +723,43 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   }
 
   async function regenerate(voice?: string, tone?: AudioTone) {
-    if (!job) return;
+    if (!job || regenerating) return; // one request at a time: a double click must not create two jobs
+    const old = job;
+    regenerating = true;
+    retryBtn.disabled = true;
     status.textContent = "正在重新生成…";
     status.hidden = false;
     try {
-      const fresh = await api.regenerate(job.id, voice, tone);
-      const wasPlaying = playing;
-      stopAudio();
-      setJob(fresh, false);
-      playing = wasPlaying;
-      waiting = wasPlaying;
+      const fresh = await api.regenerate(old.id, voice, tone);
+      if (!open || job !== old) return;
+      const sameAudio = fresh.id === old.id && fresh.voice === old.voice && (fresh.tone ?? "auto") === (old.tone ?? "auto");
+      pollFailures = 0;
+      if (sameAudio) {
+        // Resumed in place: keep the loaded audio and the position; generation continues.
+        job = fresh;
+        if (segPos >= job.segments.length) segPos = Math.max(0, job.segments.length - 1);
+        tryResumeWaiting();
+      } else {
+        const wasPlaying = playing;
+        stopAudio();
+        setJob(fresh, false);
+        playing = wasPlaying;
+        waiting = wasPlaying;
+      }
+      regenerating = false;
       render();
       schedulePoll();
     } catch (e) {
+      regenerating = false;
+      if (job !== old) return;
+      render();
       status.textContent = `重新生成失败：${errorText(e)}`;
+      status.hidden = false;
       status.classList.add("err");
-      if (job) syncVoice(job);
+      syncVoice(old);
+    } finally {
+      regenerating = false;
+      retryBtn.disabled = false;
     }
   }
 
@@ -654,10 +780,13 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     playing = false;
     waiting = false;
     pendingSeekMs = null;
+    loadFailed = false;
+    pieceRetries.clear();
   }
 
   function setJob(j: AudioJob, restore: boolean) {
     job = j;
+    pollFailures = 0;
     segPos = 0;
     curPiece = 0;
     pendingSeekMs = 0;
@@ -676,10 +805,11 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     segSel.replaceChildren();
   }
 
-  function open_(j: AudioJob, key: string) {
+  function open_(j: AudioJob, key: string, o: OpenOptions = {}) {
     if (open && job && job.id === j.id) {
       job = j;
       render();
+      if (o.autoplay && !playing) play();
       return;
     }
     stopAudio();
@@ -689,12 +819,15 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     bar.hidden = false;
     document.body.classList.add("audio-open");
     setCollapsed(false);
-    setJob(j, true);
+    readHereBtn.hidden = true;
+    setJob(j, !o.fromStart);
     bindMediaSession();
     render();
     emitPos(true);
+    if (o.autoplay) play(); // before schedulePoll: a hidden page keeps polling only while playing
     schedulePoll();
     syncHeight();
+    emitProgress(true);
   }
 
   function close() {
@@ -713,6 +846,12 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   return {
     open: open_,
     isOpenFor: (key) => open && chapterKey === key,
+    current: () => (open && job ? { job, chapterKey, playing } : null),
+    setReadHere(visible) {
+      if (readHereBtn.hidden === !visible) return;
+      readHereBtn.hidden = !visible;
+      syncHeight();
+    },
     togglePlay,
     close,
   };

@@ -98,6 +98,16 @@ export function pdfReadAlongFactory(pdf: any, hook: PdfReaderHook): (key: string
         }
         return true;
       },
+      async showStart() {
+        cursor = 0;
+        navigating = true;
+        try {
+          hook.goTo(range.start);
+        } finally {
+          navigating = false;
+        }
+        return true;
+      },
       clear() {},
       onUserNavigate(cb) {
         userCb = cb;
