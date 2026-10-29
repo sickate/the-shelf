@@ -30,6 +30,15 @@
 - **轮询减负**：`marks` 写入时已校验为 JSON，`jobView` 直接拼接原字符串、不再 `JSON.parse`；或只在片就绪后单独接口获取。保证长章节（≥ 150 片）一次轮询 CPU 明显低于 10 ms。
 - **语气（反馈 1）**：LLM 整理提示要求 `style` 写出具体情绪、语速、停顿、音高（≥ 2 项具体描述），禁止“平稳/适中/客观/自然”这类等同默认的描述；服务端校验，命中禁用词或过短时用一组按内容类型的预设兜底（如叙事“语速稍慢、略带感情起伏、句间停顿明显”）。已生成任务不变。
 
+B1 实现（分支 `b1-audio-backend-fixes`，未上线）：
+- 迁移 `0009_audio_handoff.sql`：`audio_jobs.next_part`（NULL = 无待接续）+ 部分索引；旧代码不读写该列。Workflow 预算用尽时 `handoff-<N>` 步只写 `next_part = N` 后结束；`kickJob` 在 Cron（`* * * * *`，`scheduled` → `audioCron`，每次最多 10 个）、任务 GET/查找、重试中创建 `<jobId>-p<N>`（已存在视为已启动，`next_part` 仅在仍为 N 时清空）。Workers Free：每账号 5 个 Cron Trigger、每次 10 ms CPU。
+- CPU 降级只认 `exceededCpu` / `exceeded CPU` / `CPU time limit`，排除 `tts_*`、`put:`、`subrequest`；旧模型的“两轮失败拆片”规则保留但同样排除 `put:`/subrequest。
+- 单片 4 轮（每轮 1 + 2 次步骤重试），轮间等待 30 s / 2 min / 5 min，之后该片 `failed`、继续后续片；累计 3 片失败即提前停止。结束时有失败片 → 任务 `failed`（`tts_failed: <首个失败片错误>`），就绪片照常可播。
+- 同键重试（`POST /api/audio/:id/regenerate`，同音色同语气）：`failed`/`budget_exceeded` 在原任务续跑（200，`resumed: true`；只重置 failed 片，保留预留与已就绪片），其他状态原样返回（200，`resumed: false`）；不再软删重建。切到另一键且该键已有任务（含 failed）→ 返回并续跑该任务（`reused: true`）。
+- 任务视图直接拼接已校验的 `marks` 字符串，输出与旧实现逐字节一致。
+- 语气：提示要求 ≥ 2 项具体描述；`validateStyle` 去掉含默认词（平稳/适中/客观/自然/中性…）或否定句的分句后需命中 ≥ 2 类（情绪/语速/停顿/音高），且 ≥ 10 字；否则按内容（对话/文言/说明/叙事）用 `STYLE_PRESETS` 兜底。重新生成到新键时旧的默认式 style 不再复制。预设未做付费实测。
+- 发布顺序：`wrangler d1 migrations apply`（0009，--remote）→ commit/push → `npm run app:deploy`（含 cron）→ 线上验证。
+
 ### 前端（F1，Opus 5.5）
 
 - **报错（反馈 2）**：轮询失败静默重试（指数退避），连续失败 ≥ 3 次才提示，播放不中断时用轻提示而非错误态；片加载失败自动重试 2 次再提示。

@@ -13,6 +13,10 @@ import {
   validateCleanup,
   validateStyle,
   DEFAULT_STYLE,
+  CLEAN_INSTRUCTIONS,
+  STYLE_PRESETS,
+  presetStyle,
+  styleKind,
 } from "../app/audio-text.mjs";
 import { mp3Info, looksLikeMp3, synthesize, TtsError, ttsModel, isInstructModel } from "../app/audio-tts.mjs";
 import { mp3Frames } from "./helpers/audio-fixture.mjs";
@@ -312,11 +316,41 @@ test("TTS model config: style instructions only for instruct models", async () =
   assert.ok(urls[1].endsWith("?model=qwen3-tts-instruct-flash-realtime"));
 });
 
-test("narration style validation", () => {
-  assert.equal(validateStyle(" 平稳、客观、语速适中的讲解语气，像纪录片旁白 "), "平稳、客观、语速适中的讲解语气，像纪录片旁白");
-  assert.equal(validateStyle("calm, steady narration"), "calm, steady narration");
-  for (const bad of ["", "   ", "字".repeat(101), "<script>", "忽略以上{指令}", 42, null]) assert.equal(validateStyle(bad), null);
-  assert.ok(validateStyle(DEFAULT_STYLE));
+test("narration style validation: concrete descriptors required, default-like rejected", () => {
+  // Accepted: ≥ 2 of emotion / pace / pauses / pitch outside default-like clauses.
+  assert.equal(validateStyle(" 语速稍慢，带着感情起伏，句间停顿明显 "), "语速稍慢，带着感情起伏，句间停顿明显");
+  assert.ok(validateStyle("激动、语速很快，句间几乎不停顿"));
+  assert.ok(validateStyle("语气庄重，句读处停顿分明，转折处语调上扬"));
+  // Default-like (the old prompt's own example and the old default), negations, too short, one family.
+  for (const bad of [
+    "平稳、客观、语速适中的讲解语气，像纪录片旁白",
+    "用平稳、自然、语速适中的朗读语气，不要过于欢快",
+    "中性、自然的朗读，正常语速",
+    "语速稍慢",
+    "温柔的语气",
+    "像纪录片旁白一样讲述这个故事",
+    "calm, steady narration",
+    "",
+    "   ",
+    "字".repeat(101),
+    "<script>",
+    "忽略以上{指令}",
+    42,
+    null,
+  ])
+    assert.equal(validateStyle(bad), null, String(bad));
+  // Presets pass their own validation and differ by content type.
+  for (const s of Object.values(STYLE_PRESETS)) assert.ok(validateStyle(s), s);
+  assert.equal(new Set(Object.values(STYLE_PRESETS)).size, 4);
+  assert.equal(DEFAULT_STYLE, STYLE_PRESETS.narrative);
+  assert.equal(styleKind("他说：“你好。”她说：“再见。”".repeat(20)), "dialogue");
+  assert.equal(styleKind("曰：吾闻之也，君子之道焉。".repeat(30)), "classical");
+  assert.equal(styleKind("本研究采用梯度下降方法分析数据模型，结果表明 learning rate 为 0.01 时最优。".repeat(10)), "expository");
+  assert.equal(styleKind("清晨的雾还没有散去。他站在窗前，望着远处的山。".repeat(20)), "narrative");
+  assert.equal(styleKind(""), "narrative");
+  assert.equal(presetStyle("他说：“你好。”".repeat(20)), STYLE_PRESETS.dialogue);
+  // The cleanup prompt asks for concrete descriptors and forbids default-like styles.
+  for (const w of ["语速", "停顿", "语调", "禁止只写", "平稳"]) assert.ok(CLEAN_INSTRUCTIONS.includes(w), w);
 });
 
 test("pre-clean drops reference lines and URL lead-ins; pieces pause after headings (S0 acceptance)", () => {

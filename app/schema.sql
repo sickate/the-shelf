@@ -101,8 +101,12 @@ CREATE TABLE IF NOT EXISTS audio_jobs (
   -- Added 2026-10-28 (app/migrations/0008_audio_tts.sql): TTS model (NULL = qwen3-tts-flash-realtime,
   -- jobs created before 0008) and narration tone (auto = LLM style sent as instruction, plain = none).
   tts_model TEXT,
-  tone TEXT NOT NULL DEFAULT 'auto' CHECK (tone IN ('auto','plain'))
+  tone TEXT NOT NULL DEFAULT 'auto' CHECK (tone IN ('auto','plain')),
+  -- Added 2026-10-28 (app/migrations/0009_audio_handoff.sql): continuation part a Workflow instance
+  -- handed off (started by the cron / job GET); NULL = none pending.
+  next_part INTEGER
 );
+CREATE INDEX IF NOT EXISTS audio_jobs_next_part ON audio_jobs (next_part) WHERE next_part IS NOT NULL;
 -- One live job per (book, chapter, sha256(text), voice, tone) (0008; replaces 0007's audio_jobs_live).
 CREATE UNIQUE INDEX IF NOT EXISTS audio_jobs_live_tone ON audio_jobs (book_id, chapter_key, source_sha256, voice, tone) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS audio_jobs_chapter ON audio_jobs (book_id, chapter_key, deleted_at, created_at);

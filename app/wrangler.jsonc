@@ -17,11 +17,15 @@
   "r2_buckets": [
     { "binding": "BOOKS", "bucket_name": "the-shelf-first-book-20261023" }
   ],
-  // Read-aloud (A1): one Workflow instance per audio job (chained continuations <jobId>-p<n>).
+  // Read-aloud (A1): one Workflow instance per audio job part (<jobId>-p<n>).
   // Class AudioWorkflow is exported from entry.mjs; logic in worker.mjs runAudioWorkflow.
   "workflows": [
     { "name": "the-shelf-audio", "binding": "AUDIO_WORKFLOW", "class_name": "AudioWorkflow" }
-  ]
+  ],
+  // B1 (2026-10-28): an instance never creates its continuation (nested creation hit the subrequest
+  // depth limit); it records audio_jobs.next_part and this cron (worker.mjs scheduled → audioCron)
+  // or a job GET starts it. Workers Free: 5 Cron Triggers per account, 10 ms CPU per run.
+  "triggers": { "crons": ["* * * * *"] }
   // Secrets (wrangler secret put): SESSION_SECRET, OAI_KEY (AI book info),
   // DEEPSEEK_KEY (optional web search for AI book info; skipped when unset).
   // Google sign-in (G1, docs/mvp-plan.md 2026-10-27): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
@@ -35,5 +39,5 @@
   // Optional vars: OAI_BASE_URL (default https://oai.parallelstreamllc.com),
   // GOOGLE_REDIRECT_URI (default <origin>/api/auth/google/callback).
   // Schema migrations: app/migrations/0002_features.sql (covers, book_info),
-  // app/migrations/0003_classification.sql (book_class), ... app/migrations/0007_audio.sql (read-aloud), 0008_audio_tts.sql (TTS model/tone/marks). CLC table app/clc.json is bundled.
+  // app/migrations/0003_classification.sql (book_class), ... app/migrations/0007_audio.sql (read-aloud), 0008_audio_tts.sql (TTS model/tone/marks), 0009_audio_handoff.sql (continuation hand-off). CLC table app/clc.json is bundled.
 }

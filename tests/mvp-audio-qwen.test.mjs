@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
-import { DEFAULT_STYLE } from "../app/audio-text.mjs";
+import { precleanText, presetStyle } from "../app/audio-text.mjs";
 import {
   INFERENCE_URL,
   frameBytes,
@@ -344,7 +344,7 @@ test("workflow: instruction only for tone auto; marks stored and returned", asyn
   assert.ok(synth.calls.every((x) => x.model === "qwen-audio-3.1-tts-flash"));
   const autoCalls = synth.calls.slice(0, jobs.auto.totalPieces);
   const plainCalls = synth.calls.slice(jobs.auto.totalPieces);
-  assert.ok(autoCalls.length > 0 && autoCalls.every((x) => x.instruction === DEFAULT_STYLE));
+  assert.ok(autoCalls.length > 0 && autoCalls.every((x) => x.instruction === presetStyle(precleanText(TEXT))));
   assert.ok(plainCalls.length > 0 && plainCalls.every((x) => x.instruction === null));
   for (const j of Object.values(jobs)) {
     const pieces = j.segments.flatMap((s) => s.pieces);
@@ -450,6 +450,12 @@ test("0008 migration: old rows default to auto / NULL model; the live unique key
   // Re-running only fails on the ALTERs (index statements are idempotent).
   assert.throws(() => db.exec(migration), /duplicate column/);
   db.exec(migration.split("\n").filter((l) => !l.startsWith("ALTER")).join("\n"));
+  // 0009 (B1): next_part, NULL on old rows; re-running only fails on the ALTER.
+  const m9 = await readFile(new URL("migrations/0009_audio_handoff.sql", root), "utf8");
+  db.exec(m9);
+  assert.equal(db.prepare("SELECT next_part FROM audio_jobs WHERE id = 'a_old'").get().next_part, null);
+  assert.throws(() => db.exec(m9), /duplicate column/);
+  db.exec(m9.split("\n").filter((l) => !l.startsWith("ALTER")).join("\n"));
   // schema.sql (fresh databases) has the same columns and index.
   const fresh = new DatabaseSync(":memory:");
   fresh.exec(await readFile(new URL("schema.sql", root), "utf8"));
