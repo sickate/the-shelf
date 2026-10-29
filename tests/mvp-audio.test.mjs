@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { INSTANCE_BUDGET, SEQ_GAP, STEP_COST, AUDIO_BYTES_PER_CHAR, runAudioWorkflow } from "../app/worker.mjs";
-import { DEFAULT_STYLE, precleanText, splitPieces } from "../app/audio-text.mjs";
+import { precleanText, presetStyle, splitPieces } from "../app/audio-text.mjs";
 import { ORIGIN, setup } from "./helpers/mvp-fixture.mjs";
 import { cleanupText, drain, fakeOai, fakeStep, fakeSynth, fakeWorkflows, oaiOk } from "./helpers/audio-fixture.mjs";
 
@@ -75,7 +75,7 @@ test("auth, origin, configuration and validation", async (t) => {
 test("create, dedupe, generate, play and budget end to end", async (t) => {
   const c = await audioSetup(t);
   const requests = fakeOai(t, (body) => ({
-    body: { content: JSON.stringify({ text: cleanupText(body.input), style: "平稳、客观的讲解语气" }) },
+    body: { content: JSON.stringify({ text: cleanupText(body.input), style: "语速稍慢，语气庄重，句间停顿明显" }) },
   }));
   const synth = fakeSynth();
   const res = await c.create({ chapterKey: "epub:ch1", label: "第一章", text: CHAPTER });
@@ -106,7 +106,7 @@ test("create, dedupe, generate, play and budget end to end", async (t) => {
   const done = await c.getJob(job.id);
   assert.equal(done.status, "ready");
   assert.equal(done.error, null);
-  assert.equal(done.style, "平稳、客观的讲解语气");
+  assert.equal(done.style, "语速稍慢，语气庄重，句间停顿明显");
   assert.equal(done.donePieces, done.totalPieces);
   assert.equal(done.llmFallbackBlocks, 0);
   const pieces = done.segments.flatMap((s) => s.pieces);
@@ -122,7 +122,7 @@ test("create, dedupe, generate, play and budget end to end", async (t) => {
   for (const gone of ["[1]", "①", "https://", "见第 12 页", "——", "\n12\n"]) assert.ok(!spoken.includes(gone), gone);
   assert.ok(spoken.includes("machine learning"));
   assert.ok(synth.calls.every((x) => x.text.length <= 200 && x.key === "dash-test" && x.voice === "xunanchuan_v3.1"));
-  assert.ok(synth.calls.every((x) => x.model === "qwen-audio-3.1-tts-flash" && x.instruction === "平稳、客观的讲解语气"));
+  assert.ok(synth.calls.every((x) => x.model === "qwen-audio-3.1-tts-flash" && x.instruction === "语速稍慢，语气庄重，句间停顿明显"));
   // Raw chapter text is not kept once cleaned.
   const { raws } = await c.db.prepare("SELECT COUNT(*) AS raws FROM audio_blocks WHERE raw IS NOT NULL").first();
   assert.equal(raws, 0);
@@ -176,7 +176,7 @@ test("create, dedupe, generate, play and budget end to end", async (t) => {
 
 test("regenerate reuses cleaned text, switches voice and keeps budget", async (t) => {
   const c = await audioSetup(t);
-  const requests = fakeOai(t, (body) => ({ body: { content: JSON.stringify({ text: cleanupText(body.input), style: "沉稳的语气" }) } }));
+  const requests = fakeOai(t, (body) => ({ body: { content: JSON.stringify({ text: cleanupText(body.input), style: "沉稳的语气，语速稍慢" }) } }));
   const synth = fakeSynth();
   const { job } = await (await c.create({ chapterKey: "c", label: "章", text: CHAPTER })).json();
   await drain(c.env, synth);
@@ -187,7 +187,7 @@ test("regenerate reuses cleaned text, switches voice and keeps budget", async (t
   const fresh = body.job;
   assert.equal(body.reused, false);
   assert.equal(fresh.voice, "longanhuan_v3.1");
-  assert.equal(fresh.style, "沉稳的语气");
+  assert.equal(fresh.style, "沉稳的语气，语速稍慢");
   // The ready job of the other voice stays live (switching back is free).
   assert.equal((await c.owner(`/api/audio/${job.id}`)).status, 200);
   assert.ok(!c.wf.terminated.includes(`${job.id}-p0`));
@@ -207,13 +207,16 @@ test("regenerate reuses cleaned text, switches voice and keeps budget", async (t
   assert.equal((await c.owner(`/api/audio/${fresh.id}`)).status, 200);
   await drain(c.env, synth);
   assert.equal(synth.calls.length, calls);
-  // Same voice again (retry) replaces the job.
+  // Same voice again on a ready job: the same job, unchanged (no soft delete, no rebuild, no synthesis).
   const same = await c.owner(`/api/audio/${fresh.id}/regenerate`, { method: "POST", body: "" });
-  assert.equal(same.status, 201);
-  assert.equal((await same.json()).job.voice, "longanhuan_v3.1");
-  assert.equal((await c.owner(`/api/audio/${fresh.id}`)).status, 404);
-  assert.ok(c.wf.terminated.includes(`${fresh.id}-p0`));
-  assert.equal((await c.owner(`/api/audio/${fresh.id}/regenerate`, { method: "POST", body: JSON.stringify({ voice: "X" }) })).status, 404);
+  assert.equal(same.status, 200);
+  const sameBody = await same.json();
+  assert.deepEqual([sameBody.job.id, sameBody.job.status, sameBody.resumed], [fresh.id, "ready", false]);
+  assert.equal((await c.owner(`/api/audio/${fresh.id}`)).status, 200);
+  assert.ok(!c.wf.terminated.includes(`${fresh.id}-p0`));
+  await drain(c.env, synth);
+  assert.equal(synth.calls.length, calls);
+  assert.equal((await c.owner(`/api/audio/${fresh.id}/regenerate`, { method: "POST", body: JSON.stringify({ voice: "X" }) })).status, 400); // still live: bad voice
   assert.equal((await c.owner("/api/audio/a_000000000000000000000000/regenerate", { method: "POST", body: "{}" })).status, 404);
 });
 
@@ -226,7 +229,7 @@ test("LLM output failing validation falls back to the rules; style falls back to
   const done = await c.getJob(job.id);
   assert.equal(done.status, "ready");
   assert.equal(done.llmFallbackBlocks, 1);
-  assert.equal(done.style, DEFAULT_STYLE);
+  assert.equal(done.style, presetStyle(precleanText(CHAPTER)));
   assert.ok(synth.calls.map((x) => x.text).join("").includes("这是一段较长的正文"));
 });
 
@@ -245,7 +248,7 @@ test("LLM busy retries with Retry-After backoff; other errors fall back without 
   const done = await c.getJob(job.id);
   assert.equal(done.status, "ready");
   assert.equal(done.llmFallbackBlocks, 0);
-  assert.equal(done.style, DEFAULT_STYLE); // valid output but no style
+  assert.equal(done.style, presetStyle(precleanText(CHAPTER))); // valid output but no style
 
   // A 500 is not retried.
   const d = await audioSetup(t);

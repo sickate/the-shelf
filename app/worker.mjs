@@ -13,6 +13,7 @@ import {
   nextSegmentIndex,
   normalizeCleaned,
   precleanText,
+  presetStyle,
   splitPieces,
   validateCleanup,
   validateStyle,
@@ -1763,7 +1764,14 @@ export const SEQ_GAP = 16; // gaps between piece seqs so a piece can be split in
 export const BLOCK_SEQ = 65_536; // seq = block * BLOCK_SEQ + k * SEQ_GAP
 export const LLM_MAX_ATTEMPTS = 6;
 const LLM_MIN_CHARS = 40;
-const PIECE_ROUNDS = 3; // rounds of (1 + PIECE_STEP retries) attempts before a piece fails the job
+// A piece failing a round (1 + STEP_PIECE retries) waits and retries: 30 s, 2 min, 5 min; after the
+// fourth failed round the piece is marked failed and the job moves on to the next piece. The job then
+// ends `failed` with its ready pieces playable; a retry resumes only the failed pieces.
+export const PIECE_RETRY_MS = [30_000, 120_000, 300_000];
+const PIECE_ROUNDS = PIECE_RETRY_MS.length + 1;
+// Failed pieces after which the job stops early (systemic failure, e.g. a revoked key); pending pieces
+// stay pending and resume with a retry.
+export const MAX_FAILED_PIECES = 3;
 // Free plan, per invocation: 50 external subrequests and 50 D1 queries (a batch counts as one); 1,024
 // steps per instance. Whether Workflows apply these per step or per instance is not documented, so
 // each instance plans conservatively: every step has a worst-case cost (retries of the external call
@@ -1774,11 +1782,16 @@ export const STEP_COST = {
   clean: { ext: 3, d1: 5 },
   piece: { ext: 3, d1: 6 },
   fail: { ext: 0, d1: 2 },
-  continue: { ext: 0, d1: 3 },
+  continue: { ext: 0, d1: 1 },
 };
-const MAX_PARTS = 2_000;
+export const MAX_PARTS = 2_000;
 const AUDIO_DONE = new Set(["ready", "failed", "budget_exceeded"]);
-const CPU_ERROR = /cpu|exceeded|time limit|resource limit/i;
+// Only a genuine Workers CPU-limit termination (exceededCpu / "Worker exceeded CPU time limit") may
+// split pieces and lower the piece length. Not: subrequest depth/count ("exceeded the maximum Workers
+// subrequest depth"), R2 errors ("put: ..."), or the TTS client's own tts_* errors.
+const CPU_LIMIT = /exceeded_?cpu|cpu[ _]time[ _]limit|exceeded cpu/i;
+const NOT_CPU = /^tts_|^put:|subrequest/i;
+export const isCpuLimit = (code) => !NOT_CPU.test(String(code)) && CPU_LIMIT.test(String(code));
 const AUDIO_JOB_ID = /^a_[0-9a-f]{24}$/;
 const STEP_FAST = { retries: { limit: 3, delay: "2 seconds", backoff: "exponential" }, timeout: "1 minute" };
 const STEP_CLEAN = { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" }, timeout: "15 minutes" };
@@ -1802,8 +1815,17 @@ const LIVE_JOB = `SELECT j.* FROM audio_jobs j JOIN books b ON b.id = j.book_id
   WHERE j.deleted_at IS NULL AND b.deleted_at IS NULL`;
 const liveJob = (env, id) => env.DB.prepare(`${LIVE_JOB} AND j.id = ?`).bind(id).first();
 
-/** Public job view (matches app/web/lib/audio-api.ts AudioJob). Pending pieces get provisional segments. */
-async function jobView(env, job) {
+// Stored marks are written by audioPieceStep from finite numbers (JSON.stringify); this linear check
+// (no backtracking) guarantees the spliced string is a valid, non-empty JSON number array.
+const MARKS_JSON = /^\[-?\d+(?:\.\d+)?(?:,-?\d+(?:\.\d+)?)*\]$/;
+const qs = JSON.stringify;
+
+/**
+ * Public job view as a JSON string (matches app/web/lib/audio-api.ts AudioJob). Pending pieces get
+ * provisional segments. Each ready piece's marks are spliced in as the stored string (no JSON.parse /
+ * re-stringify: a long chapter is polled every few seconds within the Free 10 ms CPU limit).
+ */
+export async function jobJson(env, job) {
   const { results } = await env.DB.prepare(
     "SELECT seq, segment, status, duration_ms, est_ms, text, marks FROM audio_pieces WHERE job_id = ? AND status != 'split' ORDER BY seq",
   )
@@ -1818,19 +1840,17 @@ async function jobView(env, job) {
     const s = ready ? p.segment : nextSegmentIndex(seg, segMs, d);
     segMs = s === seg ? segMs + d : d;
     seg = s;
-    const out = (segs[s] ??= { index: s, durationMs: 0, pieces: [] });
-    const piece = { seq: p.seq, durationMs: d, ready, text: p.text ?? "" };
-    if (ready && p.marks) {
-      try {
-        const marks = JSON.parse(p.marks);
-        if (Array.isArray(marks) && marks.length) piece.marks = marks;
-      } catch {} // a malformed row only loses its marks (the player estimates)
-    }
-    out.pieces.push(piece);
+    const out = (segs[s] ??= { durationMs: 0, pieces: [] });
+    let piece = `{"seq":${qs(p.seq)},"durationMs":${qs(d)},"ready":${ready},"text":${qs(p.text ?? "")}`;
+    // A malformed or empty row only loses its marks (the player estimates).
+    if (ready && typeof p.marks === "string" && MARKS_JSON.test(p.marks)) piece += `,"marks":${p.marks}`;
+    out.pieces.push(`${piece}}`);
     out.durationMs += d;
   }
-  const segments = segs.filter(Boolean).map((s, index) => ({ ...s, index }));
-  return {
+  const segments = segs
+    .filter(Boolean)
+    .map((x, index) => `{"index":${index},"durationMs":${qs(x.durationMs)},"pieces":[${x.pieces.join(",")}]}`);
+  const head = qs({
     id: job.id,
     status: job.status,
     voice: job.voice,
@@ -1842,14 +1862,26 @@ async function jobView(env, job) {
     donePieces: job.done_pieces ?? 0,
     totalPieces: job.total_pieces ?? 0,
     error: job.error ?? null,
-    segments,
+  });
+  const tail = qs({
     pieceChars: job.piece_chars,
     cpuDowngraded: Boolean(job.cpu_downgraded),
     llmFallbackBlocks: job.llm_fallback_blocks ?? 0,
     billedChars: job.billed_chars ?? 0,
     createdAt: job.created_at,
     updatedAt: job.updated_at,
-  };
+  });
+  return `${head.slice(0, -1)},"segments":[${segments.join(",")}],${tail.slice(1)}`;
+}
+
+/** A JSON response `{"job": <job view>, ...extra}` built around the job view string. */
+async function jobResponse(env, job, extra = {}, status = 200) {
+  const more = qs(extra);
+  const body = `{"job":${await jobJson(env, job)}${more === "{}" ? "" : `,${more.slice(1, -1)}`}}`;
+  return new Response(body, {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...SECURITY },
+  });
 }
 
 /** Moves a job to a status unless it already reached a terminal one. */
@@ -1917,6 +1949,56 @@ async function startJob(env, jobId) {
     console.error("audio_workflow_start", error?.message);
     await setJobStatus(env, jobId, "failed", "workflow_start_failed");
   }
+}
+
+/** Part number of a Workflow instance id `<jobId>-p<part>` (null when unknown). */
+const workflowPart = (id) => {
+  const m = /-p(\d{1,9})$/.exec(id ?? "");
+  return m ? Number(m[1]) : null;
+};
+
+/**
+ * Starts the continuation instance a Workflow asked for (audio_jobs.next_part). Called only from
+ * top-level invocations (cron, job GET, retry), never from inside a Workflow: an instance creating the
+ * next one nests the call and raises the subrequest depth until every subrequest fails (2026-10-28,
+ * "exceeded the maximum Workers subrequest depth"). Idempotent: the id `<jobId>-p<part>` is
+ * deterministic, an existing instance counts as started, and next_part is cleared only while it still
+ * names this part.
+ */
+export async function kickJob(env, job) {
+  const part = job?.next_part;
+  if (part === null || part === undefined || !env.AUDIO_WORKFLOW) return null;
+  if (job.deleted_at || AUDIO_DONE.has(job.status)) return null;
+  const id = `${job.id}-p${part}`;
+  try {
+    await env.AUDIO_WORKFLOW.create({ id, params: { jobId: job.id, part } });
+  } catch (error) {
+    try {
+      await env.AUDIO_WORKFLOW.get(id); // created by a concurrent kick (or an earlier attempt)
+    } catch {
+      console.error("audio_workflow_kick", errorCode(error?.message));
+      return null; // next_part stays: the next cron run / poll tries again
+    }
+  }
+  await env.DB.prepare("UPDATE audio_jobs SET workflow_id = ?, next_part = NULL, updated_at = ? WHERE id = ? AND next_part = ?")
+    .bind(id, nowIso(), job.id, part)
+    .run();
+  job.next_part = null;
+  job.workflow_id = id;
+  return id;
+}
+
+/** Cron Trigger (every minute, app/wrangler.jsonc): starts pending continuations. */
+export async function audioCron(env) {
+  if (!env.DB || !env.AUDIO_WORKFLOW) return 0;
+  const { results } = await env.DB.prepare(
+    `SELECT id, status, next_part, deleted_at FROM audio_jobs
+     WHERE next_part IS NOT NULL AND deleted_at IS NULL AND status NOT IN ('ready','failed','budget_exceeded')
+     ORDER BY updated_at LIMIT 10`,
+  ).all();
+  let started = 0;
+  for (const job of results) if (await kickJob(env, job)) started++;
+  return started;
 }
 
 async function stopWorkflow(env, workflowId) {
@@ -1987,8 +2069,10 @@ async function createAudio(request, env, row) {
   const voice = audioVoice(body.voice, DEFAULT_VOICE);
   const tone = audioTone(body.tone, DEFAULT_TONE);
   const sha = await sha256Hex(text);
+  // Any live job on the key (failed included) is returned, never re-created: a failed job resumes via
+  // POST /api/audio/:id/regenerate.
   const existing = await sameKeyJob(env, row.id, chapterKey, sha, voice, tone);
-  if (existing) return json({ job: await jobView(env, existing), duplicate: true });
+  if (existing) return jobResponse(env, existing, { duplicate: true });
 
   const { pieceChars } = await audioSettings(env);
   const blocks = chunkBlocks(text).map((t) => ({ t, n: t.length, e: Math.ceil(t.length / (pieceChars * 0.8)) }));
@@ -2014,10 +2098,10 @@ async function createAudio(request, env, row) {
     // A concurrent identical request won the live-key unique index.
     const raced = await sameKeyJob(env, row.id, chapterKey, sha, voice, tone);
     if (!raced) throw error;
-    return json({ job: await jobView(env, raced), duplicate: true });
+    return jobResponse(env, raced, { duplicate: true });
   }
   await startJob(env, id);
-  return json({ job: await jobView(env, await liveJob(env, id)), duplicate: false }, 201);
+  return jobResponse(env, await liveJob(env, id), { duplicate: false }, 201);
 }
 
 async function findAudio(request, env, row, url) {
@@ -2038,24 +2122,56 @@ async function findAudio(request, env, row, url) {
     .bind(row.id, chapterKey, voice, tone)
     .first();
   if (!job) throw new HttpError(404, "not_found");
-  return json({ job: await jobView(env, job) });
+  await kickJob(env, job);
+  return jobResponse(env, job);
 }
 
 async function getAudio(request, env, jobId) {
   await requireOwner(request, env);
   const job = await liveJob(env, jobId);
   if (!job) throw new HttpError(404, "not_found");
-  return json({ job: await jobView(env, job) });
+  await kickJob(env, job); // opportunistic: a poll starts a pending continuation without waiting for cron
+  return jobResponse(env, job);
+}
+
+/**
+ * Resumes a failed / budget_exceeded job in place: failed pieces go back to pending (reservations,
+ * ready pieces and bytes untouched, so nothing is reserved twice) and a new Workflow instance starts
+ * with the next part number. Other statuses are returned unchanged.
+ */
+async function resumeJob(env, job) {
+  if (job.status !== "failed" && job.status !== "budget_exceeded") return job;
+  const part = (workflowPart(job.workflow_id) ?? 0) + 1;
+  const now = nowIso();
+  const [, upd] = await env.DB.batch([
+    env.DB.prepare("UPDATE audio_pieces SET status = 'pending', attempts = 0, error = NULL, updated_at = ? WHERE job_id = ? AND status = 'failed'").bind(
+      now,
+      job.id,
+    ),
+    env.DB.prepare(
+      `UPDATE audio_jobs SET
+         status = CASE WHEN EXISTS (SELECT 1 FROM audio_pieces WHERE job_id = ?1) THEN 'synthesizing' ELSE 'queued' END,
+         error = NULL, next_part = ?2, updated_at = ?3
+       WHERE id = ?1 AND deleted_at IS NULL AND status IN ('failed','budget_exceeded')`,
+    ).bind(job.id, part, now),
+    refreshStmt(env, job.id),
+  ]);
+  const fresh = await liveJob(env, job.id);
+  if (!fresh) return job;
+  if (upd.meta?.changes) await kickJob(env, fresh); // otherwise a concurrent retry already resumed it
+  return fresh;
 }
 
 /**
  * Regenerate / switch voice or tone ({voice?, tone?}; defaults: the job's own, a legacy voice maps to
- * the default voice). The new job always uses the current TTS model and reuses the cleaned blocks (no
- * new LLM call); no bytes are released.
- * - Same key as the job (retry): the job is soft-deleted and replaced.
- * - Another key that already has a live, usable job: that job is returned (nothing synthesized).
- * - Another key: a new job; the old one stays live when it is ready (switching back is free),
- *   otherwise it is soft-deleted and its workflow stopped. A failed job on the target key is replaced.
+ * the default voice). No bytes are released and no job is soft-deleted and rebuilt on its own key.
+ * - Same key as the job (retry): the same job resumes (200, resumed: true): only failed pieces are
+ *   synthesized again; a ready or still-running job is returned unchanged.
+ * - Another key with a live job: that job (resumed when failed / budget_exceeded) is returned (200,
+ *   reused: true).
+ * - Another key without a job: a new job (201) on the current TTS model reusing the cleaned blocks (no
+ *   new LLM call); the old one stays live when it is ready (switching back is free), otherwise it is
+ *   soft-deleted and its workflow stopped.
  */
 async function regenerateAudio(request, env, jobId) {
   await requireOwner(request, env);
@@ -2067,19 +2183,21 @@ async function regenerateAudio(request, env, jobId) {
   requireReadable(book);
   const voice = audioVoice(body.voice, old.voice);
   const tone = audioTone(body.tone, old.tone === "plain" ? "plain" : DEFAULT_TONE);
-  const sameKey = voice === old.voice && tone === (old.tone ?? DEFAULT_TONE);
-  const target = sameKey ? null : await sameKeyJob(env, old.book_id, old.chapter_key, old.source_sha256, voice, tone);
-  if (target && target.status !== "failed" && target.status !== "budget_exceeded")
-    return json({ job: await jobView(env, target), reused: true });
-  const keepOld = !sameKey && old.status === "ready";
+  const resumable = (j) => j.status === "failed" || j.status === "budget_exceeded";
+  if (voice === old.voice && tone === (old.tone ?? DEFAULT_TONE))
+    return jobResponse(env, await resumeJob(env, old), { reused: false, resumed: resumable(old) });
+  const target = await sameKeyJob(env, old.book_id, old.chapter_key, old.source_sha256, voice, tone);
+  if (target) return jobResponse(env, await resumeJob(env, target), { reused: true, resumed: resumable(target) });
+  const keepOld = old.status === "ready";
   const { pieceChars } = await audioSettings(env);
   const id = newAudioId();
   const now = nowIso();
   const statements = [
-    env.DB.prepare(
-      `UPDATE audio_jobs SET deleted_at = ?1, updated_at = ?1 WHERE deleted_at IS NULL
-         AND ((id = ?2 AND ?3 = 0) OR (book_id = ?4 AND chapter_key = ?5 AND source_sha256 = ?6 AND voice = ?7 AND tone = ?8))`,
-    ).bind(now, old.id, keepOld ? 1 : 0, old.book_id, old.chapter_key, old.source_sha256, voice, tone),
+    env.DB.prepare("UPDATE audio_jobs SET deleted_at = ?1, updated_at = ?1 WHERE deleted_at IS NULL AND id = ?2 AND ?3 = 0").bind(
+      now,
+      old.id,
+      keepOld ? 1 : 0,
+    ),
     ...jobStatements(env, {
       id,
       bookId: old.book_id,
@@ -2089,17 +2207,25 @@ async function regenerateAudio(request, env, jobId) {
       voice,
       tone,
       ttsModel: ttsModel(env),
-      style: old.style,
+      // A default-like style from before 2026-10-28 is not copied: block 0 then picks a content preset.
+      style: validateStyle(old.style),
       pieceChars,
       estSeconds: old.est_seconds,
       totalPieces: 0,
       copyFrom: old.id,
     }),
   ];
-  await env.DB.batch(statements);
-  for (const w of [keepOld ? null : old.workflow_id, target?.workflow_id]) await stopWorkflow(env, w);
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    // A concurrent request created the target job first.
+    const raced = await sameKeyJob(env, old.book_id, old.chapter_key, old.source_sha256, voice, tone);
+    if (!raced) throw error;
+    return jobResponse(env, raced, { reused: true, resumed: false });
+  }
+  if (!keepOld) await stopWorkflow(env, old.workflow_id);
   await startJob(env, id);
-  return json({ job: await jobView(env, await liveJob(env, id)), reused: false }, 201);
+  return jobResponse(env, await liveJob(env, id), { reused: false }, 201);
 }
 
 async function deleteAudio(request, env, jobId) {
@@ -2192,12 +2318,17 @@ export async function audioNext(env, jobId) {
   if (piece) return { action: "piece", seq: piece.seq, round: piece.attempts };
   const block = firstRow(blockR);
   if (block) return { action: "clean", idx: block.idx, attempt: block.llm_attempts };
+  // Done: ready when every piece is; failed (ready pieces stay playable) when some piece failed; with
+  // no piece at all the cleaned text was empty.
   await env.DB.batch([
     refreshStmt(env, jobId),
     env.DB.prepare(
       `UPDATE audio_jobs SET
-         status = CASE WHEN EXISTS (SELECT 1 FROM audio_pieces WHERE job_id = ?1 AND status = 'ready') THEN 'ready' ELSE 'failed' END,
-         error = CASE WHEN EXISTS (SELECT 1 FROM audio_pieces WHERE job_id = ?1 AND status = 'ready') THEN NULL ELSE 'empty_text' END,
+         status = CASE WHEN EXISTS (SELECT 1 FROM audio_pieces WHERE job_id = ?1 AND status = 'failed') THEN 'failed'
+                       WHEN EXISTS (SELECT 1 FROM audio_pieces WHERE job_id = ?1 AND status = 'ready') THEN 'ready' ELSE 'failed' END,
+         error = CASE WHEN EXISTS (SELECT 1 FROM audio_pieces WHERE job_id = ?1 AND status = 'failed')
+                        THEN substr('tts_failed: ' || (SELECT error FROM audio_pieces WHERE job_id = ?1 AND status = 'failed' ORDER BY seq LIMIT 1), 1, 160)
+                      WHEN EXISTS (SELECT 1 FROM audio_pieces WHERE job_id = ?1 AND status = 'ready') THEN NULL ELSE 'empty_text' END,
          updated_at = ?2
        WHERE id = ?1 AND status NOT IN ('ready','failed','budget_exceeded')`,
     ).bind(jobId, nowIso()),
@@ -2277,9 +2408,11 @@ export async function audioCleanStep(env, jobId, idx) {
     refreshStmt(env, jobId),
   );
   // The narration style comes from the first block (its pieces are synthesized first); a fallback,
-  // invalid style or a block cleaned earlier (regenerate) gets the neutral default.
+  // a missing / default-like style or a block cleaned earlier (regenerate) gets the content preset.
   if (idx === 0)
-    writes.push(env.DB.prepare("UPDATE audio_jobs SET style = COALESCE(style, ?) WHERE id = ?").bind(style ?? DEFAULT_STYLE, jobId));
+    writes.push(
+      env.DB.prepare("UPDATE audio_jobs SET style = COALESCE(style, ?) WHERE id = ?").bind(style ?? presetStyle(firstRow(cleanedR).cleaned), jobId),
+    );
   await env.DB.batch(writes);
   return { ok: true, llm: status };
 }
@@ -2326,7 +2459,9 @@ export async function audioPieceStep(env, jobId, seq, deps = {}) {
       : { text: p.text, voice: job.voice, model, instructions: style },
     deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : undefined,
   );
-  const marks = Array.isArray(tts.marks) && tts.marks.length ? JSON.stringify(tts.marks) : null;
+  // Validated here once, so the job view can splice the stored string without parsing it.
+  const marks =
+    Array.isArray(tts.marks) && tts.marks.length && tts.marks.every((x) => Number.isFinite(x)) ? JSON.stringify(tts.marks) : null;
   const size = tts.audio.byteLength;
   if (size > MAX_FILE_BYTES) throw new Error("tts_too_large");
   if (size > p.reserved_bytes) {
@@ -2364,10 +2499,12 @@ const errorCode = (message) =>
     .slice(0, 120) || "unknown";
 
 /**
- * A piece step failed after its retries. A CPU-limit failure (or a long piece failing two rounds)
- * splits the piece into ≤ 120-char sub-pieces inside its seq gap, also splits the job's other pending
- * long pieces, and lowers the job's and the global piece length to 120. Other failures retry in a
- * later round, then fail the job.
+ * A piece step failed after its retries. A genuine CPU-limit failure (legacy realtime jobs: also a
+ * long piece failing two rounds) splits the piece into ≤ 120-char sub-pieces inside its seq gap, also
+ * splits the job's other pending long pieces, and lowers the job's and the global piece length to 120.
+ * Other failures retry after 30 s, 2 min and 5 min; then the piece is marked failed and the job goes
+ * on with the next piece (it ends failed, ready pieces playable), unless MAX_FAILED_PIECES pieces have
+ * failed, which stops the job right away.
  */
 export async function audioPieceFailed(env, jobId, seq, message) {
   const [jobR, pieceR, longR] = await env.DB.batch([
@@ -2384,14 +2521,15 @@ export async function audioPieceFailed(env, jobId, seq, message) {
   if (!p || p.status !== "pending") return { ok: true };
   const code = errorCode(message);
   const rounds = p.attempts + 1;
-  // qwen-audio jobs (binary frames, no base64 decoding): only a real CPU-limit signal splits pieces and
-  // lowers the global piece length; the client's own tts_* connection/protocol errors never do, and a
-  // repeated failure just retries. Legacy realtime jobs keep the A1 rule (CPU signal or 2 failed rounds).
+  // Only a real CPU-limit signal splits pieces and lowers the global piece length (never subrequest
+  // depth, R2 put or tts_* errors). Legacy realtime jobs (base64 audio) keep the A1 rule that a long
+  // piece failing two rounds is split too, except for infrastructure errors that splitting cannot fix.
   const qwenAudio = isQwenAudioModel(job.tts_model ?? LEGACY_TTS_MODEL);
-  const cpu = qwenAudio ? !/^tts_/.test(code) && CPU_ERROR.test(code) : CPU_ERROR.test(code);
+  const cpu = isCpuLimit(code);
+  const repeated = !qwenAudio && rounds >= 2 && !/^put:|subrequest/i.test(code);
   const splittable = p.text.length > AUDIO_PIECE_MIN && p.seq % SEQ_GAP === 0;
   const now = nowIso();
-  if (splittable && (cpu || (!qwenAudio && rounds >= 2))) {
+  if (splittable && (cpu || repeated)) {
     const reason = cpu ? "cpu_limit" : "repeated_failure";
     const targets = longR.results.some((r) => r.seq === seq) ? longR.results : [p, ...longR.results];
     const rows = [];
@@ -2429,9 +2567,10 @@ export async function audioPieceFailed(env, jobId, seq, message) {
     await env.DB.prepare("UPDATE audio_pieces SET attempts = ?, error = ?, updated_at = ? WHERE job_id = ? AND seq = ?")
       .bind(rounds, code, now, jobId, seq)
       .run();
-    return { retryMs: 30_000 * rounds };
+    return { retryMs: PIECE_RETRY_MS[rounds - 1] };
   }
-  await env.DB.batch([
+  // The piece fails; the job continues with the next piece unless too many have failed.
+  const [, , failedR] = await env.DB.batch([
     env.DB.prepare("UPDATE audio_pieces SET status = 'failed', attempts = ?, error = ?, updated_at = ? WHERE job_id = ? AND seq = ?").bind(
       rounds,
       code,
@@ -2439,40 +2578,42 @@ export async function audioPieceFailed(env, jobId, seq, message) {
       jobId,
       seq,
     ),
-    statusStmt(env, jobId, "failed", clip(`tts_failed: ${code}`, 160)),
     refreshStmt(env, jobId),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM audio_pieces WHERE job_id = ? AND status = 'failed'").bind(jobId),
   ]);
+  if ((firstRow(failedR)?.n ?? 0) >= MAX_FAILED_PIECES) {
+    await statusStmt(env, jobId, "failed", clip(`tts_failed: ${code}`, 160)).run();
+    return { failed: true, stopped: true };
+  }
   return { failed: true };
 }
 
-/** Starts the next instance of a long job (deterministic id, so a re-run step does not duplicate it). */
-export async function audioContinue(env, jobId, part) {
-  const job = await liveJob(env, jobId);
-  if (!job || AUDIO_DONE.has(job.status)) return { stop: true };
+/**
+ * Hands a long job over to a continuation instance: records "needs part N" (audio_jobs.next_part) and
+ * lets this instance end. The instance itself never calls AUDIO_WORKFLOW.create (nested creation
+ * raised the subrequest depth, 2026-10-28); kickJob starts part N from the cron or a job GET.
+ */
+export async function audioHandoff(env, jobId, part) {
   if (part > MAX_PARTS) {
     await setJobStatus(env, jobId, "failed", "too_many_parts");
     return { stop: true };
   }
-  const id = `${jobId}-p${part}`;
-  try {
-    await env.AUDIO_WORKFLOW.create({ id, params: { jobId, part } });
-  } catch (error) {
-    // Already created by an earlier attempt of this step?
-    try {
-      await env.AUDIO_WORKFLOW.get(id);
-    } catch {
-      throw error;
-    }
-  }
-  await env.DB.prepare("UPDATE audio_jobs SET workflow_id = ?, updated_at = ? WHERE id = ?").bind(id, nowIso(), jobId).run();
-  return { id };
+  await env.DB.prepare(
+    `UPDATE audio_jobs SET next_part = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL
+       AND status NOT IN ('ready','failed','budget_exceeded')`,
+  )
+    .bind(part, nowIso(), jobId)
+    .run();
+  return { part };
 }
 
 /**
  * Workflow body (AudioWorkflow.run in app/entry.mjs). Loop: next → clean/piece step. The planned cost
  * of each step (external calls plus R2/D1 calls, retries included) is summed per instance; before the
- * sum would pass INSTANCE_BUDGET a continuation instance takes over (Free: 50 external subrequests
- * and 50 D1 queries per invocation; 1,024 steps per instance).
+ * sum would pass INSTANCE_BUDGET the instance records a hand-off and ends; a top-level invocation
+ * (cron / job GET) starts the continuation (Free: 50 external subrequests and 50 D1 queries per
+ * invocation; 1,024 steps per instance). Steps call only external services, D1 and R2 (never this
+ * Worker's own fetch or the Workflow binding), so the subrequest depth stays constant.
  */
 export async function runAudioWorkflow(env, event, step, deps = {}) {
   const { jobId, part = 0 } = event?.payload ?? {};
@@ -2494,7 +2635,7 @@ export async function runAudioWorkflow(env, event, step, deps = {}) {
       add(STEP_COST.next);
       if (next.action !== "clean" && next.action !== "piece") return next.action;
       if (!fits(STEP_COST[next.action], STEP_COST.fail, STEP_COST.next, STEP_COST.continue)) {
-        await run(`continue-${part + 1}`, STEP_FAST, () => audioContinue(env, jobId, part + 1));
+        await run(`handoff-${part + 1}`, STEP_FAST, () => audioHandoff(env, jobId, part + 1));
         return "continued";
       }
       add(STEP_COST[next.action]);
@@ -2623,6 +2764,10 @@ async function handleApi(request, env, url) {
 }
 
 export default {
+  /** Cron Trigger (app/wrangler.jsonc triggers.crons, every minute): starts pending audio continuations. */
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(audioCron(env).catch((error) => console.error("audio_cron", errorCode(error?.message))));
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname !== "/api" && !url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);

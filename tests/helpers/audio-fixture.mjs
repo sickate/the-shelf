@@ -1,4 +1,4 @@
-import { runAudioWorkflow } from "../../app/worker.mjs";
+import { audioCron, runAudioWorkflow } from "../../app/worker.mjs";
 
 /**
  * Synthetic MP3: Layer III frames (MPEG-2 24 kHz mono by default; `mpeg1` = MPEG-1 44.1 kHz),
@@ -52,8 +52,10 @@ export function fakeWorkflows() {
 export function fakeStep() {
   const cache = new Map();
   const log = [];
+  const sleeps = [];
   return {
     log,
+    sleeps,
     async do(name, config, fn) {
       if (typeof config === "function") fn = config;
       if (cache.has(name)) return cache.get(name);
@@ -74,21 +76,27 @@ export function fakeStep() {
     },
     async sleep(name, ms) {
       log.push(`sleep:${name}:${ms > 0}`);
+      sleeps.push(ms);
     },
   };
 }
 
-/** Runs every created-but-not-run instance (continuations included) until none is left. */
-export async function drain(env, deps = {}, { max = 1000 } = {}) {
+/**
+ * Runs every created-but-not-run instance until none is left. Continuations are started the way
+ * production does it: by the top-level cron (audioCron) once the hand-off is recorded (`cron: false`
+ * leaves them pending).
+ */
+export async function drain(env, deps = {}, { max = 1000, cron = true } = {}) {
   const runs = [];
   for (let i = 0; i < max; i++) {
-    const inst = [...env.AUDIO_WORKFLOW.instances.values()].find((x) => !x.ran);
+    let inst = [...env.AUDIO_WORKFLOW.instances.values()].find((x) => !x.ran);
+    if (!inst && cron && (await audioCron(env))) inst = [...env.AUDIO_WORKFLOW.instances.values()].find((x) => !x.ran);
     if (!inst) return runs;
     inst.ran = true;
     const step = fakeStep();
     const before = deps.calls?.length ?? 0;
     const result = await runAudioWorkflow(env, { payload: inst.params }, step, deps);
-    runs.push({ id: inst.id, result, steps: step.log.filter((s) => !s.startsWith("sleep:")).length, log: step.log, synth: (deps.calls?.length ?? 0) - before });
+    runs.push({ id: inst.id, result, steps: step.log.filter((s) => !s.startsWith("sleep:")).length, log: step.log, sleeps: step.sleeps, synth: (deps.calls?.length ?? 0) - before });
   }
   throw new Error("drain did not finish");
 }
