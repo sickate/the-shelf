@@ -1,4 +1,5 @@
 // Owner upload flow: pick/drop files -> quick checks -> SHA-256 -> /api/upload/check -> review -> sequential PUT.
+import { extractExcerpt } from "./excerpt";
 import { api, ApiError, Book, bookUrl, el, humanSize } from "./common";
 
 export const MAX_BYTES = 20_000_000;
@@ -36,7 +37,6 @@ export const UPLOAD_ERRORS: Record<string, string> = {
   login_required: "需要登录，请先登录后再上传",
   bad_origin: "来源校验失败，请刷新页面后重试",
   rate_limited: "请求过于频繁，请稍后重试",
-  no_category: "请先填写分类",
   network: "网络错误，上传中断",
 };
 
@@ -94,7 +94,7 @@ async function collectDrop(dt: DataTransfer): Promise<Picked[]> {
   for (const e of entries as FsEntry[]) {
     if (e.name.startsWith(".")) continue;
     const files = await walkEntry(e);
-    // A dropped folder's top-level name is the category; nested folders are flattened.
+    // A dropped folder's top-level name is kept as the source folder; nested folders are flattened.
     for (const file of files) if (!file.name.startsWith(".")) out.push({ file, folder: e.isDirectory ? e.name : undefined });
   }
   return out;
@@ -121,7 +121,6 @@ function quickCheck(path: string, file: File): string | null {
 export interface UploadOptions {
   form: HTMLFormElement;
   fileInput: HTMLInputElement;
-  catInput: HTMLInputElement;
   review: HTMLElement;
   isOwner: () => boolean;
   onLoginLost: () => void;
@@ -153,7 +152,7 @@ export function initUpload(o: UploadOptions) {
     const badge = el("span", {});
     const li = el("li", { class: "review-item" });
     const name = el("span", { class: "title", title: it.path }, it.file.name);
-    const meta = el("span", { class: "muted" }, `${it.category || "—"} · ${humanSize(it.file.size)}`);
+    const meta = el("span", { class: "muted" }, `${it.category || "自动归类"} · ${humanSize(it.file.size)}`);
     const note = el("span", {});
     it.note = note;
     if (!it.ok) {
@@ -195,12 +194,11 @@ export function initUpload(o: UploadOptions) {
     if (!picked.length) return say("没有可处理的文件");
     busy = true;
     say("");
-    const loose = o.catInput.value.trim().replace(/^\/+|\/+$/g, "");
     items = picked.map(({ file, folder }) => {
-      const category = folder ?? loose;
-      const path = `${category}/${file.name}`;
+      const category = folder ?? "";
+      const path = folder ? `${folder}/${file.name}` : file.name;
       const it: Item = { file, path, category, ok: false, status: "queued" };
-      const bad = !category ? "no_category" : quickCheck(path, file);
+      const bad = quickCheck(path, file);
       if (bad) it.reason = reasonText(bad, file.size);
       return it;
     });
@@ -267,11 +265,111 @@ export function initUpload(o: UploadOptions) {
     });
   }
 
+  // ---------- auto classification (background, one at a time) ----------
+  type Job = { it: Item; book: Book };
+  const jobs: Job[] = [];
+  let classifying = false;
+  let uploading = false;
+  let clsOk = 0;
+  let clsTotal = 0;
+  let clsDone = 0;
+  let upSummary = "";
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /** POST /class; returns the view or throws ApiError (with retryAfter for 503 ai_busy). */
+  async function classifyCall(book: Book, excerpt: string): Promise<any> {
+    const res = await fetch(`/api/books/${encodeURIComponent(book.id)}/class`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(excerpt ? { excerpt } : {}),
+    });
+    let data: any = null;
+    try {
+      data = await res.json();
+    } catch {
+      /* non-JSON */
+    }
+    if (!res.ok) {
+      const err = new ApiError(res.status, data?.error || `http_${res.status}`) as ApiError & { retryAfter?: number };
+      err.retryAfter = Number(res.headers.get("Retry-After")) || undefined;
+      throw err;
+    }
+    return data;
+  }
+
+  async function classifyOne({ it, book }: Job): Promise<boolean> {
+    setResult(it, "已上传 ✓ · 正在自动归类…", "muted");
+    let excerpt = "";
+    try {
+      excerpt = await extractExcerpt(book);
+    } catch {
+      /* best effort */
+    }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const v = await classifyCall(book, excerpt);
+        const names: any[] = Array.isArray(v?.clcPath) ? v.clcPath : [];
+        const last = names[names.length - 1]?.name || "";
+        if (v?.clc) {
+          setResult(it, `已上传 ✓ · 已归类：${v.clc} ${last}`.trim(), "ok");
+          return true;
+        }
+        setResult(it, "已上传 ✓ · 自动归类失败，可在详情页重试", "warn");
+        return false;
+      } catch (e) {
+        const code = e instanceof ApiError ? e.code : "";
+        if (code === "ai_busy" && attempt < 2) {
+          const s = Math.min(60, (e as ApiError & { retryAfter?: number }).retryAfter || 20);
+          await sleep(s * 1000);
+          continue;
+        }
+        if (code === "manual_locked") setResult(it, "已上传 ✓ · 已有手动分类", "ok");
+        else if (code === "generating") setResult(it, "已上传 ✓ · 正在归类中", "muted");
+        else setResult(it, "已上传 ✓ · 自动归类失败，可在详情页重试", "warn");
+        return false;
+      }
+    }
+  }
+
+  function classifyStatus() {
+    if (!uploading) say(`正在自动归类 ${clsDone}/${clsTotal}…`);
+  }
+
+  async function runClassifyQueue() {
+    if (classifying) return;
+    classifying = true;
+    while (jobs.length) {
+      classifyStatus();
+      if (await classifyOne(jobs.shift()!)) clsOk++;
+      clsDone++;
+    }
+    classifying = false;
+    if (uploading) return; // upload loop finalizes
+    finishClassify();
+  }
+
+  function finishClassify() {
+    if (classifying || !clsTotal) return;
+    say(`${upSummary}；自动归类 ${clsOk} 本`);
+    if (clsOk) o.onDone();
+    clsOk = clsTotal = clsDone = 0;
+  }
+
+  function enqueueClassify(it: Item, book: Book) {
+    if (!book) return;
+    jobs.push({ it, book });
+    clsTotal++;
+    void runClassifyQueue();
+  }
+
   async function start() {
     if (busy) return;
     const queue = items.filter((i) => i.ok && i.status === "queued");
     if (!queue.length) return;
     busy = true;
+    uploading = true;
     startBtn.disabled = clearBtn.disabled = true;
     let done = 0;
     let stopped = false;
@@ -286,6 +384,7 @@ export function initUpload(o: UploadOptions) {
         done++;
         if (it.bar) it.bar.hidden = true;
         setResult(it, "已上传 ✓", "ok");
+        enqueueClassify(it, book);
         if (uploadedHook && book) {
           try {
             await uploadedHook(book, it.file);
@@ -306,9 +405,15 @@ export function initUpload(o: UploadOptions) {
       }
     }
     busy = false;
+    uploading = false;
     clearBtn.disabled = false;
-    if (!stopped) say(`上传完成：${done}/${queue.length} 本成功`);
+    upSummary = `上传完成：${done}/${queue.length} 本成功`;
+    if (!stopped) say(upSummary);
     if (done) o.onDone();
+    if (clsTotal) {
+      if (classifying) classifyStatus();
+      else finishClassify();
+    }
   }
 
   startBtn.addEventListener("click", start);

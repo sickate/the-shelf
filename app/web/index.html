@@ -48,13 +48,9 @@
         <label class="upload-file">选择文件
           <input id="upload-files" type="file" multiple required>
         </label>
-        <label>分类（可新建）
-          <input id="upload-category" list="category-list" placeholder="例如：01-计算机与技术" required>
-        </label>
-        <datalist id="category-list"></datalist>
         <button type="submit" class="primary">检查文件 →</button>
       </form>
-      <p class="muted small">每本不超过 20,000,000 bytes；也可把文件或整个文件夹直接拖到页面上（文件夹名作为分类）。上传前会先检查并说明不能上传的原因。</p>
+      <p class="muted small">每本不超过 20,000,000 bytes；也可把文件或整个文件夹直接拖到页面上（上传后自动按中图法归类，可在详情页修改；拖入的文件夹名保留为来源目录）。上传前会先检查并说明不能上传的原因。</p>
       <div id="upload-review"></div>
     </details>
     <div id="thumb-panel" class="thumb-panel" hidden></div>

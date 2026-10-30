@@ -169,3 +169,9 @@ Garage 复制完成后再次运行 `node scripts/mvp-upload.mjs`，脚本自动�
 - 前端登录区只剩“使用 Google 登录”按钮和 `login_error` 提示，密码输入框已移除。
 - `scripts/mvp-upload.mjs`、`scripts/lib/batch.mjs`（classify/enrich/reidentify）不再有密码回退，必须设置 `SHELF_OWNER_API_TOKEN`，缺失时退出码 2（`mvp-upload --dry-run` 不联网，不要求令牌）。
 - 待办：部署后执行 `wrangler secret delete OWNER_PASSWORD` 删除生产遗留 secret（本任务未执行，未部署）。
+
+## 2026-10-29 上传免选分类 + 上传后自动归类
+
+- 目标：所有者上传时不再必须选择分类；上传成功后自动按中图法（CLC）归类。
+- 范围（仅 `app/web`）：移除上传表单的分类输入框与 datalist；无文件夹时路径即文件名（服务端默认 `90-综合`），拖入的文件夹名保留为来源目录。每本上传成功（含重复响应）后进入后台队列，逐本调用 `POST /api/books/:id/class`（附 `extractExcerpt` 摘录），不阻塞上传循环。`ai_busy` 按 Retry-After（默认 20 秒、上限 60）重试最多 2 次；`manual_locked`/`generating` 仅提示；其他失败提示可在详情页重试，不影响上传结果。队列清空且有成功时刷新书架以显示 CLC 标签。
+- 不做：不改服务端；不强制重新归类已有分类的书；不改变预算、校验与逐本顺序 PUT。

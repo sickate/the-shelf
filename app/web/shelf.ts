@@ -86,7 +86,6 @@ const grid = $<HTMLDivElement>("books");
 const emptyEl = $<HTMLDivElement>("empty");
 const listError = $<HTMLParagraphElement>("list-error");
 const moreBtn = $<HTMLButtonElement>("more");
-const categoryList = $<HTMLDataListElement>("category-list");
 const moreFilters = $<HTMLDetailsElement>("more-filters");
 const moreBadge = $<HTMLSpanElement>("more-badge");
 const mfBody = $<HTMLDivElement>("mf-body");
@@ -189,7 +188,6 @@ async function loadBooks() {
     categories = [...new Set([...(data.categories || []), ...entries.map((b) => b.category).filter(Boolean)])].sort(
       collator.compare,
     );
-    categoryList.replaceChildren(...categories.map((c) => el("option", { value: c })));
     renderStats();
     thumbs.refresh();
   } catch (e) {
@@ -506,7 +504,6 @@ const thumbs = mountThumbPanel(thumbPanel, {
 initUpload({
   form: $<HTMLFormElement>("upload-form"),
   fileInput: $<HTMLInputElement>("upload-files"),
-  catInput: $<HTMLInputElement>("upload-category"),
   review: $("upload-review"),
   isOwner: () => owner,
   onLoginLost: () => setOwner(false),
