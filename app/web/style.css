@@ -743,7 +743,12 @@ body.audio-open .epub-area { height: calc(100vh - 110px - var(--audio-h)); heigh
 .ap-opts { justify-content: center; flex-wrap: wrap; }
 .ap-sel { padding: 5px 8px; font-size: 12px; max-width: 120px; }
 .ap-follow { padding: 5px 10px; font-size: 12px; }
-.ap-follow.on { border-color: var(--accent); color: var(--accent); }
+/* Toggles: unpressed = plain outlined button; pressed = filled accent (label gets a "✓ " prefix).
+   Text uses --paper: near-white on the light/sepia accents, near-black on the light dark-theme accent. */
+.ap-follow.on, .audio-bar button[aria-pressed="true"] {
+  background: var(--accent); border-color: var(--accent); color: var(--paper); font-weight: 600;
+}
+.ap-follow.on:hover, .audio-bar button[aria-pressed="true"]:hover { filter: brightness(1.08); }
 .audio-bar.waiting .ap-play { opacity: 0.6; }
 .ap-mini { display: block; margin: 0 auto; padding: 4px 16px; font-size: 12px; }
 .audio-note {

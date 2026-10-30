@@ -13,6 +13,10 @@ import {
   totalMs,
 } from "./audio-timeline";
 import {
+  AUDIO_SESSION_KEY,
+  AUDIO_SESSION_MODES,
+  audioSessionMode,
+  type AudioSessionMode,
   CONTINUOUS_KEY,
   continuousOn,
   PIECE_RETRIES,
@@ -22,6 +26,9 @@ import {
   pollNoteVisible,
   remainingMs,
   retryUrl,
+  scrubTarget,
+  throttleWait,
+  toggleLabel,
 } from "./audio-follow";
 import { el, errorText, store } from "./common";
 import type { AudioPosition, ReadAlong } from "./read-along";
@@ -80,6 +87,13 @@ export interface AudioPlayer {
 
 interface SavedPos { seg: number; t: number }
 
+/** Safari 17+ Audio Session API (not in every TS DOM lib). */
+interface NavigatorAudioSession { type: string }
+const audioSession = (): NavigatorAudioSession | null =>
+  typeof navigator !== "undefined" && "audioSession" in navigator
+    ? ((navigator as Navigator & { audioSession?: NavigatorAudioSession }).audioSession ?? null)
+    : null;
+
 export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   const { api, bookId, bookTitle } = opts;
   const parent = opts.parent ?? document.body;
@@ -96,7 +110,20 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   let lastSave = 0;
   let speed = Number(store.get(SPEED_KEY)) || 1;
   if (!SPEEDS.includes(speed)) speed = 1;
+  /** The progress slider is being dragged (or keyed): timeupdate must not move the highlight. */
   let dragging = false;
+  /** The slider value changed during this drag (a plain tap without movement does not seek). */
+  let dragMoved = false;
+  let lastScrub = 0;
+  let scrubTimer: number | undefined;
+  /** Bumped by every startPlayback / pause, so a late play() resolution can tell it is stale. */
+  let playGen = 0;
+  /**
+   * Set by pause()/stopAudio(), cleared by startPlayback(): a "play" event arriving while set
+   * (a late event of a play() that was paused before it took effect) is stopped, not adopted.
+   */
+  let userPaused = true;
+  let sessionMode: AudioSessionMode = audioSessionMode(store.get(AUDIO_SESSION_KEY));
   let pollFailures = 0;
   /** The current piece failed to load even after PIECE_RETRIES reloads. */
   let loadFailed = false;
@@ -128,6 +155,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   const renderCont = () => {
     contBtn.setAttribute("aria-pressed", String(continuous));
     contBtn.classList.toggle("on", continuous);
+    contBtn.textContent = toggleLabel("连续播放", continuous);
   };
   renderCont();
   const elapsed = el("span", { class: "ap-time" }, "00:00");
@@ -167,14 +195,36 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     if (!ra) return;
     followBtn.setAttribute("aria-pressed", String(ra.follow));
     followBtn.classList.toggle("on", ra.follow);
+    followBtn.textContent = toggleLabel("跟随", ra.follow);
     resumeBtn.hidden = !(ra.follow && ra.paused);
   };
+
+  // Background audio on phones: what happens to other apps' audio (music) while reading aloud.
+  // The ducking level is chosen by the system; a page cannot set it.
+  const sessionSel = el("select", {
+    class: "ap-sel",
+    "aria-label": "背景音",
+    title:
+      "其他 App 的声音（如音乐）如何处理：\n打断 = 暂停其他 App 的声音（默认）\n压低 = 系统降低其他 App 音量（幅度由系统决定，网页无法调节）\n混音 = 不降低，可在音乐 App 里自行调到合适音量（iOS 静音开关打开时朗读可能也被静音）",
+  });
+  for (const m of AUDIO_SESSION_MODES) sessionSel.append(el("option", { value: m.id }, m.label));
+  sessionSel.value = sessionMode;
+  sessionSel.hidden = !audioSession();
+  function applyAudioSession() {
+    const s = audioSession();
+    if (!s) return;
+    try {
+      if (s.type !== sessionMode) s.type = sessionMode;
+    } catch {
+      /* unsupported type */
+    }
+  }
 
   const mini = el("button", { type: "button", class: "ap-mini", title: "展开朗读", "aria-label": "展开朗读", hidden: "" }, "朗读 ▴");
   const row1 = el("div", { class: "ap-row ap-head" }, title, collapseBtn, closeBtn);
   const row2 = el("div", { class: "ap-row ap-prog" }, elapsed, slider, total);
   const row3 = el("div", { class: "ap-row ap-ctl" }, prevBtn, back, playBtn, fwd, nextBtn);
-  const row4 = el("div", { class: "ap-row ap-opts" }, segSel, speedSel, voiceSel, toneSel, followBtn, resumeBtn, contBtn, readHereBtn);
+  const row4 = el("div", { class: "ap-row ap-opts" }, segSel, speedSel, voiceSel, toneSel, sessionSel, followBtn, resumeBtn, contBtn, readHereBtn);
   const body = el("div", { class: "ap-body" }, row1, status, pollNote, retryBtn, row2, row3, row4);
   const bar = el("div", { class: "audio-bar", role: "region", "aria-label": "朗读播放器", hidden: "" }, body, mini);
   parent.append(bar);
@@ -190,6 +240,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   let lastPos = 0;
   function emitPos(force: boolean) {
     if (!opts.onPosition || !job) return;
+    if (dragging) return; // the slider drives the highlight (emitScrub) until it is released
     const now = Date.now();
     if (!force && now - lastPos < POS_MS) return;
     const p = seg()?.pieces[curPiece];
@@ -197,6 +248,43 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     lastPos = now;
     const durationMs = p.durationMs ?? (Number.isFinite(cur.duration) ? cur.duration * 1000 : 0);
     opts.onPosition({ chapterKey, pieceText: p.text, offsetMs: pendingSeekMs ?? (cur.currentTime || 0) * 1000, durationMs, marks: p.marks });
+  }
+
+  /** Highlights the sentence under the slider while dragging (follow on resumes a scrolled-away read-along). */
+  function emitScrub() {
+    scrubTimer = undefined;
+    if (!opts.onPosition || !job || !dragging) return;
+    const s = seg();
+    if (!s) return;
+    const hit = scrubTarget(s, Number(slider.value));
+    if (!hit?.piece.text) return;
+    lastScrub = Date.now();
+    const p = hit.piece;
+    const durationMs =
+      p.durationMs ?? (hit.pieceIndex === curPiece && Number.isFinite(cur.duration) ? cur.duration * 1000 : 0);
+    opts.onPosition({ chapterKey, pieceText: p.text!, offsetMs: hit.offsetMs, durationMs, marks: p.marks });
+    // After update(): resume() re-runs read-along with this (scrubbed) position.
+    if (ra && ra.follow && ra.paused) ra.resume();
+  }
+  function scheduleScrub() {
+    if (scrubTimer !== undefined) return; // trailing emit already pending (reads the latest value)
+    const wait = throttleWait(Date.now(), lastScrub);
+    if (wait === 0) emitScrub();
+    else scrubTimer = window.setTimeout(emitScrub, wait);
+  }
+  function startDrag() {
+    dragging = true;
+  }
+  /** Ends a drag: seeks when the value moved. Safe to call more than once (change + pointerup). */
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    window.clearTimeout(scrubTimer);
+    scrubTimer = undefined;
+    const moved = dragMoved;
+    dragMoved = false;
+    if (moved) seekTo(Number(slider.value));
+    render();
   }
 
   function posKey() {
@@ -330,6 +418,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     if (!s) return;
     const loc = locate(s, tMs);
     if (!loc) {
+      pauseOthers(null); // nothing of this segment is playable yet
       curPiece = 0;
       pendingSeekMs = 0;
       waiting = autoplay;
@@ -343,7 +432,13 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     pendingSeekMs = loc.offsetMs;
     setSrc(cur, segPos, curPiece);
     if (cur.readyState >= 1) applySeek();
-    nxt.pause();
+    if (autoplay) nxt.pause();
+    else {
+      // Seeking while paused: nothing may keep (or start) playing.
+      playGen++;
+      userPaused = true;
+      pauseOthers(null);
+    }
     preloadNext();
     playing = autoplay;
     waiting = false;
@@ -363,23 +458,38 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     pendingSeekMs = null;
   }
 
+  /** Pauses every element except `keep` (only the current piece may ever be audible). */
+  function pauseOthers(keep: HTMLAudioElement | null) {
+    for (const a of audios) if (a !== keep && !a.paused) a.pause();
+  }
+
   async function startPlayback() {
+    const a = cur;
+    const gen = ++playGen;
+    userPaused = false;
+    pauseOthers(a);
     applyRate();
+    applyAudioSession();
     try {
-      await cur.play();
+      await a.play();
     } catch {
       /* autoplay blocked or aborted; user can press play */
-      if (cur.paused) {
+      if (gen === playGen && a === cur && a.paused) {
         playing = false;
         render();
       }
+      return;
     }
+    // The user paused, or the element was swapped/replaced, while play() was pending: stop it.
+    if (a !== cur || !playing) a.pause();
   }
 
   function pause() {
     playing = false;
     waiting = false;
-    cur.pause();
+    playGen++;
+    userPaused = true;
+    pauseOthers(null);
     savePos(true);
     render();
   }
@@ -545,11 +655,15 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
       render();
     });
     a.addEventListener("play", () => {
-      if (a === cur) {
-        playing = true;
-        playBtn.textContent = "⏸";
-        if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+      // Only the current piece may play. A preloaded/stale element started by the system (lock
+      // screen, headset, interruption end) or by a racing play() would talk over it: stop it.
+      if (a !== cur || userPaused) {
+        a.pause();
+        return;
       }
+      playing = true;
+      playBtn.textContent = "⏸";
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
     });
     a.addEventListener("pause", () => {
       if (a === cur && "mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
@@ -665,17 +779,26 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
     store.set(SPEED_KEY, String(speed));
     applyRate();
   });
-  slider.addEventListener("pointerdown", () => (dragging = true));
+  sessionSel.addEventListener("change", () => {
+    sessionMode = audioSessionMode(sessionSel.value);
+    store.set(AUDIO_SESSION_KEY, sessionMode);
+    applyAudioSession();
+  });
+  // Dragging: the highlight follows the thumb live (throttled); release seeks. `change` is not
+  // reliable on every touch browser, so pointerup/pointercancel/blur also end the drag.
+  slider.addEventListener("pointerdown", startDrag);
   slider.addEventListener("input", () => {
-    dragging = true;
+    startDrag();
+    dragMoved = true;
     elapsed.textContent = formatTime(Math.min(Number(slider.value), readyEndMs(seg() ?? { index: 0, pieces: [] })));
+    scheduleScrub();
   });
-  slider.addEventListener("change", () => {
-    dragging = false;
-    seekTo(Number(slider.value));
-    render();
-  });
-  slider.addEventListener("pointerup", () => (dragging = false));
+  slider.addEventListener("change", endDrag);
+  // Let a `change` that follows pointerup land first (same value either way; endDrag runs once).
+  const endDragSoon = () => window.setTimeout(endDrag, 60);
+  slider.addEventListener("pointerup", endDragSoon);
+  slider.addEventListener("pointercancel", endDragSoon);
+  slider.addEventListener("blur", endDrag);
   voiceSel.addEventListener("change", async () => {
     if (!job) return;
     const v = voiceSel.value;
@@ -771,6 +894,8 @@ export function createAudioPlayer(opts: AudioPlayerOptions): AudioPlayer {
   }
 
   function stopAudio() {
+    playGen++;
+    userPaused = true;
     for (const a of audios) {
       a.pause();
       a.removeAttribute("src");

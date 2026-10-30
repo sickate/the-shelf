@@ -1,6 +1,6 @@
 // Pure decisions for the read-aloud player: poll backoff, piece retries, remaining time, next-chapter
 // prefetch and the "follow chapter" debounce. No DOM; tested in tests/mvp-audio-follow.test.mjs.
-import type { TimelineSegment } from "./audio-timeline";
+import { locate, type TimelinePiece, type TimelineSegment } from "./audio-timeline";
 
 // ---------- Job polling ----------
 export const POLL_MS = 3000;
@@ -104,3 +104,42 @@ export function followStep(
 export const CONTINUOUS_KEY = "shelf:audio-continuous";
 /** Stored value → on/off (default on). */
 export const continuousOn = (stored: string | null | undefined) => stored !== "0";
+
+// ---------- Slider scrubbing ----------
+/** Read-along updates while dragging the progress slider are throttled to this. */
+export const SCRUB_MS = 200;
+
+/** Milliseconds to wait before the next throttled emit (0 = emit now). */
+export function throttleWait(now: number, last: number, ms = SCRUB_MS): number {
+  return Math.max(0, last + ms - now);
+}
+
+/**
+ * The piece and offset a slider value points at, clamped to the ready range (see locate), with the
+ * piece itself so the caller can hand its text/marks/duration to read-along. Null when nothing is ready.
+ */
+export function scrubTarget<P extends TimelinePiece>(
+  seg: { index: number; pieces: P[] },
+  tMs: number,
+): { pieceIndex: number; offsetMs: number; piece: P } | null {
+  const loc = locate(seg, tMs);
+  if (!loc) return null;
+  return { ...loc, piece: seg.pieces[loc.pieceIndex] };
+}
+
+// ---------- Background audio (iOS Safari 17+ Audio Session API) ----------
+export type AudioSessionMode = "playback" | "transient" | "ambient";
+export const AUDIO_SESSION_KEY = "shelf:audio-session";
+export const AUDIO_SESSION_MODES: { id: AudioSessionMode; label: string }[] = [
+  { id: "playback", label: "背景音：打断" },
+  { id: "transient", label: "背景音：压低" },
+  { id: "ambient", label: "背景音：混音" },
+];
+/** Stored value → mode (default "playback": interrupts other apps, the browser default). */
+export function audioSessionMode(stored: string | null | undefined): AudioSessionMode {
+  return AUDIO_SESSION_MODES.some((m) => m.id === stored) ? (stored as AudioSessionMode) : "playback";
+}
+
+// ---------- Toggle buttons ----------
+/** Visible label of a pressed/unpressed toggle ("✓ " prefix when on). */
+export const toggleLabel = (label: string, on: boolean) => (on ? `✓ ${label}` : label);

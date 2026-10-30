@@ -85,3 +85,41 @@ test("continuous playback is on by default", () => {
   assert.equal(F.continuousOn("0"), false);
   assert.equal(F.CONTINUOUS_KEY, "shelf:audio-continuous");
 });
+
+test("scrub throttle: emit now after the interval, else wait the remainder", () => {
+  assert.equal(F.throttleWait(1000, 0), 0);
+  assert.equal(F.throttleWait(1000, 900), 100);
+  assert.equal(F.throttleWait(1000, 900, 250), 150);
+  assert.equal(F.throttleWait(1000, 800), 0);
+});
+
+test("scrub target: slider value → piece/offset, clamped to the ready range", () => {
+  const seg = {
+    index: 0,
+    pieces: [
+      { seq: 0, durationMs: 1000, ready: true, text: "a" },
+      { seq: 1, durationMs: 2000, ready: true, text: "b" },
+      { seq: 2, durationMs: 1500, ready: false, text: "c" },
+    ],
+  };
+  assert.deepEqual(F.scrubTarget(seg, 500), { pieceIndex: 0, offsetMs: 500, piece: seg.pieces[0] });
+  assert.deepEqual(F.scrubTarget(seg, 1500), { pieceIndex: 1, offsetMs: 500, piece: seg.pieces[1] });
+  // Past the ready end (3000) → end of the last ready piece.
+  assert.deepEqual(F.scrubTarget(seg, 4000), { pieceIndex: 1, offsetMs: 2000, piece: seg.pieces[1] });
+  assert.deepEqual(F.scrubTarget(seg, -10), { pieceIndex: 0, offsetMs: 0, piece: seg.pieces[0] });
+  assert.equal(F.scrubTarget({ index: 0, pieces: [{ seq: 0, durationMs: 1, ready: false }] }, 0), null);
+});
+
+test("audio session mode: stored value, default playback", () => {
+  assert.equal(F.audioSessionMode(null), "playback");
+  assert.equal(F.audioSessionMode("bogus"), "playback");
+  assert.equal(F.audioSessionMode("transient"), "transient");
+  assert.equal(F.audioSessionMode("ambient"), "ambient");
+  assert.equal(F.AUDIO_SESSION_KEY, "shelf:audio-session");
+  assert.deepEqual(F.AUDIO_SESSION_MODES.map((m) => m.id), ["playback", "transient", "ambient"]);
+});
+
+test("toggle label: ✓ prefix only when on", () => {
+  assert.equal(F.toggleLabel("跟随", true), "✓ 跟随");
+  assert.equal(F.toggleLabel("跟随", false), "跟随");
+});
