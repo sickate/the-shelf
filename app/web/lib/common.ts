@@ -1,3 +1,5 @@
+import { clearBookCache } from "./book-cache";
+
 export interface Book {
   id: string | number;
   title: string;
@@ -95,6 +97,7 @@ export function showLoginError(): void {
 }
 
 export async function logout(): Promise<void> {
+  await clearBookCache();
   await api("/api/logout", { method: "POST" });
 }
 

@@ -34,6 +34,7 @@ import { pdfReadAlongFactory } from "./lib/read-along-pdf";
 import { ReadAlongTarget, setReadAlongTarget, windowTextTarget } from "./lib/read-along";
 import { epubReadAlong, mobiReadAlong } from "./lib/read-along-books";
 import { audioAvailable, audioButton } from "./lib/audio-reader";
+import { getCachedBook, putCachedBook } from "./lib/book-cache";
 import { epubNotes, mobiNotes, pdfNotes, textNotes } from "./lib/reader-notes";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -136,7 +137,21 @@ function button(label: string, title: string, onClick: () => void): HTMLButtonEl
 }
 
 /** Downloads the whole file, streaming the body so progress can be shown. */
+let cacheBook: Book | null = null;
+
 async function fetchFile(label: string): Promise<ArrayBuffer> {
+  const book = cacheBook;
+  if (book) {
+    setStage("正在从本地缓存打开…");
+    const hit = await getCachedBook(book);
+    if (hit) return hit;
+  }
+  const buf = await downloadFile(label);
+  if (book) void putCachedBook(book, buf);
+  return buf;
+}
+
+async function downloadFile(label: string): Promise<ArrayBuffer> {
   setStage(`正在下载${label}…`);
   setProgress(0);
   const res = await fetch(fileUrl, { credentials: "same-origin" });
@@ -788,6 +803,7 @@ async function readText() {
     showError(e instanceof ApiError && e.status === 404 ? "未找到这本书。" : `元数据加载失败：${errorText(e)}`);
     return;
   }
+  cacheBook = owner ? book : null;
   const { main } = splitTitle(book.title);
   titleEl.textContent = main;
   titleEl.title = book.title;
