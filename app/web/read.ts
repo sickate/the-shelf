@@ -136,9 +136,10 @@ function button(label: string, title: string, onClick: () => void): HTMLButtonEl
   return b;
 }
 
-/** Downloads the whole file, streaming the body so progress can be shown. */
+/** Owner-read book whose file may be cached locally (null: never cache). */
 let cacheBook: Book | null = null;
 
+/** Book file bytes: the local cache when it has them, else a download (then cached). */
 async function fetchFile(label: string): Promise<ArrayBuffer> {
   const book = cacheBook;
   if (book) {
@@ -151,6 +152,7 @@ async function fetchFile(label: string): Promise<ArrayBuffer> {
   return buf;
 }
 
+/** Downloads the whole file, streaming the body so progress can be shown. */
 async function downloadFile(label: string): Promise<ArrayBuffer> {
   setStage(`正在下载${label}…`);
   setProgress(0);
