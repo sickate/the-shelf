@@ -124,6 +124,7 @@ test("notes: locator shapes are canonicalised", () => {
   assert.equal(normalizeLocator({ type: "pdf", page: 12 }), '{"type":"pdf","page":12}');
   assert.equal(normalizeLocator({ type: "pdf", page: 3, end: 9, start: 4 }), '{"type":"pdf","page":3,"start":4,"end":9}');
   assert.equal(normalizeLocator({ type: "text", end: 10, start: 0 }), '{"type":"text","start":0,"end":10}');
+  assert.equal(normalizeLocator({ endPage: 4, end: 2, start: 9, page: 3, type: "pdf" }), '{"type":"pdf","page":3,"start":9,"end":2,"endPage":4}');
 });
 
 test("notes: CRUD, ordering, pagination and soft delete", async (t) => {
@@ -182,9 +183,22 @@ test("notes: CRUD, ordering, pagination and soft delete", async (t) => {
   res = await patch(first.id, { note: "" });
   assert.equal((await res.json()).note.note, null);
   assert.equal((await patch(first.id, { color: "green" })).status, 200);
+  // Merging adjacent notes rewrites quote, locator and label.
+  const merged = { type: "pdf", page: 2, start: 30, end: 12, endPage: 3 };
+  res = await patch(first.id, { quote: " 第一条接下页 ", locator: merged, label: "第 2–3 页" });
+  assert.equal(res.status, 200);
+  updated = (await res.json()).note;
+  assert.equal(updated.quote, "第一条接下页");
+  assert.deepEqual(updated.locator, merged);
+  assert.equal(updated.label, "第 2–3 页");
+  assert.equal((await (await patch(first.id, { label: null })).json()).note.label, null);
   for (const [body, error] of [
     [{}, "nothing_to_update"],
-    [{ quote: "改原文" }, "nothing_to_update"],
+    [{ quote: " " }, "bad_quote"],
+    [{ quote: "x".repeat(4_001) }, "quote_too_long"],
+    [{ locator: { type: "pdf", page: 2, endPage: 3 } }, "bad_locator"],
+    [{ locator: { type: "pdf", page: 2, start: 0, end: 4, endPage: 2 } }, "bad_locator"],
+    [{ label: "x".repeat(201) }, "label_too_long"],
     [{ color: "red" }, "bad_color"],
     [{ note: "x".repeat(10_001) }, "note_too_long"],
   ]) {

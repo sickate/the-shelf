@@ -162,3 +162,66 @@ test("colors match the server enum", () => {
   assert.ok(N.isColor("pink"));
   assert.ok(!N.isColor("red"));
 });
+
+test("merge: multi-page PDF locators match the server", () => {
+  const loc = { type: "pdf", page: 3, start: 40, end: 12, endPage: 4 };
+  assert.deepEqual(N.parseLocator(loc), loc);
+  assert.deepEqual(JSON.parse(normalizeLocator(loc)), loc);
+  for (const bad of [
+    { type: "pdf", page: 3, endPage: 4 },
+    { type: "pdf", page: 3, start: 0, end: 2, endPage: 3 },
+    { type: "pdf", page: 3, start: 0, end: 2, endPage: 4.5 },
+  ]) {
+    assert.equal(N.parseLocator(bad), null, JSON.stringify(bad));
+    assert.throws(() => normalizeLocator(bad));
+  }
+  assert.equal(N.pagesLabel(12), "第 12 页");
+  assert.equal(N.pagesLabel(12, 13), "第 12–13 页");
+  assert.deepEqual(N.pdfPageSpan(loc, 3, 50), { start: 40, end: 50 });
+  assert.deepEqual(N.pdfPageSpan(loc, 4, 80), { start: 0, end: 12 });
+  assert.deepEqual(N.pdfPageSpan({ ...loc, endPage: 5 }, 4, 80), { start: 0, end: 80 });
+  assert.equal(N.pdfPageSpan(loc, 5, 80), null);
+  assert.deepEqual(N.pdfPageSpan({ type: "pdf", page: 2, start: 1, end: 5 }, 2, 9), { start: 1, end: 5 });
+  assert.equal(N.pdfPageSpan({ type: "pdf", page: 2 }, 2, 9), null);
+});
+
+test("merge: quotes and note texts", () => {
+  assert.equal(N.joinQuotes("春眠不觉晓，\n", "  处处闻啼鸟"), "春眠不觉晓，处处闻啼鸟");
+  assert.equal(N.joinQuotes("It was the best ", "\nof times"), "It was the best of times");
+  assert.equal(N.joinQuotes("中文", "abc"), "中文abc");
+  assert.equal(N.joinQuotes("", "x"), "x");
+  assert.equal(N.joinNoteTexts("甲", " 乙 "), "甲\n\n乙");
+  assert.equal(N.joinNoteTexts(null, ""), null);
+  assert.equal(N.joinNoteTexts(null, "乙"), "乙");
+  assert.equal(N.fitQuote(" x "), "x");
+  assert.equal(N.fitQuote("字".repeat(4001)), null);
+});
+
+test("merge: text spans join across blank gaps only", () => {
+  const text = "第一句。\n\n第二句。第三句。";
+  assert.deepEqual(N.joinTextSpans(text, { start: 0, end: 4 }, { start: 6, end: 10 }), { start: 0, end: 10 });
+  assert.deepEqual(N.joinTextSpans(text, { start: 6, end: 10 }, { start: 0, end: 4 }), { start: 0, end: 10 });
+  assert.deepEqual(N.joinTextSpans(text, { start: 6, end: 10 }, { start: 10, end: 14 }), { start: 6, end: 14 });
+  assert.equal(N.joinTextSpans(text, { start: 0, end: 3 }, { start: 6, end: 10 }), null); // "。" between
+  assert.equal(N.joinTextSpans(text, { start: 0, end: 8 }, { start: 6, end: 10 }), null); // overlap
+});
+
+test("merge: PDF spans on one page and over a page turn", () => {
+  const pages = { 7: "正文到页尾的一段话  12", 8: "第一章 标题  接着上一页的话。下一句。", 9: "x".repeat(10) };
+  const text = (p) => pages[p];
+  // Over the turn: page number / running header (≤ 40 chars) between the parts.
+  assert.deepEqual(N.joinPdfSpans({ page: 7, start: 2, end: 10 }, { page: 8, start: 8, end: 15 }, text), { page: 7, start: 2, end: 15, endPage: 8 });
+  assert.deepEqual(N.joinPdfSpans({ page: 8, start: 8, end: 15 }, { page: 7, start: 2, end: 10 }, text), { page: 7, start: 2, end: 15, endPage: 8 });
+  // Same page, blank gap / not blank.
+  assert.deepEqual(N.joinPdfSpans({ page: 8, start: 0, end: 6 }, { page: 8, start: 8, end: 15 }, text), { page: 8, start: 0, end: 15 });
+  assert.equal(N.joinPdfSpans({ page: 8, start: 0, end: 3 }, { page: 8, start: 8, end: 15 }, text), null);
+  // Continues a multi-page note on its last page.
+  assert.deepEqual(N.joinPdfSpans({ page: 7, start: 2, end: 6, endPage: 8 }, { page: 8, start: 8, end: 15 }, text), { page: 7, start: 2, end: 15, endPage: 8 });
+  // Unknown page text, pages apart, or too much text left over at the turn.
+  assert.equal(N.joinPdfSpans({ page: 6, start: 0, end: 4 }, { page: 7, start: 0, end: 3 }, text), null);
+  assert.equal(N.joinPdfSpans({ page: 7, start: 2, end: 10 }, { page: 9, start: 0, end: 3 }, text), null);
+  const long = { 1: "a".repeat(100), 2: "b".repeat(100) };
+  assert.equal(N.joinPdfSpans({ page: 1, start: 0, end: 50 }, { page: 2, start: 0, end: 10 }, (p) => long[p]), null);
+  assert.equal(N.joinPdfSpans({ page: 1, start: 0, end: 60 }, { page: 2, start: 41, end: 50 }, (p) => long[p]), null);
+  assert.deepEqual(N.joinPdfSpans({ page: 1, start: 0, end: 60 }, { page: 2, start: 40, end: 50 }, (p) => long[p]), { page: 1, start: 0, end: 50, endPage: 2 });
+});

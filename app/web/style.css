@@ -681,6 +681,8 @@ body.reader[data-reader-theme="dark"] {
   position: fixed; z-index: 22; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100vw - 32px);
   padding: 9px 16px; border-radius: 4px; background: var(--ink); color: var(--paper); font-size: 13px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
+.rn-toast-act { margin-left: 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+.rn-toast-act[hidden] { display: none; }
 /* TXT highlights */
 mark.rn-hl { color: inherit; background: color-mix(in srgb, var(--hl) 38%, transparent); border-radius: 2px; cursor: pointer; transition: background-color 0.2s; }
 mark.rn-hl.rn-flash { background: color-mix(in srgb, var(--hl) 85%, transparent); }

@@ -19,7 +19,8 @@ export const MAX_LABEL = 200;
 
 export type Locator =
   | { type: "cfi"; cfi: string }
-  | { type: "pdf"; page: number; start?: number; end?: number }
+  // `endPage` (> page): from `start` on `page` to `end` on `endPage` (a note running over a page turn).
+  | { type: "pdf"; page: number; start?: number; end?: number; endPage?: number }
   | { type: "text"; start: number; end: number };
 
 export const isColor = (v: unknown): v is NoteColor => v === "yellow" || v === "green" || v === "blue" || v === "pink";
@@ -35,7 +36,7 @@ export function parseLocator(raw: unknown): Locator | null {
   if (r.type === "cfi" && only("type", "cfi")) {
     return typeof r.cfi === "string" && r.cfi.trim() ? { type: "cfi", cfi: r.cfi } : null;
   }
-  if (r.type === "pdf" && only("type", "page", "start", "end")) {
+  if (r.type === "pdf" && only("type", "page", "start", "end", "endPage")) {
     if (!Number.isSafeInteger(r.page) || (r.page as number) < 1) return null;
     const loc: Locator = { type: "pdf", page: r.page as number };
     if (r.start !== undefined) {
@@ -46,7 +47,11 @@ export function parseLocator(raw: unknown): Locator | null {
       if (!isIndex(r.end)) return null;
       loc.end = r.end;
     }
-    if (loc.start !== undefined && loc.end !== undefined && loc.end < loc.start) return null;
+    if (r.endPage !== undefined) {
+      if (!Number.isSafeInteger(r.endPage) || (r.endPage as number) <= loc.page) return null;
+      if (loc.start === undefined || loc.end === undefined) return null;
+      loc.endPage = r.endPage as number;
+    } else if (loc.start !== undefined && loc.end !== undefined && loc.end < loc.start) return null;
     return loc;
   }
   if (r.type === "text" && only("type", "start", "end")) {
@@ -69,6 +74,7 @@ export function percentLabel(fraction: unknown): string | null {
 }
 
 export const pageLabel = (page: number) => `第 ${page} 页`;
+export const pagesLabel = (page: number, endPage?: number) => (endPage && endPage > page ? `第 ${page}–${endPage} 页` : pageLabel(page));
 
 /** Chapter title (whitespace collapsed, ≤ 200 chars) or, without one, the percentage. */
 export function chapterLabel(title: unknown, fraction?: unknown): string | null {
@@ -184,6 +190,80 @@ export function segments(length: number, marks: { id: string; start: number; end
     else out.push({ start, end, ids });
   }
   return out;
+}
+
+// ---------------- Merging adjacent notes (docs/notes-merge-plan-2026-10-31.md) ----------------
+/** Page-turn tolerance: up to this many non-blank chars (running header/footer, page number) may sit between two parts. */
+export const PAGE_EDGE_SLACK = 40;
+
+export const gapIsBlank = (s: string) => !/\S/.test(s);
+const nonBlank = (s: string) => chars(s.replace(/\s+/g, ""));
+// CJK, kana, fullwidth forms and CJK/general punctuation join without a space.
+const WIDE = /[‐-⁯⺀-鿿가-힯豈-﫿︰-﹏＀-￯]/;
+
+/** Joins two quotes at a page turn: whitespace at the seam dropped, one space only between Latin-like text. */
+export function joinQuotes(a: string, b: string): string {
+  const x = a.replace(/\s+$/, "");
+  const y = b.replace(/^\s+/, "");
+  if (!x || !y) return x + y;
+  return WIDE.test(x.at(-1)!) || WIDE.test(y[0]) ? x + y : `${x} ${y}`;
+}
+
+/** Note texts of two merged notes, separated by a blank line; null when both are empty. */
+export function joinNoteTexts(a: string | null | undefined, b: string | null | undefined): string | null {
+  const parts = [a, b].map((s) => (s || "").trim()).filter(Boolean);
+  return parts.length ? parts.join("\n\n") : null;
+}
+
+/** The merged quote, or null when it would exceed the server limit. */
+export const fitQuote = (q: string) => (chars(q.trim()) <= MAX_QUOTE ? q.trim() : null);
+
+/** [start, end) union of two text spans whose gap is blank (either order); null when apart or overlapping. */
+export function joinTextSpans(
+  text: string,
+  a: { start: number; end: number },
+  b: { start: number; end: number },
+): { start: number; end: number } | null {
+  const [x, y] = a.start <= b.start ? [a, b] : [b, a];
+  if (x.end > y.start || !gapIsBlank(text.slice(x.end, y.start))) return null;
+  return { start: x.start, end: Math.max(x.end, y.end) };
+}
+
+export type PdfSpan = { page: number; start: number; end: number; endPage?: number };
+const lastPage = (s: PdfSpan) => s.endPage ?? s.page;
+
+/**
+ * Union of two PDF spans when one directly follows the other: on the same page with only
+ * blank text between, or over a page turn with at most PAGE_EDGE_SLACK non-blank chars after
+ * the first part on its page and before the second on the next. `pageText(p)` is the page's
+ * text as the offsets index it (undefined = unknown, then nothing is merged).
+ */
+export function joinPdfSpans(a: PdfSpan, b: PdfSpan, pageText: (page: number) => string | undefined): PdfSpan | null {
+  const [x, y] = a.page < b.page || (a.page === b.page && a.start <= b.start) ? [a, b] : [b, a];
+  const xEnd = lastPage(x);
+  if (y.page === xEnd) {
+    const t = pageText(xEnd);
+    if (t === undefined || x.end > y.start || !gapIsBlank(t.slice(x.end, y.start))) return null;
+  } else if (y.page === xEnd + 1) {
+    const tail = pageText(xEnd);
+    const head = pageText(y.page);
+    if (tail === undefined || head === undefined) return null;
+    if (nonBlank(tail.slice(x.end)) > PAGE_EDGE_SLACK || nonBlank(head.slice(0, y.start)) > PAGE_EDGE_SLACK) return null;
+  } else return null;
+  const endPage = lastPage(y);
+  const out: PdfSpan = { page: x.page, start: x.start, end: y.end };
+  if (endPage > x.page) out.endPage = endPage;
+  return out;
+}
+
+/** Offsets of a PDF locator on one page (the whole page in the middle of a multi-page note); null when not on it. */
+export function pdfPageSpan(loc: { page: number; start?: number; end?: number; endPage?: number }, page: number, pageLength: number): { start: number; end: number } | null {
+  if (loc.start === undefined || loc.end === undefined) return null;
+  const last = loc.endPage ?? loc.page;
+  if (page < loc.page || page > last) return null;
+  const start = page === loc.page ? loc.start : 0;
+  const end = page === last ? loc.end : pageLength;
+  return end > start ? { start, end } : null;
 }
 
 // ---------------- Ordering ----------------

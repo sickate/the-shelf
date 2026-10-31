@@ -1410,7 +1410,8 @@ export function normalizeLocator(raw) {
   if (raw.type === "cfi" && only("type", "cfi")) {
     if (typeof raw.cfi !== "string" || !raw.cfi.trim()) throw new HttpError(400, "bad_locator");
     loc = { type: "cfi", cfi: raw.cfi };
-  } else if (raw.type === "pdf" && only("type", "page", "start", "end")) {
+  } else if (raw.type === "pdf" && only("type", "page", "start", "end", "endPage")) {
+    // `endPage` (> page): the range runs from `start` on `page` to `end` on `endPage`.
     if (!Number.isSafeInteger(raw.page) || raw.page < 1) throw new HttpError(400, "bad_locator");
     loc = { type: "pdf", page: raw.page };
     for (const k of ["start", "end"]) {
@@ -1418,7 +1419,11 @@ export function normalizeLocator(raw) {
       if (!isIndex(raw[k])) throw new HttpError(400, "bad_locator");
       loc[k] = raw[k];
     }
-    if (loc.start !== undefined && loc.end !== undefined && loc.end < loc.start) throw new HttpError(400, "bad_locator");
+    if (raw.endPage !== undefined) {
+      if (!Number.isSafeInteger(raw.endPage) || raw.endPage <= raw.page) throw new HttpError(400, "bad_locator");
+      if (loc.start === undefined || loc.end === undefined) throw new HttpError(400, "bad_locator");
+      loc.endPage = raw.endPage;
+    } else if (loc.start !== undefined && loc.end !== undefined && loc.end < loc.start) throw new HttpError(400, "bad_locator");
   } else if (raw.type === "text" && only("type", "start", "end")) {
     if (!isIndex(raw.start) || !isIndex(raw.end) || raw.end < raw.start) throw new HttpError(400, "bad_locator");
     loc = { type: "text", start: raw.start, end: raw.end };
@@ -1500,14 +1505,19 @@ async function listNotes(request, env, url) {
   return json({ notes, nextBefore: notes.length === limit ? notes.at(-1).createdAt : null });
 }
 
+function checkedQuote(value) {
+  if (typeof value !== "string" || !value.trim()) throw new HttpError(400, "bad_quote");
+  const quote = value.trim();
+  if (chars(quote) > MAX_QUOTE_CHARS) throw new HttpError(400, "quote_too_long");
+  return quote;
+}
+
 async function createNote(request, env, row) {
   await requireOwner(request, env);
   if (!row || row.status === "reserved") throw new HttpError(404, "not_found");
   const body = await readJson(request);
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "bad_json");
-  if (typeof body.quote !== "string" || !body.quote.trim()) throw new HttpError(400, "bad_quote");
-  const quote = body.quote.trim();
-  if (chars(quote) > MAX_QUOTE_CHARS) throw new HttpError(400, "quote_too_long");
+  const quote = checkedQuote(body.quote);
   const note = optionalText(body.note, MAX_NOTE_CHARS, "note");
   const label = optionalText(body.label, MAX_LABEL_CHARS, "label");
   const color = body.color ?? "yellow";
@@ -1541,6 +1551,19 @@ async function updateNote(request, env, id) {
     if (!NOTE_COLORS.includes(body.color)) throw new HttpError(400, "bad_color");
     sets.push("color = ?");
     args.push(body.color);
+  }
+  // Quote, locator and label change together when the reader merges adjacent notes.
+  if (body.quote !== undefined) {
+    sets.push("quote = ?");
+    args.push(checkedQuote(body.quote));
+  }
+  if (body.locator !== undefined) {
+    sets.push("locator = ?");
+    args.push(normalizeLocator(body.locator));
+  }
+  if (body.label !== undefined) {
+    sets.push("label = ?");
+    args.push(optionalText(body.label, MAX_LABEL_CHARS, "label"));
   }
   if (!sets.length) throw new HttpError(400, "nothing_to_update");
   if (!(await readNote(env, id))) throw new HttpError(404, "not_found");

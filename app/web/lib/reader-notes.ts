@@ -8,13 +8,20 @@ import {
   chapterLabel,
   compareLocators,
   excerpt,
+  fitQuote,
   HL_HEX,
+  joinNoteTexts,
+  joinPdfSpans,
+  joinQuotes,
+  joinTextSpans,
   Locator,
   MAX_NOTE,
   NOTE_COLORS,
   NoteColor,
-  pageLabel,
+  gapIsBlank,
+  pagesLabel,
   parseLocator,
+  pdfPageSpan,
   percentLabel,
   prefixSums,
   segments,
@@ -52,6 +59,11 @@ export interface Adapter {
   show(n: Note): Promise<void>;
   /** Viewport rect of the highlight (for placing the editor), if it is rendered. */
   rectOf?(n: Note): Box | null;
+  /**
+   * When the new selection (`located`, from `range`) directly continues `existing` or leads
+   * into it, the combined location and quote; null otherwise.
+   */
+  join?(existing: Note, located: Located, range: Range): Located | null;
 }
 type Box = { left: number; top: number; right: number; bottom: number };
 
@@ -84,6 +96,27 @@ function rangeBox(range: Range): Box | null {
   }
   return box;
 }
+
+/**
+ * Union of two ranges of one document when only blank text separates them (either order);
+ * null when they overlap or are apart. `first` says whether `a` comes first.
+ */
+function joinRanges(a: Range, b: Range): { range: Range; first: boolean } | null {
+  const doc = a.startContainer.ownerDocument;
+  if (!doc || doc !== b.startContainer.ownerDocument) return null;
+  const first = a.compareBoundaryPoints(Range.START_TO_START, b) <= 0;
+  const [x, y] = first ? [a, b] : [b, a];
+  if (y.compareBoundaryPoints(Range.END_TO_START, x) < 0) return null; // y starts before x ends
+  const gap = doc.createRange();
+  gap.setStart(x.endContainer, x.endOffset);
+  gap.setEnd(y.startContainer, y.startOffset);
+  if (!gapIsBlank(gap.toString())) return null;
+  const range = doc.createRange();
+  range.setStart(x.startContainer, x.startOffset);
+  range.setEnd(y.endContainer, y.endOffset);
+  return { range, first };
+}
+const isRange = (r: unknown): r is Range => !!r && typeof (r as Range).compareBoundaryPoints === "function";
 
 /** Positions a fixed element above (or below) a rect, clamped to the viewport. */
 function place(node: HTMLElement, r: Box | null, prefer: "above" | "below") {
@@ -131,10 +164,23 @@ export function createReaderNotes(bookId: string) {
   let loaded = false;
 
   // ---------- toast ----------
-  const toastEl = el("div", { class: "rn-toast", role: "status", "aria-live": "polite", hidden: "" });
+  const toastText = el("span");
+  const toastAct = el("button", { type: "button", class: "rn-toast-act", hidden: "" });
+  const toastEl = el("div", { class: "rn-toast", role: "status", "aria-live": "polite", hidden: "" }, toastText, toastAct);
   let toastTimer = 0;
-  const toast = (text: string, ms = 3200) => {
-    toastEl.textContent = text;
+  let toastRun: (() => void) | null = null;
+  toastAct.addEventListener("click", () => {
+    const run = toastRun;
+    toastRun = null;
+    toastEl.hidden = true;
+    run?.();
+  });
+  /** `action` adds one button (e.g. 撤销) that runs once and closes the toast. */
+  const toast = (text: string, ms = 3200, action?: { label: string; run: () => void }) => {
+    toastText.textContent = text;
+    toastAct.textContent = action?.label ?? "";
+    toastAct.hidden = !action;
+    toastRun = action?.run ?? null;
     toastEl.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = window.setTimeout(() => (toastEl.hidden = true), ms);
@@ -344,7 +390,10 @@ export function createReaderNotes(bookId: string) {
 
   // ---------- model ----------
   function put(n: Note) {
+    const old = notes.get(n.id);
     notes.set(n.id, n);
+    // A merge (or its undo) moved the note: drop the old highlight first.
+    if (old && JSON.stringify(old.locator) !== JSON.stringify(n.locator)) adapter?.erase(old);
     adapter?.draw(n);
     updateCount();
   }
@@ -381,17 +430,78 @@ export function createReaderNotes(bookId: string) {
     const body: Record<string, unknown> = { quote, color, locator: located.locator };
     if (located.label) body.label = located.label;
     if (noteText.trim()) body.note = noteText;
-    try {
-      const data = await api<{ note: Note }>(`/api/books/${encodeURIComponent(bookId)}/notes`, { method: "POST", body: JSON.stringify(body) });
+    const done = () => {
       p.doc.getSelection()?.removeAllRanges();
       if (pending === p) pending = null;
       hideBar();
+    };
+    if (await merge(p, { ...located, quote }, color, noteText, body, done)) return true;
+    try {
+      const data = await post(body);
+      done();
       put(data.note);
       toast(noteText.trim() ? "已保存笔记" : "已摘录");
       return true;
     } catch (e) {
       say(failText("保存", e));
       return false;
+    }
+  }
+
+  const post = (body: Record<string, unknown>) =>
+    api<{ note: Note }>(`/api/books/${encodeURIComponent(bookId)}/notes`, { method: "POST", body: JSON.stringify(body) });
+  const patchNote = (id: string, patch: Record<string, unknown>) =>
+    api<{ note: Note }>(`/api/notes/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+  /**
+   * Page turns split one passage into two selections: when the new one directly continues
+   * (or leads into) a same-colour note, extend that note instead of adding another
+   * (docs/notes-merge-plan-2026-10-31.md). False = nothing merged, save it as a new note.
+   */
+  async function merge(p: Pending, located: Located, color: NoteColor, noteText: string, body: Record<string, unknown>, done: () => void) {
+    if (!adapter?.join) return false;
+    let hit: { old: Note; joined: Located & { quote: string } } | null = null;
+    for (const n of sorted()) {
+      if (n.color !== color) continue;
+      let joined: Located | null = null;
+      try {
+        joined = adapter.join(n, located, p.range);
+      } catch (e) {
+        console.warn(e);
+      }
+      const q = joined?.quote ? fitQuote(joined.quote) : null;
+      if (joined && q) {
+        hit = { old: n, joined: { ...joined, quote: q } };
+        break;
+      }
+    }
+    if (!hit) return false;
+    const { old, joined } = hit;
+    try {
+      const data = await patchNote(old.id, {
+        quote: joined.quote,
+        locator: joined.locator,
+        label: joined.label,
+        note: joinNoteTexts(old.note, noteText),
+      });
+      done();
+      put(data.note);
+      toast("已与相邻摘录合并", 6000, { label: "撤销", run: () => void unmerge(old, body) });
+      return true;
+    } catch (e) {
+      console.warn(e);
+      return false;
+    }
+  }
+
+  /** Undo of a merge: restore the original note, then save the selection on its own. */
+  async function unmerge(old: Note, body: Record<string, unknown>) {
+    try {
+      put((await patchNote(old.id, { quote: old.quote, locator: old.locator, label: old.label, note: old.note })).note);
+      put((await post(body)).note);
+      toast("已撤销合并");
+    } catch (e) {
+      toast(failText("撤销合并", e), 5000);
     }
   }
 
@@ -620,6 +730,18 @@ export function epubNotes(bookId: string, rendition: any, book: any) {
         return null;
       }
     },
+    // Same section only (a page turn inside a chapter): epub.js renders a section in one document.
+    join(n, located, range) {
+      const cfi = cfiOf(n);
+      if (!cfi || located.locator.type !== "cfi") return null;
+      const other = rendition.getRange(cfi);
+      const joined = isRange(other) ? joinRanges(other, range) : null;
+      if (!joined) return null;
+      const contents = (rendition.getContents() as any[]).find((c) => c.document === range.startContainer.ownerDocument);
+      const merged = contents?.cfiFromRange(joined.range);
+      if (!merged) return null;
+      return { locator: { type: "cfi", cfi: String(merged) }, label: joined.first ? n.label : located.label, quote: joined.range.toString() };
+    },
   });
   return rn;
 }
@@ -711,6 +833,19 @@ export async function mobiNotes(bookId: string, fv: any) {
         return null;
       }
     },
+    // Same section only: foliate keeps each section in its own document.
+    join(n, located, range) {
+      const cfi = cfiOf(n);
+      if (!cfi || located.locator.type !== "cfi") return null;
+      const { index, anchor } = fv.resolveNavigation(cfi);
+      const doc = fv.renderer.getContents().find((x: any) => x.index === index)?.doc;
+      if (!doc || doc !== range.startContainer.ownerDocument) return null;
+      const other = anchor(doc);
+      const joined = isRange(other) ? joinRanges(other, range) : null;
+      const merged = joined ? fv.getCFI(index, joined.range) : null;
+      if (!joined || !merged) return null;
+      return { locator: { type: "cfi", cfi: String(merged) }, label: joined.first ? n.label : located.label, quote: joined.range.toString() };
+    },
   };
   rn.setAdapter(adapter);
   return rn;
@@ -799,6 +934,13 @@ export function textNotes(bookId: string, article: HTMLElement, text: string) {
     rectOf(n) {
       return marksOf(n.id)[0]?.getBoundingClientRect() ?? null;
     },
+    join(n, located) {
+      const a = textLoc(n);
+      const b = located.locator;
+      const span = a && b.type === "text" ? joinTextSpans(text, a, b) : null;
+      if (!span) return null;
+      return { locator: { type: "text", ...span }, label: percentLabel(span.start / Math.max(1, text.length)), quote: text.slice(span.start, span.end) };
+    },
   });
   return rn;
 }
@@ -832,6 +974,8 @@ export function pdfNotes(bookId: string, pdfjs: any, boxes: HTMLElement[], go: (
   const rn = createReaderNotes(bookId);
   const emph = new Set<string>();
   const waiters = new Map<number, ((s: PdfSlot | null) => void)[]>();
+  // Text of every page rendered this session: merging over a page turn needs the previous page.
+  const pageTexts = new Map<number, string>();
   const slots: PdfSlot[] = boxes.map((box) => {
     const hl = el("div", { class: "rn-pdf-hls", "aria-hidden": "true" });
     const layer = el("div", { class: "textLayer" });
@@ -856,6 +1000,7 @@ export function pdfNotes(bookId: string, pdfjs: any, boxes: HTMLElement[], go: (
     const loc = parseLocator(n.locator);
     return loc?.type === "pdf" ? loc : null;
   };
+  const onPage = (loc: { page: number; endPage?: number }, page: number) => page >= loc.page && page <= (loc.endPage ?? loc.page);
   const resolveWaiters = (page: number, s: PdfSlot | null) => {
     for (const w of waiters.get(page) || []) w(s);
     waiters.delete(page);
@@ -867,8 +1012,9 @@ export function pdfNotes(bookId: string, pdfjs: any, boxes: HTMLElement[], go: (
     const base = s.box.getBoundingClientRect();
     for (const n of rn.list()) {
       const loc = pdfLoc(n);
-      if (!loc || loc.page !== s.page || loc.start === undefined || loc.end === undefined) continue;
-      for (const { index, from, to } of sliceRanges(s.sums, loc.start, loc.end)) {
+      const span = loc ? pdfPageSpan(loc, s.page, s.sums[s.sums.length - 1]) : null;
+      if (!span) continue;
+      for (const { index, from, to } of sliceRanges(s.sums, span.start, span.end)) {
         const node = s.divs[index]?.firstChild;
         if (!node || !s.divs[index].isConnected) continue;
         const r = document.createRange();
@@ -940,6 +1086,7 @@ export function pdfNotes(bookId: string, pdfjs: any, boxes: HTMLElement[], go: (
         s.strs = tl.textContentItemsStr;
         s.sums = prefixSums(s.strs.map((x: string) => x.length));
         s.text = s.strs.join("");
+        pageTexts.set(num, s.text);
         s.index = new Map(s.divs.map((d: HTMLElement, k: number) => [d, k]));
         s.layer.append(el("div", { class: "endOfContent" }));
         s.ready = true;
@@ -1002,14 +1149,25 @@ export function pdfNotes(bookId: string, pdfjs: any, boxes: HTMLElement[], go: (
     const s = slots.find((x) => x.ready && x.layer.contains(range.startContainer));
     if (!s) return null;
     const total = s.sums[s.sums.length - 1];
-    // A selection running onto the next page or the margin is clamped to this page.
-    const { start, end } = trimSpan(
-      s.text,
-      pointOffset(s, range.startContainer, range.startOffset),
-      s.layer.contains(range.endContainer) ? pointOffset(s, range.endContainer, range.endOffset) : total,
-    );
+    const startOff = pointOffset(s, range.startContainer, range.startOffset);
+    // Two pages side by side: a selection running onto the next one covers both.
+    const next = slots.find((x) => x !== s && x.ready && x.page === s.page + 1 && x.layer.contains(range.endContainer));
+    if (next) {
+      const a = trimSpan(s.text, startOff, total);
+      const b = trimSpan(next.text, 0, pointOffset(next, range.endContainer, range.endOffset));
+      if (a.end > a.start && b.end > b.start) {
+        return {
+          locator: { type: "pdf", page: s.page, start: a.start, end: b.end, endPage: next.page },
+          label: pagesLabel(s.page, next.page),
+          quote: joinQuotes(quoteOf(s, a.start, a.end), quoteOf(next, b.start, b.end)),
+        };
+      }
+      if (b.end > b.start) return { locator: { type: "pdf", page: next.page, start: b.start, end: b.end }, label: pagesLabel(next.page), quote: quoteOf(next, b.start, b.end) };
+    }
+    // Otherwise a selection running onto the margin is clamped to this page.
+    const { start, end } = trimSpan(s.text, startOff, s.layer.contains(range.endContainer) ? pointOffset(s, range.endContainer, range.endOffset) : total);
     if (end <= start) return null;
-    return { locator: { type: "pdf", page: s.page, start, end }, label: pageLabel(s.page), quote: quoteOf(s, start, end) };
+    return { locator: { type: "pdf", page: s.page, start, end }, label: pagesLabel(s.page), quote: quoteOf(s, start, end) };
   });
 
   rn.setAdapter({
@@ -1018,11 +1176,11 @@ export function pdfNotes(bookId: string, pdfjs: any, boxes: HTMLElement[], go: (
       if (!loc) return;
       if (emphasis) emph.add(n.id);
       else emph.delete(n.id);
-      for (const s of slots) if (s.ready && s.page === loc.page) drawSlot(s);
+      for (const s of slots) if (s.ready && onPage(loc, s.page)) drawSlot(s);
     },
     erase(n) {
       const loc = pdfLoc(n);
-      for (const s of slots) if (s.ready && loc && s.page === loc.page) drawSlot(s);
+      for (const s of slots) if (s.ready && loc && onPage(loc, s.page)) drawSlot(s);
     },
     async show(n) {
       const loc = pdfLoc(n);
@@ -1038,6 +1196,17 @@ export function pdfNotes(bookId: string, pdfjs: any, boxes: HTMLElement[], go: (
         if (d) return d.getBoundingClientRect();
       }
       return null;
+    },
+    join(n, located) {
+      const a = pdfLoc(n);
+      const b = located.locator;
+      if (!a || a.start === undefined || a.end === undefined || b.type !== "pdf" || b.start === undefined || b.end === undefined) return null;
+      const span = joinPdfSpans({ ...a, start: a.start, end: a.end }, { ...b, start: b.start, end: b.end }, (p) => pageTexts.get(p));
+      if (!span) return null;
+      const first = span.page === a.page && span.start === a.start;
+      const quote = first ? joinQuotes(n.quote, located.quote ?? "") : joinQuotes(located.quote ?? "", n.quote);
+      const locator: Locator = { type: "pdf", ...span };
+      return { locator, label: pagesLabel(span.page, span.endPage), quote };
     },
   });
   return Object.assign(rn, { renderPage, clearSlot });
